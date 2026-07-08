@@ -6,7 +6,6 @@ using PointDataSources
 using Dates, Statistics, Plots
 
 silo_email = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
-ENV["CDS_API_KEY"]="REDACTED-CDS-API-KEY"
 
 using Zarr, ZarrDatasets, CommonDataModel
 r = getpoint(ERA5, :t2m; lon=133.8807, lat=-23.6980, date=(Date(2025,1,1), Date(2025,12,31)))
