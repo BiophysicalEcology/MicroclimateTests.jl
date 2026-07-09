@@ -21,8 +21,6 @@
 function build_micro_model()
     soil_properties_model = CampbelldeVriesSoilProperties(;
         de_vries_shape_factor,
-        mineral_conductivity,
-        mineral_heat_capacity,
         recirculation_power,
         return_flow_threshold,
     )
@@ -30,6 +28,8 @@ function build_micro_model()
     soil_profile = SoilProfile(;
         bulk_density    = fill(bulk_density, length(depths)),
         mineral_density = fill(mineral_density, length(depths)),
+        mineral_conductivity,
+        mineral_heat_capacity,
         hydraulics = CampbellHydraulicProfile(;
             air_entry_water_potential        = fill(air_entry_potential, length(depths)),
             saturated_hydraulic_conductivity = fill(sat_hydraulic_cond, length(depths)),

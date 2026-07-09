@@ -37,7 +37,7 @@ weather_source_choice = GRIDMET
 const WEATHER_SOURCE_START = Dict(
     GRIDMET            => Date(1979, 1, 1),
     ERA5               => Date(1940, 1, 1),
-    NCEP{SurfaceFlux}  => Date(1948, 1, 1),
+    RasterDataSources.NCEP{SurfaceFlux}  => Date(1948, 1, 1),
 )
 
 # ── NicheMapR via R ───────────────────────────────────────────────────────────
