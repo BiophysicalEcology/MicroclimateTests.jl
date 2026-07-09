@@ -12,7 +12,19 @@ site = geocode("Alice Springs, Australia")
 lon, lat = site.lon, site.lat
 area = Extent(X = (lon - 0.05, lon + 0.05), Y = (lat - 0.05, lat + 0.05))
 
-point_result = build_soil_profile(SoilGrids, (lon, lat); depths)
+# rest.isric.org (the point-query REST API) has been paused by ISRIC
+# service-wide as of 2026-07 (no ETA) -- files.isric.org (the VRT-tile raster
+# path used by the `area` form below) is a separate host and unaffected.
+# Falls back to the area-based profile so the rest of this script (and the
+# solve() at the bottom) still runs while the point API is down; this will
+# start exercising the real point-query path again automatically once ISRIC
+# restores it.
+point_result = try
+    build_soil_profile(SoilGrids, (lon, lat); depths)
+catch e
+    @warn "SoilGrids point REST API unavailable -- falling back to the area-based profile" exception = e
+    build_soil_profile(SoilGrids, area; depths)
+end
 sp_soilgrids_point = point_result.soil_profile
 campbell_b = point_result.campbell_b
 air_entry_potential = point_result.air_entry_potential
