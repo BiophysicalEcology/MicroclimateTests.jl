@@ -1,0 +1,14 @@
+benchmarks/point_timeseries.jl — the core one. 
+For a fixed site (or small set of sites) and date range, time: (a) forcing fetch/read from cold (no cache) and warm (cached), 
+(b) model-object setup, (c) the actual solve. Run MicroclimateMapper.jl, NicheMapR (via Rscript, timed the same way 
+nmr_timing.csv already does in scan_snotel/), and microclimf (via Rscript) back-to-back on the same site/date range, 
+append one row per model per run to a results/timings.csv. This is the one that answers "how much wall-clock does each 
+phase cost, model for model."
+
+benchmarks/raster_scaling.jl — MicroclimateMapper.jl only (NicheMapR/microclimf don't have a native raster/vectorized mode 
+to compare against) — sweep grid size or number of points and record how solve time scales, since that's a distinctly 
+Julia-side capability worth characterizing on its own.
+
+benchmarks/multi_year_scaling.jl — fixed site, sweep simulation length (1 year, 5 years, 20 years) for MicroclimateMapper.jl 
+vs NicheMapR vs microclimf, since solver cost-per-day and any fixed per-call overhead (process startup for the R models, in
+ particular) show up differently as the run gets longer.

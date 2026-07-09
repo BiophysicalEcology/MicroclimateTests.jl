@@ -4,8 +4,9 @@ using Microclimate: example_soil_hydraulic_model
 using Rasters, RasterDataSources, PointDataSources
 using NCDatasets
 using Dates, Statistics, Unitful, Plots
+using DataInterpolations: CubicSpline, ExtrapolationType
 
-ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/" #"Z:"
+ENV["RASTERDATASOURCES_PATH"] = "Z:" # "c:/Spatial_Data/"
 
 depths = ([0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
            20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0] ./ 100.0) .* u"m"
@@ -22,11 +23,6 @@ points = [geocode("Daly Waters, NT, Australia")]
 dates = Date(2025, 1, 1):Day(1):Date(2025, 12, 31)
 
 # Set true to fetch weather via direct point queries (PointDataSources.jl)
-# instead of downloading/cropping the whole BARRA grid. Only correct for a
-# single point (as here) -- BARRA's own `_load_weather` is overridden below,
-# since (unlike most sources) it bypasses the generic `weather_loader`
-# dispatch entirely. NOT run end-to-end here; check the plots look sane
-# against the `false` (existing, verified) path before trusting it.
 use_point_query = false
 
 if use_point_query
@@ -203,60 +199,23 @@ end
 # Initial soil moisture/temperature from BARRA's own first-day values
 # =============================================================================
 # BARRA only gives 4 fixed-layer values; the model has 19 depth nodes, so the
-# 4 layer-midpoint values are splined across all of them. `Interpolations.jl`
-# (already a dependency via Microclimate.jl) only supports `Cubic` on a
-# regular grid -- the BARRA layer midpoints (5, 22.5, 67.5, 200 cm) are
-# irregularly spaced -- so this is a small self-contained natural cubic
-# spline instead of adding a new dependency just for 4 points.
-function _natural_cubic_spline(x::Vector{Float64}, y::Vector{Float64})
-    n = length(x)
-    h = diff(x)
-    α = zeros(n)
-    for i in 2:(n - 1)
-        α[i] = 3 / h[i] * (y[i + 1] - y[i]) - 3 / h[i - 1] * (y[i] - y[i - 1])
-    end
-    l = ones(n); μ = zeros(n); z = zeros(n)
-    for i in 2:(n - 1)
-        l[i] = 2 * (x[i + 1] - x[i - 1]) - h[i - 1] * μ[i - 1]
-        μ[i] = h[i] / l[i]
-        z[i] = (α[i] - h[i - 1] * z[i - 1]) / l[i]
-    end
-    c = zeros(n); b = zeros(n); d = zeros(n)
-    for j in (n - 1):-1:1
-        c[j] = z[j] - μ[j] * c[j + 1]
-        b[j] = (y[j + 1] - y[j]) / h[j] - h[j] * (c[j + 1] + 2c[j]) / 3
-        d[j] = (c[j + 1] - c[j]) / (3h[j])
-    end
-    return (; x, a = y, b, c, d)
-end
-
-# Beyond the outermost knots, keeps evaluating the boundary segment's cubic
-# (the natural spline's own extrapolation), rather than erroring -- the
-# shallowest model depths (0-3.75 cm) sit above BARRA's shallowest layer
-# midpoint (5 cm).
-function _spline_eval(spl, xq::Real)
-    x = spl.x
-    n = length(x)
-    j = if xq <= x[1]
-        1
-    elseif xq >= x[end]
-        n - 1
-    else
-        clamp(searchsortedlast(x, xq), 1, n - 1)
-    end
-    dx = xq - x[j]
-    return spl.a[j] + spl.b[j] * dx + spl.c[j] * dx^2 + spl.d[j] * dx^3
-end
-
+# 4 layer-midpoint values are splined across all of them. The BARRA layer
+# midpoints (5, 22.5, 67.5, 200 cm) are irregularly spaced, and
+# `extrapolation = ExtrapolationType.Extension` continues evaluating the
+# boundary segment's cubic beyond the outermost knots (rather than erroring)
+# -- the shallowest model depths (0-3.75 cm) sit above BARRA's shallowest
+# layer midpoint (5 cm). Same pattern as
+# MicroclimateMapper's `build_soil_profile` (`_interpolate_onto_depths` in
+# soil_profile_builder.jl) uses for SLGA texture -- DataInterpolations.jl is
+# already a MicroclimateMapper dependency, so no new package is added here.
 moisture_day1_layers = [barra_moisture[i][1] for i in 1:4]
 temp_day1_layers_K   = [tsl_point[i][1] for i in 1:4]  # tsl is native Kelvin
 
-moisture_spline = _natural_cubic_spline(barra_layer_mid_cm, moisture_day1_layers)
-temp_spline     = _natural_cubic_spline(barra_layer_mid_cm, temp_day1_layers_K)
+moisture_spline = CubicSpline(moisture_day1_layers, barra_layer_mid_cm; extrapolation = ExtrapolationType.Extension)
+temp_spline     = CubicSpline(temp_day1_layers_K,   barra_layer_mid_cm; extrapolation = ExtrapolationType.Extension)
 
-init_soil_moisture = clamp.(
-    [_spline_eval(moisture_spline, d) for d in depths_cm], 0.01, saturation_fraction)
-init_soil_temperature = [_spline_eval(temp_spline, d) for d in depths_cm] .* u"K"
+init_soil_moisture = clamp.(moisture_spline.(depths_cm), 0.01, saturation_fraction)
+init_soil_temperature = temp_spline.(depths_cm) .* u"K"
 
 @info "init: soil moisture (BARRA day 1, splined): $(round.(init_soil_moisture; digits=3))"
 @info "init: soil temperature (BARRA day 1, splined): $(round.(ustrip.(u"°C", init_soil_temperature); digits=1)) °C"
@@ -276,6 +235,7 @@ model = MicroMapModel(;
     ),
     dem_source              = BARRA{BARRAC2, AUST04},
     weather_source          = BARRA{BARRAC2, AUST04},
+    # weather_source          = SILO,
     surface_albedo_source   = 0.15,
     roughness_height_source = 0.004u"m",
     compute_terrain         = false,

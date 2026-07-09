@@ -6,6 +6,8 @@ using Rasters, RasterDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
+ENV["RASTERDATASOURCES_PATH"] = "Z:" # "c:/Spatial_Data/"
+
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
