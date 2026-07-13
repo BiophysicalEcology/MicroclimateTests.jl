@@ -30,63 +30,16 @@ points = [geocode("Alice Springs, Australia")]
 # SILO is a real historical daily record, not a climatology — pick a real year.
 dates = Date(2020, 1, 1):Day(1):Date(2020, 12, 31)
 
-# Set true to fetch SILO's own primary layers via direct point queries
-# (PointDataSources.jl's DataDrill API) instead of downloading/cropping the
-# whole SILO grid. Only correct for a single point (as here). Wind still
-# comes from CRUCL2's raster climatology (no point-query source for it, and
-# none needed -- it's a coarse monthly grid, not something worth avoiding a
-# small crop for). Requires `ENV["SILO_EMAIL"]` (or edit `silo_username`
-# below) -- SILO's API requires an email address.
+# Set true to fetch SILO via direct OPeNDAP point queries (PointDataSources.jl)
+# instead of downloading/cropping the whole SILO grid -- an optional
+# alternative to the default grid-crop path, not required. Wind still comes
+# from CRUCL2's monthly climatology (no point-query source for it), fetched
+# via a small area crop and expanded onto the daily Ti axis automatically.
+# Requires ENV["SILO_EMAIL"] -- SILO's API requires an email address.
 use_point_query = true
-silo_username = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
-
 if use_point_query
-    lon0, lat0 = points[1].lon, points[1].lat
-    date_range = (Date(year(first(dates)), 1, 1), Date(year(last(dates)), 12, 31))
-
-    function _point_raster(T, name; kw...)
-        @info "  loading $T $name (point query)..."
-        nt = getpoint(T, name; lon = lon0, lat = lat0, kw...)
-        Raster(reshape(nt.values, 1, 1, length(nt.values)), (X([lon0]), Y([lat0]), Ti(nt.times)))
-    end
-
-    # CRUCL2's monthly wind climatology has no point-query source, so it's
-    # still fetched via the ordinary raster crop, then expanded onto the
-    # point's daily Ti axis by hand -- `Rasters.resample` (used by the
-    # generic `_monthly_to_daily`) requires a proper X/Y grid and rejects a
-    # degenerate 1x1 point "grid", so the nearest CRUCL2 cell is selected
-    # directly instead of resampling onto it.
-    function _point_monthly_to_daily(layer::AbstractRaster, ref::AbstractRaster, years, lon, lat)
-        cell = layer[X(Near(lon)), Y(Near(lat))]
-        ti = dims(ref, Ti)
-        out = zeros(eltype(cell), 1, 1, length(ti))
-        years_v = collect(years)
-        d = 0
-        for (yi, y) in enumerate(years_v), m in 1:12
-            val = cell[(yi - 1) * 12 + m]
-            for _ in 1:Dates.daysinmonth(y, m)
-                d += 1
-                out[1, 1, d] = val
-            end
-        end
-        Raster(out, (dims(ref, X), dims(ref, Y), ti))
-    end
-
-    function MicroclimateMapper._load_weather(T::Type{<:SILO}, area::Extent, years)
-        primary_fields = (:max_temp, :min_temp, :daily_rain, :rh_tmax, :rh_tmin, :radiation)
-        met = NamedTuple{primary_fields}(map(
-            name -> _point_raster(T, name; date = date_range, username = silo_username),
-            primary_fields))
-        ref = first(values(met))
-
-        @info "  loading CRUCL2 wnd..."
-        wnd_stack = MicroclimateMapper._load_layers(
-            MicroclimateMapper.SingleFileBands(), CRUCL2, (:wnd,), area, years)
-        wnd = _point_monthly_to_daily(wnd_stack.wnd, ref, years, lon0, lat0)
-
-        stack = RasterStack(merge(met, (; wnd)))
-        return Rasters.replace_missing(stack, NaN)
-    end
+    ENV["SILO_EMAIL"] = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
+    MicroclimateMapper.loader(::Type{<:SILO}) = MicroclimateMapper.PointQuery()
 end
 
 model = MicroMapModel(;
@@ -94,8 +47,6 @@ model = MicroMapModel(;
         depths,
         heights,
         soil_properties_model = CampbelldeVriesSoilProperties(;
-            mineral_conductivity,
-            mineral_heat_capacity,
             de_vries_shape_factor = 0.1,
             recirculation_power = 4.0,
             return_flow_threshold = 0.162,
@@ -114,6 +65,8 @@ model = MicroMapModel(;
 soil_profile = SoilProfile(;
     bulk_density = fill(bulk_density, length(depths)),
     mineral_density = fill(mineral_density, length(depths)),
+    mineral_conductivity,
+    mineral_heat_capacity,
     hydraulics = CampbellHydraulicProfile(;
         air_entry_water_potential = fill(air_entry_potential, length(depths)),
         saturated_hydraulic_conductivity = fill(sat_hydraulic_cond, length(depths)),

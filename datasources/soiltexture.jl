@@ -22,7 +22,7 @@ area = Extent(X = (lon - 0.05, lon + 0.05), Y = (lat - 0.05, lat + 0.05))
 point_result = try
     build_soil_profile(SoilGrids, (lon, lat); depths)
 catch e
-    @warn "SoilGrids point REST API unavailable -- falling back to the area-based profile" exception = e
+    @warn "SoilGrids point REST API unavailable -- falling back to the area-based profile: $e"
     build_soil_profile(SoilGrids, area; depths)
 end
 sp_soilgrids_point = point_result.soil_profile
