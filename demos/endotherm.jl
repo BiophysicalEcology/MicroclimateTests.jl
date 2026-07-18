@@ -4,9 +4,6 @@
 # Swap WEATHER_SOURCE/DEM_SOURCE below (e.g. CRUCL2, TerraClimate, SILO, BARRA)
 # to run the same organism at the same point against a different climate
 # dataset — MicroclimateMapper resolves any of them onto the same interface.
-#
-# The organism uses BiophysicalBehaviour's default NicheMapR-equivalent
-# parameters (a generic ~65 kg mammal with fur insulation).
 
 using MicroclimateMapper
 using Microclimate
@@ -26,14 +23,16 @@ const WEATHER_SOURCE = CRUCL2     # or TerraClimate, SILO, BARRA, ...
 const DEM_SOURCE      = CRUCL2
 const YEAR             = 2000      # ignored by CRUCL2's climatology; used by TerraClimate etc.
 
-points = [geocode("Palm Springs, CA")]
+location = "Palm Springs, CA"
+points = [geocode(location)]
+site_name = points[1].display_name
 dates  = Date(YEAR, 1, 1):Day(1):Date(YEAR, 12, 31)
 
 months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 hours  = collect(0.0:1.0:23.0)
 
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
-heights = [0.01, 2.0]u"m"    # ground node + 2 m reference height
+heights = [0.1, 2.0]u"m"    # ground node + 2 m reference height
 
 # ── Step 1: Microclimate ───────────────────────────────────────────────────
 # Extra layers (beyond air_temperature/relative_humidity/wind_speed used by the
@@ -76,9 +75,15 @@ output = solve!(cache)
 
 elevation = terrain(cache).elevation[point=1]
 
-T_air_series = collect(output.air_temperature[point=1, height=2])    # 2 m reference height
-rh_series    = collect(output.relative_humidity[point=1, height=2])
-wind_series  = collect(output.wind_speed[point=1, height=2])
+T_air_series = collect(output.air_temperature[point=1, height=1])    # 2 m reference height
+T_sky_series   = collect(output.sky_temperature[point=1])
+T_ground_series = collect(output.soil_temperature[point=1, depth=1])
+rh_series    = collect(output.relative_humidity[point=1, height=1])
+wind_series  = collect(output.wind_speed[point=1, height=1])
+solar_radiation_series = collect(output.global_radiation[point=1])
+zenith_series = collect(output.zenith_angle[point=1])
+soil_k_series  = collect(output.soil_thermal_conductivity[point=1, depth=1])
+diffuse_series = collect(output.diffuse_fraction[point=1])
 
 # Step count comes from the solved output, not `length(dates)`: monthly-
 # climatology sources (e.g. CRUCL2) solve one representative day per month
@@ -87,14 +92,14 @@ nsteps = length(T_air_series)
 ndays  = nsteps ÷ 24
 
 # ── Step 2: Set up endotherm ──────────────────────────────────────────────
-# Default NicheMapR-equivalent parameters for a generic ~65 kg mammal with fur.
-shape_pars       = example_shape_pars()
+shape_pars       = example_shape_pars(mass = 1.0u"kg", axis_ratio_b = 3.0, axis_ratio_c = 3.0)
 insulation_pars  = example_insulation_pars(;
                     insulation_depth_dorsal  = 2.0u"mm",
                     insulation_depth_ventral = 2.0u"mm",
                     )
 radiation_pars   = example_radiation_pars()
-metabolism_pars  = example_metabolism_pars()
+metabolic_heat_flow = metabolic_rate(McKechnieWolf(), shape_pars.mass)
+metabolism_pars = example_metabolism_pars(; core_temperature = (38.0 + 273.15)u"K", q10 = 2, metabolic_heat_flow)
 evaporation_pars = example_evaporation_pars()
 respiration_pars = example_respiration_pars()
 
@@ -127,7 +132,7 @@ physiology_traits = HeatExchangeTraits(
 core_temperature_ref = metabolism_pars.core_temperature
 
 thermoregulation_limits = ThermoregulationLimits(;
-    control          = RuleBasedSequentialControl(; mode = CoreFirst(), tolerance = 0.005, max_iterations = 200),
+    control          = RuleBasedSequentialControl(; mode = CorePantingSweatingFirst(), tolerance = 0.005, max_iterations = 200),
     minimum_heat_flow = metabolism_pars.metabolic_heat_flow,
     insulation    = InsulationLimits(;
         dorsal  = SteppedParameter(; current   = insulation_pars.dorsal.depth,
@@ -143,13 +148,13 @@ thermoregulation_limits = ThermoregulationLimits(;
     core_temperature     = SteppedParameter(; current = core_temperature_ref, reference = core_temperature_ref,
                                        max = core_temperature_ref + 5.0u"K", step = 0.1u"K"),
     panting = PantingLimits(;
-        pant       = SteppedParameter(; current = respiration_pars.pant, max = 15.0, step = 0.01),
+        pant       = SteppedParameter(; current = respiration_pars.pant, max = 15.0, step = 0.5),
         cost       = 0.0u"W",
         multiplier = 1.0,
         core_temperature_ref,
     ),
     skin_wetness = SteppedParameter(; current = evaporation_pars.skin_wetness,
-                                       max = 0.5, step = 0.01),
+                                       max = 1.0, step = 0.05),
 )
 
 behavioral_traits = BehavioralTraits(;
@@ -164,7 +169,7 @@ environment_pars = example_environment_pars(; elevation)
 # ── Step 3: Thermoregulation loop ─────────────────────────────────────────
 # Warm-start: carry skin/insulation temperature forward between hours for faster convergence.
 skin_temperature       = core_temperature_ref - 3.0u"K"
-insulation_temperature = u"K"(10.0u"°C")
+insulation_temperature = T_air_series[1]
 metabolic_heat_flow    = 0.0u"W"
 
 endo_results = Vector{Any}(undef, nsteps)
@@ -172,13 +177,19 @@ println("Running endotherm thermoregulation loop...")
 
 let skin_temperature = skin_temperature, insulation_temperature = insulation_temperature
     for step in 1:nsteps
-        environment_vars = example_environment_vars(;
-            air_temperature   = T_air_series[step],
-            relative_humidity = rh_series[step],
-            wind_speed        = wind_series[step],
-            atmospheric_pressure = atmospheric_pressure(elevation),
-            global_radiation  = 0.0u"W/m^2",   # endotherm assumed in shade/shelter
-            zenith_angle      = 20.0u"°",
+        environment_vars = EnvironmentalVars(;
+            air_temperature        = T_air_series[step],
+            sky_temperature        = T_sky_series[step],
+            ground_temperature     = T_ground_series[step],
+            substrate_temperature  = T_ground_series[step],
+            relative_humidity      = rh_series[step],
+            wind_speed              = wind_series[step],
+            atmospheric_pressure    = atmospheric_pressure(elevation),
+            zenith_angle            = zenith_series[step],
+            substrate_conductivity  = soil_k_series[step],
+            global_radiation        = solar_radiation_series[step],
+            diffuse_fraction        = diffuse_series[step],
+            shade                   = 0.0,   # fully exposed
         )
 
         out = thermoregulate(
@@ -236,8 +247,52 @@ end
 
 display(plot(panels_Tc...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
     xlabel = "hour", left_margin = 4Plots.mm,
-    plot_title = "Core temperature — generic endotherm, Madison WI\n" *
+    plot_title = "Core temperature, $site_name\n" *
                  "(red = T_core, blue dashed = T_air)"))
+
+# ── Fig. 1b – Metabolic heat flow by month (4×3 grid) ─────────────────────
+panels_mhf_ss = map(1:ndays) do m
+    plot(hours, month_metabolic_heat_flow[m];
+        lw = 2, color = :firebrick, label = "",
+        title = months[mod1(m, 12)], ylabel = "W", titlefontsize = 9)
+end
+display(plot(panels_mhf_ss...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Metabolic heat flow, $site_name"))
+
+# ── Fig. 1c – Water loss rates by month (4×3 grid) ─────────────────────────
+panels_evap = map(1:ndays) do m
+    p = plot(hours, month_evap[m];
+        lw = 2, color = :teal, label = "total",
+        title = months[mod1(m, 12)], ylabel = "g/hr", titlefontsize = 9,
+        legend = m == 1 ? :topright : false)
+    plot!(p, hours, month_resp[m];  lw = 1, color = :orange, linestyle = :dash, label = "respiratory")
+    plot!(p, hours, month_sweat[m]; lw = 1, color = :purple, linestyle = :dot,  label = "cutaneous")
+    p
+end
+display(plot(panels_evap...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Evaporative water loss, $site_name"))
+
+# ── Fig. 1d – Posture (axis ratio b) by month (4×3 grid) ───────────────────
+panels_axis_b = map(1:ndays) do m
+    plot(hours, month_axis_b[m];
+        lw = 2, color = :goldenrod, label = "",
+        title = months[mod1(m, 12)], ylabel = "axis ratio b", titlefontsize = 9)
+end
+display(plot(panels_axis_b...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Posture, $site_name"))
+
+# ── Fig. 1e – Pant rate by month (4×3 grid) ────────────────────────────────
+panels_pant = map(1:ndays) do m
+    plot(hours, month_pant[m];
+        lw = 2, color = :crimson, label = "",
+        title = months[mod1(m, 12)], ylabel = "pant rate", titlefontsize = 9)
+end
+display(plot(panels_pant...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Pant rate, $site_name"))
 
 # ── Fig. 2 – Annual heatmaps (core temperature and metabolic heat flow) ───
 tc_matrix = zeros(Float64, 24, ndays)
@@ -305,15 +360,7 @@ display(plot(p_sb, p_sw, p_pt; layout = (3, 1), size = (900, 800), left_margin =
 # (baseline metabolic rate) until it cools back down, and repeats.
 # =============================================================================
 
-# Series the steady-state loop above didn't need, but a realistic
-# `EnvironmentForcing` does (radiation, sky/soil temperature, etc.).
-soil_T_series   = collect(output.soil_temperature[point=1, depth=1])
-soil_k_series   = collect(output.soil_thermal_conductivity[point=1, depth=1])
-sky_T_series    = collect(output.sky_temperature[point=1])
-solar_series    = collect(output.global_radiation[point=1])
-diffuse_series  = collect(output.diffuse_fraction[point=1])
 pressure_series = collect(output.pressure[point=1])
-zenith_series   = collect(output.zenith_angle[point=1])
 
 # Resting uses ground-level (sheltered) conditions; active uses the 2 m
 # reference height, with wind speed bumped up to at least the animal's
@@ -356,14 +403,14 @@ transient_results = Vector{Any}(undef, ndays)
 
     resting_forcing = day_forcing(times,
         T_air_local_series[day_range], rh_local_series[day_range], wind_local_series[day_range],
-        soil_T_series[day_range], soil_k_series[day_range], sky_T_series[day_range],
-        solar_series[day_range], diffuse_series[day_range], pressure_series[day_range],
+        T_ground_series[day_range], soil_k_series[day_range], T_sky_series[day_range],
+        solar_radiation_series[day_range], diffuse_series[day_range], pressure_series[day_range],
         zenith_series[day_range], 0.9)
     active_forcing = day_forcing(times,
         T_air_series[day_range], rh_series[day_range],
         max.(ustrip.(u"m/s", movement_speed), ustrip.(u"m/s", wind_series[day_range])) .* u"m/s",
-        soil_T_series[day_range], soil_k_series[day_range], sky_T_series[day_range],
-        solar_series[day_range], diffuse_series[day_range], pressure_series[day_range],
+        T_ground_series[day_range], soil_k_series[day_range], T_sky_series[day_range],
+        solar_radiation_series[day_range], diffuse_series[day_range], pressure_series[day_range],
         zenith_series[day_range], 0.0)
 
     transient_results[m] = simulate_endotherm_activity_cycle(
@@ -407,8 +454,54 @@ end
 
 display(plot(panels_transient...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
     xlabel = "hour", left_margin = 4Plots.mm,
-    plot_title = "Core temperature — steady-state vs transient, Madison WI\n" *
+    plot_title = "Core temperature — steady-state vs transient, $site_name\n" *
                  "(red = steady-state, green = transient thermal-mass model)"))
+
+# ── Fig. 5b – Metabolic heat flow by month: steady-state vs transient ─────
+# Transient metabolic rate is a known input (active vs resting), not solved -
+# plotted as a step function switching on `state`.
+panels_mhf_trans = map(1:ndays) do m
+    p = plot(hours, month_metabolic_heat_flow[m];
+        lw = 2, color = :red, label = "steady-state",
+        title = months[mod1(m, 12)], ylabel = "W", titlefontsize = 9,
+        legend = m == 1 ? :topright : false)
+    t_h = ustrip.(u"hr", transient_results[m].t)
+    mhf_trans = [s isa Active ? ustrip(u"W", active_metabolic_heat_flow) : ustrip(u"W", resting_metabolic_heat_flow)
+                 for s in transient_results[m].state]
+    plot!(p, t_h, mhf_trans; lw = 2, color = :darkgreen, label = "transient", seriestype = :steppost)
+    p
+end
+display(plot(panels_mhf_trans...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Metabolic heat flow — steady-state vs transient, $site_name"))
+
+# ── Fig. 5c/5d – Posture and pant rate: steady-state vs transient. Both
+#    effectors are held fixed at the organism's baseline value throughout
+#    the transient model (only core temperature is solved) - shown as a flat
+#    reference line rather than a solved trajectory.
+panels_axis_b_trans = map(1:ndays) do m
+    p = plot(hours, month_axis_b[m];
+        lw = 2, color = :red, label = "steady-state",
+        title = months[mod1(m, 12)], ylabel = "axis ratio b", titlefontsize = 9,
+        legend = m == 1 ? :topright : false)
+    hline!(p, [shape_pars.axis_ratio_b]; lw = 2, color = :darkgreen, label = "transient (fixed)")
+    p
+end
+display(plot(panels_axis_b_trans...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Posture — steady-state vs transient, $site_name"))
+
+panels_pant_trans = map(1:ndays) do m
+    p = plot(hours, month_pant[m];
+        lw = 2, color = :red, label = "steady-state",
+        title = months[mod1(m, 12)], ylabel = "pant rate", titlefontsize = 9,
+        legend = m == 1 ? :topright : false)
+    hline!(p, [respiration_pars.pant]; lw = 2, color = :darkgreen, label = "transient (fixed)")
+    p
+end
+display(plot(panels_pant_trans...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
+    xlabel = "hour", left_margin = 4Plots.mm,
+    plot_title = "Pant rate — steady-state vs transient, $site_name"))
 
 # =============================================================================
 # Grid simulation — the same models applied across a raster instead of one
@@ -467,7 +560,7 @@ end
 # One solve covers all three grid sections below: unlike demos/ectotherm.jl,
 # nothing here needs a separate shaded/unshaded run - "sheltered" vs "exposed"
 # is expressed via the `shade`/height choice already used at the point level.
-grid_site     = geocode("Kulgera, Australia"; buffer = 2.0)
+grid_site     = geocode(location; buffer = 2.0)
 raster_area   = grid_site.extent
 grid_template = load_template(WEATHER_SOURCE, grid_site)
 
@@ -568,6 +661,9 @@ grid_thermoreg_result = RasterStack((;
     core_temperature       = _nan_layer(u"K"),
     metabolic_heat_flow    = _nan_layer(u"W"),
     evaporative_water_loss = _nan_layer(u"g/hr"),
+    axis_ratio_b            = _nan_layer(NoUnits),
+    skin_wetness             = _nan_layer(NoUnits),
+    pant                     = _nan_layer(NoUnits),
 ))
 
 function solve_thermoreg_grid!(grid_thermoreg_result, grid_output, organism, environment_pars,
@@ -599,6 +695,9 @@ function solve_thermoreg_grid!(grid_thermoreg_result, grid_output, organism, env
                 grid_thermoreg_result.core_temperature[x, y, step]       = out.thermoregulation.core_temperature
                 grid_thermoreg_result.metabolic_heat_flow[x, y, step]    = out.energy_flows.metabolic_heat_flow
                 grid_thermoreg_result.evaporative_water_loss[x, y, step] = out.mass_flows.m_evap
+                grid_thermoreg_result.axis_ratio_b[x, y, step]           = out.thermoregulation.axis_ratio_b
+                grid_thermoreg_result.skin_wetness[x, y, step]           = out.thermoregulation.skin_wetness
+                grid_thermoreg_result.pant[x, y, step]                   = out.thermoregulation.pant
 
                 skin_temperature       = out.thermoregulation.skin_temperature
                 insulation_temperature = out.thermoregulation.insulation_temperature
@@ -695,10 +794,46 @@ nanmin(A; dims) = (m = dropdims(minimum(ifelse.(isnan.(A),  Inf, A); dims); dims
 Tb_palette  = cgrad([:blue, :lightblue, :orange, :red, :purple])
 MHF_palette = cgrad([:black, :orange, :red])
 
-max_MHF_baseline = nanmax(ustrip.(u"W", grid_baseline_result.metabolic_heat_flow); dims = Ti) .* u"W"
-display(plot(max_MHF_baseline;
-    title = "Annual max metabolic heat flow (no thermoregulation)",
-    seriestype = :heatmap, color = MHF_palette, yflip = false))
+EWL_palette = cgrad([:white, :teal, :blue])
+
+# ── Baseline: energy and water cost of the environment with no thermoregulatory response ──
+mean_MHF_baseline = dropdims(mean(ustrip.(u"W", grid_baseline_result.metabolic_heat_flow); dims = Ti); dims = Ti) .* u"W"
+max_MHF_baseline  = nanmax(ustrip.(u"W", grid_baseline_result.metabolic_heat_flow); dims = Ti) .* u"W"
+mean_EWL_baseline = dropdims(mean(ustrip.(u"g/hr", grid_baseline_result.evaporative_water_loss); dims = Ti); dims = Ti) .* u"g/hr"
+max_EWL_baseline  = nanmax(ustrip.(u"g/hr", grid_baseline_result.evaporative_water_loss); dims = Ti) .* u"g/hr"
+
+display(plot(
+    plot(mean_MHF_baseline; title = "Mean metabolic heat flow", seriestype = :heatmap, color = MHF_palette, yflip = false),
+    plot(max_MHF_baseline;  title = "Max metabolic heat flow",  seriestype = :heatmap, color = MHF_palette, yflip = false),
+    plot(mean_EWL_baseline; title = "Mean water loss",          seriestype = :heatmap, color = EWL_palette, yflip = false),
+    plot(max_EWL_baseline;  title = "Max water loss",           seriestype = :heatmap, color = EWL_palette, yflip = false);
+    layout = (2, 2), size = (1000, 800), left_margin = 6Plots.mm,
+    plot_title = "Energy and water cost with no thermoregulation"))
+
+# ── Steady-state: energy/water cost and thermoregulatory effector use ─────
+mean_MHF_reg = dropdims(mean(ustrip.(u"W", grid_thermoreg_result.metabolic_heat_flow); dims = Ti); dims = Ti) .* u"W"
+max_MHF_reg  = nanmax(ustrip.(u"W", grid_thermoreg_result.metabolic_heat_flow); dims = Ti) .* u"W"
+mean_EWL_reg = dropdims(mean(ustrip.(u"g/hr", grid_thermoreg_result.evaporative_water_loss); dims = Ti); dims = Ti) .* u"g/hr"
+max_EWL_reg  = nanmax(ustrip.(u"g/hr", grid_thermoreg_result.evaporative_water_loss); dims = Ti) .* u"g/hr"
+
+display(plot(
+    plot(mean_MHF_reg; title = "Mean metabolic heat flow", seriestype = :heatmap, color = MHF_palette, yflip = false),
+    plot(max_MHF_reg;  title = "Max metabolic heat flow",  seriestype = :heatmap, color = MHF_palette, yflip = false),
+    plot(mean_EWL_reg; title = "Mean water loss",          seriestype = :heatmap, color = EWL_palette, yflip = false),
+    plot(max_EWL_reg;  title = "Max water loss",           seriestype = :heatmap, color = EWL_palette, yflip = false);
+    layout = (2, 2), size = (1000, 800), left_margin = 6Plots.mm,
+    plot_title = "Energy and water cost — steady-state thermoregulation"))
+
+mean_axis_b_reg = dropdims(mean(grid_thermoreg_result.axis_ratio_b; dims = Ti); dims = Ti)
+mean_wetness_reg = dropdims(mean(grid_thermoreg_result.skin_wetness; dims = Ti); dims = Ti)
+mean_pant_reg = dropdims(mean(grid_thermoreg_result.pant; dims = Ti); dims = Ti)
+
+display(plot(
+    plot(mean_axis_b_reg;  title = "Mean posture (axis ratio b)", seriestype = :heatmap, color = :YlOrBr, yflip = false),
+    plot(mean_wetness_reg; title = "Mean skin wetness",            seriestype = :heatmap, color = :Blues,  yflip = false),
+    plot(mean_pant_reg;    title = "Mean pant rate",                seriestype = :heatmap, color = :Reds,   yflip = false);
+    layout = (3, 1), size = (900, 900), left_margin = 6Plots.mm,
+    plot_title = "Thermoregulatory effector use — steady-state (annual mean)"))
 
 max_Tc_reg = nanmax(ustrip.(u"°C", grid_thermoreg_result.core_temperature); dims = Ti) .* u"°C"
 min_Tc_reg = nanmin(ustrip.(u"°C", grid_thermoreg_result.core_temperature); dims = Ti) .* u"°C"
@@ -718,3 +853,12 @@ active_fraction_grid = dropdims(mean(grid_transient_result.active_fraction; dims
 display(plot(active_fraction_grid;
     title = "Time spent active (% of simulated hours, transient model)",
     seriestype = :heatmap, color = cgrad([:steelblue, :orange, :firebrick]), yflip = false))
+
+# Transient metabolic rate isn't tracked per step (it's a fixed input per phase,
+# not solved) - implied mean cost = time-weighted average of the two fixed rates.
+mean_active_fraction = dropdims(mean(grid_transient_result.active_fraction; dims = Ti); dims = Ti)
+mean_MHF_transient = mean_active_fraction .* ustrip(u"W", active_metabolic_heat_flow) .+
+    (1 .- mean_active_fraction) .* ustrip(u"W", resting_metabolic_heat_flow)
+display(plot(mean_MHF_transient .* u"W";
+    title = "Implied mean metabolic heat flow (transient model)",
+    seriestype = :heatmap, color = MHF_palette, yflip = false))

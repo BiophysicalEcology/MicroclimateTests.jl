@@ -27,7 +27,9 @@ const DEM_SOURCE     = CRUCL2
 const YEAR           = 2000      # ignored by CRUCL2's climatology; used by TerraClimate etc.
 
 # place and time
-points = [geocode("Palm Springs, CA")]
+location = "Palm Springs, CA"
+points = [geocode(location)]
+site_name = points[1].display_name
 dates = Date(YEAR, 1, 1):Day(1):Date(YEAR, 12, 31)
 
 # just for plotting
@@ -302,7 +304,7 @@ end
 
 display(plot(panels_Tb...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
     xlabel = "hour", left_margin = 4Plots.mm,
-    plot_title = "Body temperature — generic lizard, Madison WI\n" *
+    plot_title = "Body temperature, $site_name\n" *
                  "(red = Tb, blue dashed = T_air, orange dashed = active range)"))
 
 # ── Fig. 2 – Annual heatmaps (body temp, active %, basking %) ─────────────
@@ -566,7 +568,7 @@ end
 
 display(plot(panels_transient...; layout = (ceil(Int, ndays / 3), 3), size = (1200, 900),
     xlabel = "hour", left_margin = 4Plots.mm,
-    plot_title = "Body temperature — steady-state vs transient (one-lump) models, Madison WI"))
+    plot_title = "Body temperature — steady-state vs transient (one-lump) models, $site_name"))
 
 # ── Fig. 2 (transient) – Tb heatmap + active/basking-fraction heatmaps, side
 #    by side with steady-state (cf. Fig. 2 above). Body temperature is
@@ -710,7 +712,7 @@ end
 # ── Grid microclimate (reuses `model`/`dates` from the point run above) ───
 # `geocode` returns a `GeocodeResult` with a `.extent` (buffered bounding box)
 # alongside the point — use it directly as the raster area, as in crucl2.jl.
-grid_site     = geocode("Kulgera, Australia"; buffer = 2.0)
+grid_site     = geocode(location; buffer = 2.0)
 raster_area   = grid_site.extent
 grid_template = load_template(WEATHER_SOURCE, grid_site)
 
