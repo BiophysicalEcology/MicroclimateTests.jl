@@ -287,11 +287,14 @@ function prefetch_weather_batch!(weather_cache, meta_all, sites, mapper_model, s
             worker = take!(weather_result.cache_pool)
             for (i, (site_num, _, _)) in enumerate(batch)
                 inputs = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(i),))
-                weather_cache[(site_num, _sim_start, _sim_end)] = inputs
+                # Disk cache written before the in-memory assignment so an
+                # expensive fetch survives even if weather_cache turns out to
+                # be stale (e.g. a leftover Dict with an old key type).
                 if cache_weather
                     mkpath(weather_cache_dir)
                     serialize(_weather_cache_path(site_num, _sim_start, _sim_end), inputs)
                 end
+                weather_cache[(site_num, _sim_start, _sim_end)] = inputs
             end
             put!(weather_result.cache_pool, worker)
         end
@@ -350,11 +353,14 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
         worker = take!(weather_result.cache_pool)
         inputs = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
         put!(weather_result.cache_pool, worker)
-        weather_cache[wc_key] = inputs
+        # Disk cache written before the in-memory assignment so an expensive
+        # fetch survives even if weather_cache turns out to be stale (e.g. a
+        # leftover Dict with an old key type).
         if cache_weather
             mkpath(weather_cache_dir)
             serialize(_weather_disk_cache, inputs)
         end
+        weather_cache[wc_key] = inputs
     else
         println("\nUsing cached weather forcing ($_sim_start to $_sim_end).")
     end
@@ -534,6 +540,7 @@ function write_nmr_inputs(prep)
 
     _nmr_site_dir = joinpath(nmr_out_dir, string(site_num))
     _nmr_metout   = joinpath(_nmr_site_dir, "metout.csv")
+    compare_nmr || return _nmr_site_dir, false
     needs_run = run_nmr && (!reuse_nmr || !isfile(_nmr_metout))
     if needs_run
         mkpath(_nmr_site_dir)
@@ -616,6 +623,10 @@ end
 # `max_concurrent` (default: all available cores) since each is a real process
 # with its own memory footprint — launching dozens at once would thrash.
 function run_nmr_batch!(preps; max_concurrent = Sys.CPU_THREADS)
+    if !compare_nmr
+        println("\ncompare_nmr = false — skipping NicheMapR entirely.")
+        return nothing
+    end
     to_run = Tuple{Int,String}[]
     for prep in preps
         nmr_dir, needs_run = write_nmr_inputs(prep)
@@ -702,10 +713,13 @@ function report_site_results(prep, micro_out, julia_solve_time;
     _sim_start, _sim_end = sim_start, sim_end
 
     # ── NicheMapR outputs (optional) ───────────────────────────────────────
-    println("\nLooking for NicheMapR outputs in $nmr_out_dir ...")
-    metout_df = try_read(joinpath(nmr_out_dir, string(site_num), "metout.csv"),    "metout.csv")
-    soil_df   = try_read(joinpath(nmr_out_dir, string(site_num), "soil.csv"),      "soil.csv")
-    smoist_df = try_read(joinpath(nmr_out_dir, string(site_num), "soilmoist.csv"), "soilmoist.csv")
+    metout_df = soil_df = smoist_df = nothing
+    if compare_nmr
+        println("\nLooking for NicheMapR outputs in $nmr_out_dir ...")
+        metout_df = try_read(joinpath(nmr_out_dir, string(site_num), "metout.csv"),    "metout.csv")
+        soil_df   = try_read(joinpath(nmr_out_dir, string(site_num), "soil.csv"),      "soil.csv")
+        smoist_df = try_read(joinpath(nmr_out_dir, string(site_num), "soilmoist.csv"), "soilmoist.csv")
+    end
 
     has_nmr = !isnothing(metout_df) && !isnothing(soil_df) && !isnothing(smoist_df)
     nmr = nothing

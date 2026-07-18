@@ -41,8 +41,11 @@ const WEATHER_SOURCE_START = Dict(
 )
 
 # ── NicheMapR via R ───────────────────────────────────────────────────────────
+# compare_nmr = false: skip NicheMapR entirely -- no R call, no CSV writing,
+# no reading of nmr_outputs/ -- for a Julia-only run against observations.
 # run_nmr = true: call run_nmr.R with Julia's forcing to produce NMR outputs.
 # reuse_nmr = true: skip R call if metout.csv already present.
+compare_nmr = true
 run_nmr     = true
 reuse_nmr   = true
 nmr_out_dir = joinpath(@__DIR__, "nmr_outputs")

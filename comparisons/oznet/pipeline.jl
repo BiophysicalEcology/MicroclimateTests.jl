@@ -185,11 +185,14 @@ function prepare_site(row, weather_cache; sim_start, sim_end, auto_date_range, m
         worker = take!(weather_result.cache_pool)
         inputs = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
         put!(weather_result.cache_pool, worker)
-        weather_cache[wc_key] = inputs
+        # Disk cache written before the in-memory assignment so an expensive
+        # fetch survives even if weather_cache turns out to be stale (e.g. a
+        # leftover Dict with an old key type from before a wc_key change).
         if cache_weather
             mkpath(weather_cache_dir)
             serialize(_weather_disk_cache, inputs)
         end
+        weather_cache[wc_key] = inputs
     else
         println("\nUsing cached weather forcing ($_sim_start to $_sim_end).")
     end
@@ -199,17 +202,35 @@ function prepare_site(row, weather_cache; sim_start, sim_end, auto_date_range, m
     f_doy    = dayofyear.(dates_vec)
     ndays    = length(f_doy)
     em = base_inputs.environment_minmax
-    f_tminn  = _minmax_series(em, :reference_temperature, :reference_temperature_min)
-    f_tmaxx  = _minmax_series(em, :reference_temperature, :reference_temperature_max)
-    f_rhminn = _minmax_series(em, :reference_humidity, :reference_humidity_min)
-    f_rhmaxx = _minmax_series(em, :reference_humidity, :reference_humidity_max)
-    f_ccmaxx = _minmax_series(em, :cloud_cover, :cloud_cover_max)
-    f_ccminn = _minmax_series(em, :cloud_cover, :cloud_cover_min)
-    f_wnminn = _minmax_series(em, :reference_wind_speed, :reference_wind_speed_min)
-    f_wnmaxx = _minmax_series(em, :reference_wind_speed, :reference_wind_speed_max)
+    if em === nothing
+        # Sub-daily-native sources (e.g. BARRA) leave environment_minmax
+        # unset -- derive daily min/max from the real hourly series instead.
+        eh = base_inputs.environment_hourly
+        f_tminn, f_tmaxx   = _daily_minmax(eh.reference_temperature, ndays)
+        f_rhminn, f_rhmaxx = _daily_minmax(eh.reference_humidity, ndays)
+        f_ccminn, f_ccmaxx = _daily_minmax(eh.cloud_cover, ndays)
+        f_wnminn, f_wnmaxx = _daily_minmax(eh.reference_wind_speed, ndays)
+    else
+        f_tminn  = _minmax_series(em, :reference_temperature, :reference_temperature_min)
+        f_tmaxx  = _minmax_series(em, :reference_temperature, :reference_temperature_max)
+        f_rhminn = _minmax_series(em, :reference_humidity, :reference_humidity_min)
+        f_rhmaxx = _minmax_series(em, :reference_humidity, :reference_humidity_max)
+        f_ccmaxx = _minmax_series(em, :cloud_cover, :cloud_cover_max)
+        f_ccminn = _minmax_series(em, :cloud_cover, :cloud_cover_min)
+        f_wnminn = _minmax_series(em, :reference_wind_speed, :reference_wind_speed_min)
+        f_wnmaxx = _minmax_series(em, :reference_wind_speed, :reference_wind_speed_max)
+    end
     f_rain   = base_inputs.environment_daily.rainfall
     f_tannul = base_inputs.environment_daily.deep_soil_temperature
     println("  $ndays days from $(nameof(weather_source_choice))")
+    # Sanity check for unit-conversion bugs in the rainfall pipeline -- compare
+    # against the Murrumbidgee catchment's known ~400-600 mm/yr.
+    mean_annual_rain_mm = ustrip(u"kg/m^2", sum(f_rain)) / (ndays / 365.25)
+    @show mean_annual_rain_mm
+    mean_cloud_cover   = mean((f_ccminn .+ f_ccmaxx) ./ 2)
+    mean_wind_speed_ms = mean(ustrip.(u"m/s", (f_wnminn .+ f_wnmaxx) ./ 2))
+    @show mean_cloud_cover
+    @show mean_wind_speed_ms
 
     # ── SLGA soil profile (live fetch + Cosby pedotransfer) ─────────────────
     println("\nFetching SLGA soil texture...")
@@ -223,7 +244,7 @@ function prepare_site(row, weather_cache; sim_start, sim_end, auto_date_range, m
     # (see micro_global.R) -- overrides the SLGA-derived mineral thermal
     # properties there with low-conductivity, high-heat-capacity litter
     # values, damping the diurnal amplitude near the surface.
-    soil_profile.mineral_conductivity[1:3] .= 0.2u"W/m/K"
+    soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
     soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
 
     # ── Observations ───────────────────────────────────────────────────────
@@ -313,6 +334,7 @@ function write_nmr_inputs(prep)
 
     _nmr_site_dir = joinpath(nmr_out_dir, site_name)
     _nmr_metout   = joinpath(_nmr_site_dir, "metout.csv")
+    compare_nmr || return _nmr_site_dir, false
     needs_run = run_nmr && (!reuse_nmr || !isfile(_nmr_metout))
     if needs_run
         mkpath(_nmr_site_dir)
@@ -373,6 +395,10 @@ end
 
 # ── Run NicheMapR for many prepared sites concurrently ───────────────────────
 function run_nmr_batch!(preps; max_concurrent = Sys.CPU_THREADS)
+    if !compare_nmr
+        println("\ncompare_nmr = false — skipping NicheMapR entirely.")
+        return nothing
+    end
     to_run = Tuple{String,String}[]
     for prep in preps
         nmr_dir, needs_run = write_nmr_inputs(prep)
@@ -450,10 +476,22 @@ function report_site_results(prep, micro_out, julia_solve_time;
        temp_depths_cm, moist_depths_cm, sim_depths_cm) = prep
     _sim_start, _sim_end = sim_start, sim_end
 
-    println("\nLooking for NicheMapR outputs in $nmr_out_dir ...")
-    soil_df   = try_read(joinpath(nmr_out_dir, site_name, "soil.csv"),      "soil.csv")
-    smoist_df = try_read(joinpath(nmr_out_dir, site_name, "soilmoist.csv"), "soilmoist.csv")
+    soil_df = smoist_df = metout_df = nothing
+    if compare_nmr
+        println("\nLooking for NicheMapR outputs in $nmr_out_dir ...")
+        soil_df   = try_read(joinpath(nmr_out_dir, site_name, "soil.csv"),      "soil.csv")
+        smoist_df = try_read(joinpath(nmr_out_dir, site_name, "soilmoist.csv"), "soilmoist.csv")
+        metout_df = try_read(joinpath(nmr_out_dir, site_name, "metout.csv"),    "metout.csv")
+    end
     has_nmr = !isnothing(soil_df) && !isnothing(smoist_df)
+    has_metout = !isnothing(metout_df)
+
+    # Node 1 is the literal surface (0 cm) -- the node _wet_surface_node!
+    # wets directly. Distinct from whichever node is nearest 4 cm below.
+    node1_moisture = micro_out.soil_moisture[:, 1]
+    @show sim_depths_cm[1]
+    @show extrema(node1_moisture)
+    @show mean(node1_moisture)
 
     nhours  = ndays * 24
     t_model = [DateTime(d) + Hour(h) for d in dates_vec for h in 0:23]
@@ -544,6 +582,16 @@ function report_site_results(prep, micro_out, julia_solve_time;
         end
     end
 
+    # Surface water pooling depth (kg/m^2 == mm) -- no obs equivalent in OzNet.
+    # NicheMapR's CONDEP (metout.csv) is the same quantity.
+    if make_plots && plot_surface_water
+        pool_vec = ustrip.(u"kg/m^2", micro_out.surface_water)
+        nmr_pool_vec = has_metout && nrow(metout_df) >= nhours ? Float64.(metout_df.CONDEP[1:nhours]) : Float64[]
+        pool_fig = plot(t_w, pool_vec[hm]; label="Julia", color=:black, lw=1.5,
+            title="Surface water pooling depth — $site_name", ylabel="mm")
+        !isempty(nmr_pool_vec) && plot!(pool_fig, t_w, nmr_pool_vec[hm]; label="NicheMapR", color=:blue, lw=1, alpha=0.7)
+    end
+
     if isfinite(julia_solve_time)
         @printf("\n  Julia solver runtime: %.2f s\n", julia_solve_time)
     end
@@ -561,11 +609,16 @@ function report_site_results(prep, micro_out, julia_solve_time;
             size=(900, 300 * length(moist_figs)), link=:x, plot_title="Soil moisture — $site_name")
         display_plots && display(temp_fig)
         display_plots && display(moist_fig)
+        plot_surface_water && display_plots && display(pool_fig)
         if save_outputs
             mkpath(joinpath(outputs_dir, "soil_temperature"))
             mkpath(joinpath(outputs_dir, "soil_moisture"))
             savefig(temp_fig, joinpath(outputs_dir, "soil_temperature", "$(site_name)_$(_sim_start)_$(_sim_end).$figure_format"))
             savefig(moist_fig, joinpath(outputs_dir, "soil_moisture", "$(site_name)_$(_sim_start)_$(_sim_end).$figure_format"))
+            if plot_surface_water
+                mkpath(joinpath(outputs_dir, "surface_water"))
+                savefig(pool_fig, joinpath(outputs_dir, "surface_water", "$(site_name)_$(_sim_start)_$(_sim_end).$figure_format"))
+            end
         end
     end
 

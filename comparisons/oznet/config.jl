@@ -11,7 +11,7 @@
 # pedotransfer model per site (pedotransfer_model_choice below), not a fixed
 # literature profile.
 
-ENV["RASTERDATASOURCES_PATH"] = "Z:"
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/" #"Z:"
 
 # Where the raw OzNet data lives (not part of this repo -- see README.md).
 const OZNET_DATA_DIR = raw"C:\Users\mrke\Dropbox\Datasets\oznet"
@@ -42,7 +42,7 @@ pedotransfer_model_choice = CosbyMultivariate()
 #   BARRA{BARRAC2,AUST04} — hourly, ~4 km regional reanalysis, 1979-present.
 #   NCEP{SurfaceFlux}   — daily, global reanalysis, coarser (T62 Gaussian
 #                          grid); the direct analogue of micro_ncep.
-weather_source_choice = BARRA{BARRAC2, AUST04}
+weather_source_choice = SILO#BARRA{BARRAC2, AUST04}
 
 const WEATHER_SOURCE_START = Dict(
     SILO                              => Date(1889, 1, 1),
@@ -59,8 +59,11 @@ ENV["SILO_EMAIL"] = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
 use_opendap_points = true
 
 # ── NicheMapR via R ───────────────────────────────────────────────────────────
+# compare_nmr = false: skip NicheMapR entirely -- no R call, no CSV writing,
+# no reading of nmr_outputs/ -- for a Julia-only run against observations.
 # run_nmr = true: call run_nmr.R with Julia's forcing to produce NMR outputs.
 # reuse_nmr = true: skip R call if metout.csv already present.
+compare_nmr = true
 run_nmr     = true
 reuse_nmr   = true
 nmr_out_dir = joinpath(@__DIR__, "nmr_outputs")
@@ -81,6 +84,9 @@ weather_cache_dir = joinpath(@__DIR__, "weather_cache")
 save_outputs  = true
 outputs_dir   = joinpath(@__DIR__, "julia_outputs")
 figure_format = "png"   # "png", "pdf", or "jpeg"
+
+# Surface water pooling depth plot (Julia's surface_water vs NMR's CONDEP).
+plot_surface_water = false
 
 # REFL = 0.2 in the original NicheMapR study (Australia_Soil_Test.Rmd) --
 # kept the same for comparability, rather than the 0.15 used in scan_snotel.

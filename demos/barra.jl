@@ -6,7 +6,7 @@ using NCDatasets
 using Dates, Statistics, Unitful, Plots
 using DataInterpolations: CubicSpline, ExtrapolationType
 
-ENV["RASTERDATASOURCES_PATH"] = "Z:" # "c:/Spatial_Data/"
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
 depths = ([0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
            20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0] ./ 100.0) .* u"m"
@@ -249,7 +249,7 @@ problem = MicroVectorProblem(;
     init = (; soil_moisture = init_soil_moisture, soil_temperature = init_soil_temperature),
 )
 
-@time output = solve(problem);
+@time output = solve(problem)
 
 soil_T = output.soil_temperature[point=1]           # (Ti × depth)
 air_T  = output.air_temperature[point=1, height=2]  # 1.2 m

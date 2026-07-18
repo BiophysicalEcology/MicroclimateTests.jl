@@ -45,7 +45,7 @@ include("pipeline.jl")
 #   ["a1","k6"]     — only these site names
 #   5               — randomly sample this many sites (reproducible via
 #                      site_subset_seed) — handy for a quick multi-site test
-site_subset      = ["a1"]
+site_subset      = :all #["a1"]
 site_subset_seed = 1234
 
 # ── Simulation period ─────────────────────────────────────────────────────────
@@ -60,8 +60,8 @@ sim_end   = Date(2010, 12, 31)
 auto_date_range = true
 
 # Plot window — set either to nothing to show the full simulation period.
-plot_start = nothing #Date(2007, 1, 1)
-plot_end   = nothing #Date(2007, 1, 31)
+plot_start = Date(2007, 1, 1)
+plot_end   = Date(2007, 7, 31)
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  MAIN LOOP                                                               ║

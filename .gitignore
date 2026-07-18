@@ -14,3 +14,4 @@ comparisons/**/Map metadata export.csv
 benchmarks/**/results/
 benchmarks/**/*.csv
 data/
+.claude/settings.json

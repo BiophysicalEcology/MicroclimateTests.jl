@@ -28,7 +28,7 @@ model = MicroMapModel(;
         snow_model            = NoSnow(),
     ),
     dem_source              = CRUCL2,
-    weather_source          = CRUCL2,
+    weather_source          = CRUCL2, #WorldClim{Climate},
     soil_moisture_source    = CPCSoil,
     surface_albedo_source   = 0.15,
     roughness_height_source = 0.004u"m",
@@ -367,5 +367,5 @@ anim = @animate for h in 0:23
          yflip      = false)
 end
 
-gif(anim, "solar_$(month_names[anim_month]).gif"; fps = .25)
+gif(anim, "solar_$(month_names[anim_month]).gif"; fps = 1)
     
