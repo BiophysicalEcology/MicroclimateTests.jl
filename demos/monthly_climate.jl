@@ -6,7 +6,7 @@ using Rasters, RasterDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "Z:" # "c:/Spatial_Data/"
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
@@ -42,7 +42,7 @@ problem = MicroVectorProblem(;
 
 @time output = solve(problem);
 
-site = 16
+site = 1
 soil_T = output.soil_temperature[point=site]           # (Ti × depth)
 air_T  = output.air_temperature[point=site, height=2]  # 1.2 m
 rad    = output.global_radiation[point=site]
