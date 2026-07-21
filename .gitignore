@@ -16,5 +16,6 @@ benchmarks/**/*.csv
 ClimaLand/outputs/
 micropoint/outputs/
 micropoint/vignette/outputs/
+micropoint/below_canopy/outputs/
 data/
 .claude/settings.json
