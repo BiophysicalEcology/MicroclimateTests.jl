@@ -11,11 +11,8 @@ ENV["RASTERDATASOURCES_PATH"] = "Z:" # "c:/Spatial_Data/"
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-# Alice Springs — central Australia, hot arid climate.
-#points = [(133.88, -23.70)]
 points = [geocode("Alice Springs, Australia")]
-#points = [(-121.315, 44.058)]
- 
+
 # CRUCL2 is a 1961–1990 climatology — the year is ignored; any year works.
 dates = Date(2000, 1, 1):Day(1):Date(2000, 12, 31)
 
@@ -45,17 +42,18 @@ problem = MicroVectorProblem(;
 
 @time output = solve(problem);
 
-soil_T = output.soil_temperature[point=1]           # (Ti × depth)
-air_T  = output.air_temperature[point=1, height=2]  # 1.2 m
-rad    = output.global_radiation[point=1]
-rh     = output.relative_humidity[point=1, height=2]
-ws     = output.wind_speed[point=1, height=2]
+site = 16
+soil_T = output.soil_temperature[point=site]           # (Ti × depth)
+air_T  = output.air_temperature[point=site, height=2]  # 1.2 m
+rad    = output.global_radiation[point=site]
+rh     = output.relative_humidity[point=site, height=2]
+ws     = output.wind_speed[point=site, height=2]
 
 ti           = lookup(soil_T, Ti)
 depth_labels = reshape(string.(depths), 1, :)
 
 p1 = plot(collect(uconvert.(u"°C", soil_T)); label = depth_labels,
-          title = "Soil temperature — Alice Springs", legend = false)
+          title = points[site].display_name, legend = false)
 p2 = plot(collect(uconvert.(u"°C", air_T));  title = "Air temperature (1.2 m)",   legend = false)
 p3 = plot(collect(rad);    title = "Global radiation",           legend = false)
 p4 = plot(collect(rh);     title = "Relative humidity (1.2 m)", legend = false)
@@ -69,6 +67,8 @@ display(plot(p1, p2, p3, p4, p5; layout = (5, 1), size = (900, 1100), link = :x)
 
 raster_area = Extent(X = (110.0, 154), Y = (-45.0, -10))
 raster_area = Extent(X = (144.0, 149), Y = (-44.0, -40))
+location = "Alice Springs, Australia"
+raster_area = geocode(location; buffer = 2.0).extent
 
 # Use the CRUCL2 elv layer as the template so the output is at 10-minute resolution.
 crucl2_template = load_template(CRUCL2, raster_area)
@@ -91,24 +91,22 @@ raster_problem = MicroRasterProblem(;
 @time raster_output = solve(raster_problem)
 
 # Annual max/min soil surface temperature (depth index 1 = 0 cm).
-# Strip units before min/max to avoid Julia's typemax(Float64)=Inf initialiser
-# being rejected by Unitful's unit-compatibility check; reattach after.
-T_surface = ustrip.(u"°C", raster_output.soil_temperature[depth=1])
-max_Tsoil = dropdims(maximum(T_surface; dims = Ti); dims = Ti) .* u"°C"
-min_Tsoil = dropdims(minimum(T_surface; dims = Ti); dims = Ti) .* u"°C"
+T_surface = raster_output.soil_temperature[depth=1]
+max_Tsoil = uconvert.(u"°C", dropdims(maximum(T_surface; dims = Ti); dims = Ti)) 
+min_Tsoil = uconvert.(u"°C", dropdims(minimum(T_surface; dims = Ti); dims = Ti))
 
 T_palette = cgrad([:blue, :lightblue, :orange, :red, :purple])
 
 display(plot(max_Tsoil;
-    title = "Annual max soil surface temperature — central Australia (CRUCL2)",
+    title = "Annual max soil surface temperature (CRUCL2)",
     seriestype = :heatmap, color = T_palette, yflip = false))
 
 display(plot(min_Tsoil;
-    title = "Annual min soil surface temperature — central Australia (CRUCL2)",
+    title = "Annual min soil surface temperature (CRUCL2)",
     seriestype = :heatmap, color = T_palette, yflip = false))
 
 display(plot(max_Tsoil .- min_Tsoil;
-    title = "Annual soil surface temperature range — central Australia (CRUCL2)",
+    title = "Annual soil surface temperature range (CRUCL2)",
     seriestype = :heatmap, color = T_palette, yflip = false))
 
 # now SRTM DEM as the template
@@ -129,13 +127,15 @@ model_srtm = MicroMapModel(;
 )
 
 #srtm_area = Extent(X = (132.8, 133.0), Y = (-22.2, -22.0))
-srtm_area = Extent(X = (132.673, 132.773), Y = (-23.684, -23.584))
+#srtm_area = Extent(X = (132.673, 132.773), Y = (-23.684, -23.584))
+location = "Alice Springs, Australia"
+srtm_area = geocode(location; buffer = 0.025).extent
 
 srtm_template = load_template(SRTM, srtm_area)
 
 display(plot(srtm_template;
     seriestype = :heatmap,
-    title = "SRTM elevation — Alice Springs area",
+    title = "SRTM elevation",
     xlabel = "Longitude", ylabel = "Latitude",
     color = cgrad([:green, :tan, :brown, :white]),
     yflip = false))
@@ -154,9 +154,9 @@ srtm_problem = MicroRasterProblem(;
 # Annual max/min soil surface temperature (depth index 1 = 0 cm).
 # Strip units before min/max to avoid Julia's typemax(Float64)=Inf initialiser
 # being rejected by Unitful's unit-compatibility check; reattach after.
-T_surface = ustrip.(u"°C", srtm_output.soil_temperature[depth=1])
-max_Tsoil = dropdims(maximum(T_surface; dims = Ti); dims = Ti) .* u"°C"
-min_Tsoil = dropdims(minimum(T_surface; dims = Ti); dims = Ti) .* u"°C"
+T_surface = srtm_output.soil_temperature[depth=1]
+max_Tsoil = uconvert.(u"°C", dropdims(maximum(T_surface; dims = Ti); dims = Ti))
+min_Tsoil = uconvert.(u"°C", dropdims(minimum(T_surface; dims = Ti); dims = Ti))
 
 T_palette = cgrad([:blue, :lightblue, :orange, :red, :purple])
 
@@ -180,12 +180,14 @@ display(plot(max_Tsoil .- min_Tsoil;
 # CRUCL2 still provides elevation and atmospheric parameters for the solar calc.
 
 srtm_area = Extent(X = (132.673, 132.773), Y = (-23.684, -23.584))
+#location = "Alice Springs, Australia"
+#srtm_area = geocode(location; buffer = 0.1).extent
 
 srtm_template = read(crop(Raster(SRTM; extent = srtm_area, lazy = true); to = srtm_area, touches = true))
 
 display(plot(srtm_template;
     seriestype = :heatmap,
-    title = "SRTM elevation — Alice Springs area",
+    title = "SRTM elevation",
     xlabel = "Longitude", ylabel = "Latitude",
     color = cgrad([:green, :tan, :brown, :white]),
     yflip = false))

@@ -2,28 +2,33 @@
 # and ERA5 via PointDataSources.jl directly (no MicroclimateMapper solve
 # involved) and plots them together for a sanity comparison.
 
-using PointDataSources
+using PointDataSources, RasterDataSources
 using Dates, Statistics, Plots
+using Zarr, ZarrDatasets, CommonDataModel
+using Plots
 
 silo_email = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
 ENV["CDS_API_KEY"] = get(ENV, "CDS_API_KEY") do
     error("Set CDS_API_KEY as a user environment variable first")
 end
 
-using Zarr, ZarrDatasets, CommonDataModel
-r = getpoint(ERA5, :t2m; lon=133.8807, lat=-23.6980, date=(Date(2025,1,1), Date(2025,12,31)))
-
 # Alice Springs — central Australia, hot arid climate.
 lon, lat = 133.8807, -23.6980
-
-# BARRA-C2's cached range at Z:/BARRA; SILO/NCEP/ERA5 cover this comfortably too.
 date_range = (Date(2025, 1, 1), Date(2025, 12, 31))
+
+# ERA5 point access
+pointlayers(ERA5)
+era5_t2m = getpoint(ERA5, :t2m; lon, lat, date=date_range)
+plot(Date.(era5_t2m.times), era5_t2m.values .- 273.15; label = "ERA5 t2m", 
+    title = "ERA5 t2m at Alice Springs (2025)", xlabel = "Date", ylabel = "Temperature (°C)")
 
 # BARRA{...,Day} (not the Hour default) and NCEP{SurfaceFlux,2} (its own
 # native cadence is 6-hourly, aggregated to daily below) for like-for-like
 # daily comparison against SILO, rather than aggregating hourly data here.
 barra_source = PointDataSources.BARRA{BARRAC2, AUST04, Day}
 ncep_source  = PointDataSources.NCEP{SurfaceFlux, 2}
+pointlayers(barra_source)
+pointlayers(ncep_source)
 
 # ERA5 point access is a package extension -- only active once Rasters.jl +
 # ZarrDatasets.jl are loaded. Wrapped so the rest of the comparison still
