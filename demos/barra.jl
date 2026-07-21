@@ -8,8 +8,8 @@ using DataInterpolations: CubicSpline, ExtrapolationType
 
 ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
-depths = ([0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
-           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0] ./ 100.0) .* u"m"
+depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
+           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0] .* u"cm"
 heights = [0.01, 1.2]u"m"
 
 mineral_density       = 2.56u"Mg/m^3"
@@ -23,7 +23,7 @@ points = [geocode("Daly Waters, NT, Australia")]
 dates = Date(2025, 1, 1):Day(1):Date(2025, 12, 31)
 
 # Set true to fetch weather via direct point queries (PointDataSources.jl)
-use_point_query = false
+use_point_query = true
 
 if use_point_query
     lon0, lat0 = points[1].lon, points[1].lat

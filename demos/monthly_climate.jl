@@ -92,7 +92,7 @@ raster_problem = MicroRasterProblem(;
 
 # Annual max/min soil surface temperature (depth index 1 = 0 cm).
 T_surface = raster_output.soil_temperature[depth=1]
-max_Tsoil = uconvert.(u"°C", dropdims(maximum(T_surface; dims = Ti); dims = Ti)) 
+max_Tsoil = uconvert.(u"°C", dropdims(maximum(T_surface; dims = Ti); dims = Ti))
 min_Tsoil = uconvert.(u"°C", dropdims(minimum(T_surface; dims = Ti); dims = Ti))
 
 T_palette = cgrad([:blue, :lightblue, :orange, :red, :purple])
@@ -179,9 +179,10 @@ display(plot(max_Tsoil .- min_Tsoil;
 # SolarRadiation.jl clear-sky spectral model (slope/aspect/horizon-corrected).
 # CRUCL2 still provides elevation and atmospheric parameters for the solar calc.
 
-srtm_area = Extent(X = (132.673, 132.773), Y = (-23.684, -23.584))
-#location = "Alice Springs, Australia"
-#srtm_area = geocode(location; buffer = 0.1).extent
+#srtm_area = Extent(X = (132.673, 132.773), Y = (-23.684, -23.584))
+#srtm_area = Extent(X = (133.774, 133.986), Y = (-23.807, -23.592))
+location = "Alice Springs, Australia"
+srtm_area = geocode(location; buffer = 0.1).extent
 
 srtm_template = read(crop(Raster(SRTM; extent = srtm_area, lazy = true); to = srtm_area, touches = true))
 
@@ -233,6 +234,20 @@ srtm_terrain = terrain(solar_clearsky_cache)   # RasterStack — save for reuse
 @time solar_clearsky = solve!(solar_clearsky_cache)
 
 rad_palette = cgrad([:black, :blue, :lightblue, :orange, :yellow, :gold, :purple]);
+
+# options for the solar output layers in the MicroRasterProblem:
+# diffuse_horizontal
+# direct_horizontal
+# global_radiation
+# global_terrain
+# nir
+# par
+# uv_b
+variable_to_plot = dropdims(maximum(solar_clearsky.global_terrain; dims = Ti); dims = Ti)
+
+display(plot(variable_to_plot;
+    title = "",
+    seriestype = :heatmap, color = rad_palette, yflip = false))
 
 # =============================================================================
 # Cloud-corrected solar-only — Ångström-scaled clear-sky, no microclimate ODE
