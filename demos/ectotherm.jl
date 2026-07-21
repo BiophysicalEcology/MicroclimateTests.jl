@@ -135,7 +135,7 @@ available_environments = AvailableEnvironments(
 )
 
 # ── Step 2: Organism ──────────────────────────────────────────────────────
-shape_pars = DesertIguana(5070.0u"g", 1000.0u"kg/m^3")
+shape_pars = DesertIguana(70.0u"g", 1000.0u"kg/m^3")
 body       = Body(shape_pars, Naked())
 
 organism_traits = example_ectotherm_organism_traits(
