@@ -13,5 +13,8 @@ comparisons/**/*_outputs/
 comparisons/**/Map metadata export.csv
 benchmarks/**/results/
 benchmarks/**/*.csv
+ClimaLand/outputs/
+micropoint/outputs/
+micropoint/vignette/outputs/
 data/
 .claude/settings.json

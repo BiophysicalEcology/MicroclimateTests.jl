@@ -4,9 +4,6 @@
 # Swap WEATHER_SOURCE/DEM_SOURCE below (e.g. CRUCL2, TerraClimate, SILO, BARRA)
 # to run the same organism at the same point against a different climate
 # dataset — MicroclimateMapper resolves any of them onto the same interface.
-#
-# The organism is a generic 20 g lizard with temperate-zone tolerances.
-# Body allometry uses the DesertIguana shape (a cylindrical lizard form).
 
 using MicroclimateMapper
 using Microclimate
@@ -138,20 +135,25 @@ available_environments = AvailableEnvironments(
 )
 
 # ── Step 2: Organism ──────────────────────────────────────────────────────
-shape_pars = DesertIguana(20.0u"g", 1000.0u"kg/m^3")
+shape_pars = DesertIguana(5070.0u"g", 1000.0u"kg/m^3")
 body       = Body(shape_pars, Naked())
 
 organism_traits = example_ectotherm_organism_traits(
     activity_period         = Diurnal(),
-    target_temperature      = u"K"(32.0u"°C"),
-    active_temperature_min  = u"K"(28.0u"°C"),
-    active_temperature_max  = u"K"(37.0u"°C"),
-    basking_temperature_min = u"K"(20.0u"°C"),
+    target_temperature      = u"K"(38.5u"°C"),
+    active_temperature_min  = u"K"(38.0u"°C"),
+    active_temperature_max  = u"K"(43.0u"°C"),
+    basking_temperature_min = u"K"(37.8u"°C"),
     emerge_temperature_min  = u"K"(15.0u"°C"),
-    escape_temperature_min = u"K"(5.0u"°C"),
-    escape_temperature_max = u"K"(40.0u"°C"),
+    escape_temperature_min = u"K"(3.0u"°C"),
+    escape_temperature_max = u"K"(44.0u"°C"),
     can_climb               = false,
     can_retreat_underground = true,
+    can_seek_shade          = true,
+    can_solar_orient        = true,
+    can_press_to_ground     = true,
+    can_change_absorptivity = true,
+    burrow_shade_mode       = AdaptiveBurrowShade(), # MinShadeOnly()
     depths                  = depths,
     heights                 = heights,
     depth_foraging          = depths[1],      # surface
@@ -160,15 +162,10 @@ organism_traits = example_ectotherm_organism_traits(
     depth_max               = burrow_depth,
     height_min              = climb_height,   # pins the climb search to the transient driver's fixed climb height
     height_max              = climb_height,
-    burrow_shade_mode       = MaxShadeOnly(),
-    can_seek_shade          = true,
     shade_min               = minimum_shade,
     shade_max               = maximum_shade,
-    can_solar_orient        = true,
-    can_press_to_ground     = true,
-    can_change_absorptivity = true,
-    absorptivity_min        = 0.7,
-    absorptivity_max        = 0.9,
+    absorptivity_min        = 0.6,
+    absorptivity_max        = 0.8,
     absorptivity_step       = 0.01,
     can_pant                = false,
     pant_max                = 1.0,
@@ -179,8 +176,8 @@ organism_traits = example_ectotherm_organism_traits(
         evaporation_pars = example_ectotherm_evaporation_pars(
             eye_fraction = 0.0003, skin_wetness = 0.001),
         radiation_pars = example_ectotherm_radiation_pars(
-            body_absorptivity_dorsal  = 0.85,
-            body_absorptivity_ventral = 0.85,
+            body_absorptivity_dorsal  = 0.8,
+            body_absorptivity_ventral = 0.8,
             solar_orientation         = Intermediate(),
             body_emissivity_dorsal    = 0.95,
             body_emissivity_ventral   = 0.95),
@@ -223,6 +220,7 @@ height   = [r.height           for r in results]
 depth_nd = [r.depth_node       for r in results]
 shade    = [r.shade            for r in results]
 T_air    = low_shade_result.profile.air_temperature[:, 1]
+T_sub    = low_shade_result.soil_temperature[:, 1]
 
 T_body_C = ustrip.(u"°C", T_body)
 act      = [s isa Active ? 2 : s isa Basking ? 1 : 0 for s in state]
@@ -236,6 +234,7 @@ pos_cm = [depth_nd[i] > 1 ?
 month_ranges = [(m-1)*24+1 : m*24 for m in 1:ndays]
 month_Tb     = [T_body_C[r]              for r in month_ranges]
 month_Ta     = [ustrip.(u"°C", T_air[r]) for r in month_ranges]
+month_Ts     = [ustrip.(u"°C", T_sub[r]) for r in month_ranges]
 month_pos    = [pos_cm[r]               for r in month_ranges]
 month_shade  = [shade[r]                for r in month_ranges]
 month_state  = [state[r]                for r in month_ranges]
@@ -297,6 +296,7 @@ panels_Tb = map(1:ndays) do m
         lw = 2, color = :red, label = "",
         title = months[mod1(m, 12)], ylabel = "°C", ylim = (0, 50), titlefontsize = 9)
     plot!(p, hours, month_Ta[m]; lw = 1, color = :steelblue, linestyle = :dash, label = "")
+    plot!(p, hours, month_Ts[m]; lw = 1, color = :grey, linestyle = :dash, label = "")
     hline!(p, [T_active_min_C, T_active_max_C];
         color = :orange, linestyle = :dash, lw = 1, label = "")
     p
@@ -424,9 +424,9 @@ function underground_forcing(result, day_range, depth_node)
         atmospheric_pressure    = result.pressure[day_range],
         zenith_angle            = result.solar_radiation.zenith_angle[day_range],
         substrate_conductivity  = result.soil_thermal_conductivity[day_range, depth_node],
-        global_radiation         = fill(0.0u"W/m^2", n),
-        diffuse_fraction          = result.diffuse_fraction[day_range],
-        shade                      = fill(1.0, n),
+        global_radiation        = fill(0.0u"W/m^2", n),
+        diffuse_fraction        = result.diffuse_fraction[day_range],
+        shade                   = fill(1.0, n),
     ))
 end
 
@@ -437,16 +437,16 @@ transient_thermo = Vector{Any}(undef, ndays)   # thermoregulating (shuttles sun 
 # Movement, not just day/night, costs energy: active foraging and basking (postural
 # adjustment, moving into/out of sun) scale metabolic heat production above resting baseline;
 # unlisted phases (sleep/cool/climb/burrow/refuge) default to 1.0 (no scaling).
-metabolic_multipliers = (; forage = 1.0, bask = 1.0)
+ metabolic_multipliers = (; forage = 1.0, bask = 1.0)
 
 @time for m in 1:ndays
     day_range = (m-1)*24+1 : m*24
     times     = (0:23) .* 1.0u"hr" .|> u"s"
     sun_forcing        = diurnal_forcing(low_shade_result,  day_range, minimum_shade)
-    shade_forcing      = diurnal_forcing(high_shade_result, day_range, maximum_shade)
+    shade_forcing      = diurnal_forcing(low_shade_result, day_range, maximum_shade)
     climb_forcing      = diurnal_forcing(low_shade_result,  day_range, minimum_shade, climb_height_node)
-    underground_result = underground_forcing(high_shade_result, day_range, burrow_depth_node)
-    core_temperature_init = high_shade_result.soil_temperature[day_range[1], burrow_depth_node]  # starts in BurrowPhase at midnight
+    underground_result = underground_forcing(low_shade_result, day_range, burrow_depth_node)
+    core_temperature_init = low_shade_result.soil_temperature[day_range[1], burrow_depth_node]  # starts in BurrowPhase at midnight
 
     transient_open[m] = simulate_onelump(
         times, core_temperature_init, organism, env_pars, sun_forcing;

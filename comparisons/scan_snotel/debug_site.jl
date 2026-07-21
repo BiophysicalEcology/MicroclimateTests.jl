@@ -14,6 +14,7 @@
 using Microclimate, MicroclimateMapper, Unitful
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
 using Rasters, ArchGDAL, NCDatasets, RasterDataSources
+using Rasters.Extents: Extent
 using GeoInterface: Wrappers as GIW
 using Serialization
 

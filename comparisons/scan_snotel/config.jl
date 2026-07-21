@@ -12,11 +12,15 @@ ENV["RASTERDATASOURCES_PATH"] = "Z:"
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 infiltration_algorithm_choice  = MatricPotentialAlgorithm()   # swap to MatricFluxPotentialAlgorithm() etc. to compare
-convergence_choice             = FixedSoilTemperatureIterations(3)
+convergence_choice             = FixedSoilTemperatureIterations(10)
 rainfall_schedule_choice       = DailyRainfall()
 soil_moisture_strategy_choice  = DynamicSoilMoisture()
 dem_source_choice              = SRTM
 compute_terrain_choice         = false
+
+# Cosby et al. (1984) pedotransfer -- swap to CosbyUnivariate() or
+# Campbell1985() to compare. Used by prepare_site's per-site SoilGrids fetch.
+pedotransfer_model_choice = CosbyMultivariate()
 
 # ── Weather source ────────────────────────────────────────────────────────────
 # All sites here are SCAN/SNOTEL stations (continental USA), so every source
@@ -75,6 +79,17 @@ sim_cache_dir    = joinpath(@__DIR__, "julia_cache")
 reuse_weather   = true
 cache_weather   = true
 weather_cache_dir = joinpath(@__DIR__, "weather_cache")
+
+# ── Per-site soil texture cache (SoilGrids fetch, see prepare_site) ──────────
+# Soil texture doesn't depend on date range (unlike weather), so this is
+# keyed by site only. Delete a site's .jls file (or set reuse_soil = false)
+# to force a fresh fetch -- e.g. after changing pedotransfer_model_choice.
+reuse_soil   = true
+cache_soil   = true
+soil_cache_dir = joinpath(@__DIR__, "soil_cache")
+# Fallback area for SoilGrids if its point-query REST API is unavailable
+# (has happened before -- see datasources/soiltexture.jl's own comment).
+soil_area_buffer_deg = 0.05
 
 # ── Initial snow depth ────────────────────────────────────────────────────────
 # init_snow_from_obs = true: read initial snow depth from the first obs row.

@@ -1,5 +1,28 @@
 # utils.jl — generic analysis helpers for comparison.jl / debug_site.jl
 
+# Raw per-day series for one input of a bound DielForcing (e.g. min series).
+function _minmax_series(env, name::Symbol, want::Symbol)
+    spec = getproperty(Microclimate.MINMAX_FORCING_MODEL, name)
+    idx = findfirst(==(want), Microclimate.forcing_inputs(spec))
+    return getproperty(env.forcings, name).values[idx]
+end
+
+# Per-day (min, max) from a sub-daily series, for sources like BARRA that are
+# natively sub-daily -- Microclimate.jl solves straight off environment_hourly
+# for these and leaves environment_minmax = nothing, but NicheMapR (and our
+# own day-1 initial-condition estimate) still need daily min/max.
+function _daily_minmax(series::AbstractVector, ndays::Int)
+    per_day = length(series) ÷ ndays
+    mn = similar(series, ndays)
+    mx = similar(series, ndays)
+    @inbounds for d in 1:ndays
+        lo, hi = extrema(view(series, (d - 1) * per_day + 1 : d * per_day))
+        mn[d] = lo
+        mx[d] = hi
+    end
+    return mn, mx
+end
+
 # Linear interpolation through (xs, ys) at x; clamps to endpoints outside range.
 # Works for any numeric ys, including Unitful quantities.
 function _linterp(xs::Vector{Float64}, ys::Vector, x::Float64)

@@ -214,6 +214,61 @@ end
 _weather_cache_path(site_num, sim_start, sim_end) =
     joinpath(weather_cache_dir, "$(nameof(weather_source_choice))_$(site_num)_$(sim_start)_$(sim_end).jls")
 
+# Disk path for one site's cached soil profile. Keyed by site + pedotransfer
+# model so switching pedotransfer_model_choice can't reuse a stale cache.
+_soil_cache_path(site_num) =
+    joinpath(soil_cache_dir, "soilgrids_$(nameof(typeof(pedotransfer_model_choice)))_$(site_num).jls")
+
+_has_nan(x::Quantity) = isnan(ustrip(x))
+_has_nan(x::Real) = isnan(x)
+_has_nan(x::AbstractArray) = any(_has_nan, x)
+_has_nan(sp::SoilProfile) = _has_nan(sp.bulk_density) || _has_nan(sp.mineral_conductivity) ||
+    _has_nan(sp.mineral_heat_capacity) || _has_nan(sp.hydraulics.air_entry_water_potential) ||
+    _has_nan(sp.hydraulics.saturated_hydraulic_conductivity) || _has_nan(sp.hydraulics.campbell_b_parameter)
+
+# Per-site soil hydraulic profile: SoilGrids fetch + pedotransfer, cached to
+# disk. mineral_density/mineral_conductivity/mineral_heat_capacity/
+# root_density aren't produced by pedotransfer -- passed through as the fixed
+# organic-over-mineral profile from config.jl. Area (grid/raster) query, not
+# ISRIC's point REST API -- that endpoint is currently paused service-wide
+# (see datasources/soiltexture.jl), so going straight to the area form avoids
+# a guaranteed-failing request on every uncached site.
+#
+# A small area can land entirely on a no-data pixel (e.g. bare rock/water
+# mask), producing NaN texture values -- retries once with a much wider box,
+# then gives up (returns `nothing`) rather than silently caching NaNs; the
+# caller falls back to the fixed profile in that case.
+function _fetch_soil_profile(site_num, lon_dd, lat_dd)
+    _cache_file = _soil_cache_path(site_num)
+    if reuse_soil && isfile(_cache_file)
+        cached = deserialize(_cache_file)
+        if !_has_nan(cached.soil_profile)
+            println("  Loaded soil profile from disk cache: $_cache_file")
+            return cached
+        end
+        println("  Cached soil profile has NaNs -- re-fetching.")
+    end
+    result = nothing
+    for b in (soil_area_buffer_deg, soil_area_buffer_deg * 10)
+        println("  Fetching SoilGrids soil texture (area query, ±$(b)°)...")
+        area = Extent(X = (lon_dd - b, lon_dd + b), Y = (lat_dd - b, lat_dd + b))
+        candidate = build_soil_profile(SoilGrids, area;
+            depths, pedotransfer_model = pedotransfer_model_choice,
+            mineral_density, mineral_conductivity, mineral_heat_capacity, root_density)
+        if !_has_nan(candidate.soil_profile)
+            result = candidate
+            break
+        end
+        @warn "Site $site_num: SoilGrids area query (±$(b)°) returned NaN texture values (likely no-data coverage)."
+    end
+    isnothing(result) && return nothing
+    if cache_soil
+        mkpath(soil_cache_dir)
+        serialize(_cache_file, result)
+    end
+    return result
+end
+
 # ── Batch-prefetch weather forcing for many sites in one MicroVectorProblem ──
 # Reading each (variable, year) file's cropped region separately per site
 # means redundantly re-decompressing overlapping/nearby chunks once per site.
@@ -322,6 +377,37 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
     _sim_start = resolved.sim_start
     _sim_end   = resolved.sim_end
 
+    # ── Per-site soil hydraulic profile (SoilGrids fetch + pedotransfer, cached) ─
+    # Replaces the site-329-fixed `soil_profile` parameter for the actual
+    # simulation below -- that parameter is still used, unchanged, for the
+    # weather-fetch calls above/below (soil-independent, just needs *a*
+    # structurally valid SoilProfile).
+    println("\nFetching per-site soil profile...")
+    soil_result = _fetch_soil_profile(site_num, lon_dd, lat_dd)
+    _rep_idx = argmin(abs.(ustrip.(u"m", depths) .* 100.0 .- 5.0))
+    if isnothing(soil_result)
+        @warn "Site $site_num: no usable SoilGrids data -- falling back to the fixed soil profile."
+        site_soil_profile        = soil_profile
+        site_campbell_b          = campbell_b
+        site_air_entry_potential = air_entry_potential
+        site_sat_hydraulic_cond  = sat_hydraulic_cond
+        site_bulk_density        = bulk_density
+        site_saturation_moisture = ustrip(saturation_moisture)
+    else
+        site_soil_profile = soil_result.soil_profile
+        # Single representative scalars (5cm node) for R-model translations
+        # (micropoint) that use one uniform value per parameter, not a full
+        # depth-resolved profile.
+        site_campbell_b          = soil_result.campbell_b[_rep_idx]
+        site_air_entry_potential = soil_result.air_entry_potential[_rep_idx]
+        site_sat_hydraulic_cond  = soil_result.saturated_conductivity[_rep_idx]
+        site_bulk_density        = site_soil_profile.bulk_density[_rep_idx]
+        site_saturation_moisture = 1.0 - ustrip(u"Mg/m^3", site_bulk_density) / ustrip(u"Mg/m^3", mineral_density)
+    end
+    println("  Soil @ 5cm: b=$(round(site_campbell_b,digits=2)) " *
+            "psi_e=$(round(ustrip(u"J/kg",site_air_entry_potential),digits=3))J/kg " *
+            "Ksat=$(site_sat_hydraulic_cond) Smax=$(round(site_saturation_moisture,digits=3))")
+
     # ── Daily forcing from the chosen weather source (via MicroclimateMapper) ─
     dates_range = _sim_start:Day(1):_sim_end
     wc_key = (site_num, _sim_start, _sim_end)
@@ -369,14 +455,25 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
     dates_vec = MicroclimateMapper._normalise_dates(dates_range)  # Vector{Date}, real calendar (leap years included)
     f_doy    = dayofyear.(dates_vec)   # real calendar DOY
     ndays    = length(f_doy)
-    f_tminn  = base_inputs.environment_minmax.reference_temperature_min  # Unitful K
-    f_tmaxx  = base_inputs.environment_minmax.reference_temperature_max  # Unitful K
-    f_rhminn = base_inputs.environment_minmax.reference_humidity_min     # 0–1 fraction
-    f_rhmaxx = base_inputs.environment_minmax.reference_humidity_max     # 0–1 fraction
-    f_ccmaxx = base_inputs.environment_minmax.cloud_max                 # 0–1 fraction
-    f_ccminn = base_inputs.environment_minmax.cloud_min                 # 0–1 fraction
-    f_wnminn = base_inputs.environment_minmax.reference_wind_min        # Unitful m/s
-    f_wnmaxx = base_inputs.environment_minmax.reference_wind_max        # Unitful m/s
+    em = base_inputs.environment_minmax
+    if em === nothing
+        # Sub-daily-native sources (e.g. BARRA) leave environment_minmax
+        # unset -- derive daily min/max from the real hourly series instead.
+        eh = base_inputs.environment_hourly
+        f_tminn, f_tmaxx   = _daily_minmax(eh.reference_temperature, ndays)
+        f_rhminn, f_rhmaxx = _daily_minmax(eh.reference_humidity, ndays)
+        f_ccminn, f_ccmaxx = _daily_minmax(eh.cloud_cover, ndays)
+        f_wnminn, f_wnmaxx = _daily_minmax(eh.reference_wind_speed, ndays)
+    else
+        f_tminn  = _minmax_series(em, :reference_temperature, :reference_temperature_min)
+        f_tmaxx  = _minmax_series(em, :reference_temperature, :reference_temperature_max)
+        f_rhminn = _minmax_series(em, :reference_humidity, :reference_humidity_min)
+        f_rhmaxx = _minmax_series(em, :reference_humidity, :reference_humidity_max)
+        f_ccmaxx = _minmax_series(em, :cloud_cover, :cloud_cover_max)
+        f_ccminn = _minmax_series(em, :cloud_cover, :cloud_cover_min)
+        f_wnminn = _minmax_series(em, :reference_wind_speed, :reference_wind_speed_min)
+        f_wnmaxx = _minmax_series(em, :reference_wind_speed, :reference_wind_speed_max)
+    end
     f_rain   = base_inputs.environment_daily.rainfall                  # Unitful kg/m²
     f_tannul = base_inputs.environment_daily.deep_soil_temperature      # Unitful K
     println("  $ndays days from $(nameof(weather_source_choice))")
@@ -461,7 +558,7 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
         join([@sprintf("%.1f", ustrip(uconvert(u"°C", T))) for T in initial_st], ", ") * " °C")
 
     # --- Soil moisture ---
-    sat_sm = ustrip(saturation_moisture)
+    sat_sm = site_saturation_moisture
     sm_obs_map = [(:SMS_5cm, 5), (:SMS_10cm, 7), (:SMS_20cm, 11),
                   (:SMS_50cm, 15), (:SMS_100cm, 17)]
     sm_known_d = Float64[];  sm_known_v = Float64[]
@@ -498,13 +595,11 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
     println("  Initial snow depth: $(round(ustrip(initial_snow_depth), digits=1)) cm")
 
     # ── Build the final MicroProblem ──────────────────────────────────────────
-    # `micro_model`/`soil_profile` were already built (site-independent);
-    # `base_inputs.site`/`.environment_minmax`/`.environment_daily`/
-    # `.environment_hourly` came from the MicroclimateMapper weather fetch —
-    # only the obs-derived initial conditions are added here.
+    # Uses site_soil_profile (this site's own), not the `soil_profile`
+    # parameter (only used above for the weather-fetch calls).
     inputs = MicroInputs(;
         site               = base_inputs.site,
-        soil_profile,
+        soil_profile       = site_soil_profile,
         environment_minmax = base_inputs.environment_minmax,
         environment_daily  = base_inputs.environment_daily,
         environment_hourly = base_inputs.environment_hourly,
@@ -525,6 +620,8 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
               f_tminn, f_tmaxx, f_rhminn, f_rhmaxx, f_ccmaxx, f_ccminn,
               f_wnminn, f_wnmaxx, f_rain, f_tannul,
               obs, initial_st, initial_sm, initial_snow_depth,
+              site_soil_profile, site_campbell_b, site_air_entry_potential,
+              site_sat_hydraulic_cond, site_saturation_moisture, site_bulk_density,
               problem)
 end
 

@@ -22,6 +22,7 @@
 using Microclimate, MicroclimateMapper, Unitful
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
 using Rasters, ArchGDAL, NCDatasets, RasterDataSources
+using Rasters.Extents: Extent
 using GeoInterface: Wrappers as GIW
 using Serialization
 using Random
@@ -48,7 +49,7 @@ sites      = [310]   # ignored when auto_sites = true
 #   20             — randomly sample this many discovered sites (reproducible
 #                     via site_subset_seed) — handy for a quick multi-site
 #                     test without waiting on the full set
-site_subset      = 16 #:all
+site_subset      = 30 #:all
 site_subset_seed = 1234
 
 # ── Simulation period ─────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ sim_end   = Date(2013, 12, 31)
 # (intersected with the chosen weather source's availability — see
 # WEATHER_SOURCE_START in config.jl — through yesterday).
 auto_date_range = true
-max_sim_years   = 5    # cap simulation to this many most-recent years of obs data
+max_sim_years   = 3    # cap simulation to this many most-recent years of obs data
 
 # Plot window — set either to nothing to show the full simulation period.
 plot_start = nothing
