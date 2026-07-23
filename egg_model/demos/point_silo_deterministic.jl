@@ -70,7 +70,7 @@ site = geocode("Bendigo, Australia")
 points = [site]
 # whole calendar year only, per current SILO/point-query constraints.
 dates = Date(2020, 1, 1):Day(1):Date(2021, 12, 31)
-use_cache = false   # cache the SILO point query to avoid repeated downloads
+use_cache = true   # cache the SILO point query to avoid repeated downloads
 
 # Campbell & Norman (1998) Table 9.1 texture-class hydraulic parameters
 # (matches NicheMapR's CampNormTbl9_1) -- air_entry is the table's magnitude
