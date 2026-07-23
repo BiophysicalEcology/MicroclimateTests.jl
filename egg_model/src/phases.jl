@@ -159,25 +159,19 @@ end
 # every chunk sidesteps this regardless of which condition is involved,
 # instead of needing this function to guess a tolerance at all.
 #
-# recursive (not `for`/`map`) so it fully unrolls at compile time regardless
-# of how many conditions there are -- same rationale as _flatten_tuples above.
+# recursive so it unrolls fully regardless of tuple length -- see _flatten_tuples.
 @inline _fill_conditions!(out, ::Tuple{}, i, u, t) = out
 @inline function _fill_conditions!(out, conditions::Tuple, i, u, t)
     out[i] = first(conditions)(u, t)
     _fill_conditions!(out, Base.tail(conditions), i + 1, u, t)
 end
 
-# One VectorContinuousCallback over all conditions, not a CallbackSet of one
-# ContinuousCallback per condition. With ~15-20 conditions (arrest windows,
-# quiescence windows, survival/temperature/hydric thresholds), a CallbackSet
-# holds that many distinct ContinuousCallback *types* in one heterogeneous
-# Tuple -- confirmed by allocation profiling that OrdinaryDiffEq's rootfinding
-# falls back to a dynamically-typed path over that tuple (visible as
-# Memory{Any} and individual model-struct allocations in the profile),
-# reboxing captured state on every root search. A single VectorContinuousCallback
-# is one concrete, homogeneous callback type regardless of condition count,
-# which avoids that path entirely -- this is SciML's own documented fix for
-# "many chained conditions" (see VectorContinuousCallback's docstring).
+# One VectorContinuousCallback over all conditions rather than a CallbackSet
+# of one ContinuousCallback per condition -- a CallbackSet this wide mixes
+# ~15-20 distinct ContinuousCallback types in one heterogeneous Tuple, which
+# pushes OrdinaryDiffEq's rootfinding onto a boxing, dynamically-typed path.
+# A single VectorContinuousCallback is one concrete type regardless of
+# condition count, avoiding that.
 function _callback_set(conditions::Tuple)
     n = length(conditions)
     SciMLBase.VectorContinuousCallback(
@@ -245,22 +239,15 @@ function simulate_egg(egg_model::EggModel, pars::EggParameters, initial_state::E
     # the exact same compiled solve() specialization.
     callback = _callback_set(conditions)
 
-    # One integrator, built once and reused (via reinit!) across every
-    # bout-chunk, instead of a fresh ODEProblem+solve() per chunk. A fresh
-    # solve() re-merges/re-boxes the callback closures into a new CallbackSet
-    # and rebuilds DEOptions on every call -- with ~100-200 chunks per egg and
-    # 12 eggs per sweep, that dominated allocation (confirmed by profiling:
-    # ~25% of bytes were callback-tuple reconstructions, not RHS evaluations,
-    # which allocate a few hundred bytes each). reinit! resets the state/time
-    # span on the existing integrator without rebuilding any of that.
-    # need_hourly_points is fixed for the whole call, so the save behaviour
-    # (saveat vs every-step) only needs configuring once, here.
-    # qualified (like SciMLBase.successful_retcode/ReturnCode below) rather
-    # than bare `init`/`reinit!`/`solve!` -- with the full package set
-    # point_silo_deterministic.jl loads (Rasters/RasterDataSources/etc.),
-    # another dependency also exports one of these generic-verb names, which
-    # makes the bare name ambiguous/undefined rather than resolving to
-    # SciMLBase's.
+    # One integrator, built once and reused across every bout-chunk via
+    # reinit!/solve! rather than a fresh ODEProblem+solve() per chunk, which
+    # would rebuild the callback set and DEOptions each time. need_hourly_points
+    # is fixed for the whole call, so save behaviour (saveat vs every-step) is
+    # configured once here.
+    # SciMLBase-qualified (like successful_retcode/ReturnCode below): with the
+    # full package set point_silo_deterministic.jl loads, another dependency
+    # also exports one of these generic-verb names, making the bare name
+    # ambiguous rather than resolving to SciMLBase's.
     problem = ODEProblem{false}(egg_rhs, u, (t, t_end), p)
     integrator = need_hourly_points ?
         SciMLBase.init(problem, Tsit5(); callback, saveat=saveat_hr, dtmax=1.0) :
