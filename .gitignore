@@ -19,3 +19,10 @@ micropoint/vignette/outputs/
 micropoint/below_canopy/outputs/
 data/
 .claude/settings.json
+egg_model/demos/microclimate_cache.jls
+.gitignore
+egg_model/demos/bendigo_julia_spring_output.csv
+egg_model/demos/bendigo_r_reference_output.csv
+.gitignore
+egg_model/demos/bendigo_feb1_driver.csv
+egg_model/demos/bendigo_julia_reference_output.csv
