@@ -247,10 +247,13 @@ end
 oviposition_dates = [Date(2020, m, 1) for m in 1:1:12]
 println("Trying oviposition dates: ", oviposition_dates)
 oviposition_results = map(oviposition_dates) do oviposition_date
-    @time r = run_from_oviposition(oviposition_date; save_trajectory=true)
+    r = run_from_oviposition(oviposition_date; save_trajectory=true)
     start_hr = oviposition_offset(oviposition_date, dates)
     outcome = if r.hatched
-        "hatched after $(round(typeof(1.0u"d"), r.hatch_time - start_hr, digits=1))"
+        # r.hatch_time is absolute (hours since first(dates)), so adding it
+        # straight to first(dates) gives the actual calendar hatch date.
+        hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
+        "hatched after $(round(typeof(1.0u"d"), r.hatch_time - start_hr, digits=1)) (on $hatch_date)"
     elseif r.died
         "died of $(r.death_cause) after $(round(typeof(1.0u"d"), r.death_time - start_hr, digits=1))"
     else
@@ -279,16 +282,21 @@ let
         maximum_mass_achieved=pars.initial_egg_mass, arrest_state=initial_arrest_state(no_quiescence_arrest),
     )
     r = simulate_egg(no_quiescence_model, pars, initial_state, soil_hydraulics, forcing, tspan)
-    outcome = r.hatched ? "hatched after $(round(typeof(1.0u"d"), r.hatch_time - start_hr, digits=1))" : "did not hatch in $(max_duration)"
+    outcome = if r.hatched
+        hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
+        "hatched after $(round(typeof(1.0u"d"), r.hatch_time - start_hr, digits=1)) (on $hatch_date)"
+    else
+        "did not hatch in $(max_duration)"
+    end
     println("no-quiescence sanity check -> $outcome (final development_fraction=$(r.final_state.development_fraction))")
 end
 
 # trajectories for every oviposition date, overlaid on the same panels.
 using Plots
-p1 = plot(; ylabel="development\nfraction", title="Egg development by lay date")#, legend=:outerright)
-p2 = plot(; ylabel="egg mass\n(mg)", legend=false)
-p3 = plot(; ylabel="water\npotential (J/kg)", legend=false)
-p4 = plot(; ylabel="egg\ntemperature (°C)", xlabel="date", legend=false)
+p1 = plot(; ylabel="development", title="Egg development by lay date", legend=false)#, legend=:outerright)
+p2 = plot(; ylabel="egg mass", legend=false)
+p3 = plot(; ylabel="water\npotential", legend=false)
+p4 = plot(; ylabel="egg\ntemperature", xlabel="date", legend=false)
 for (oviposition_date, r) in zip(oviposition_dates, oviposition_results)
     traj = r.trajectory
     # traj.t is simulation time in hours since dates[1] -- convert to actual
@@ -296,8 +304,8 @@ for (oviposition_date, r) in zip(oviposition_dates, oviposition_results)
     # occurred through the year, rather than all overlaid from a shared zero.
     actual_times = DateTime(first(dates)) .+ Dates.Second.(round.(Int, ustrip.(u"s", traj.t)))
     label = string(oviposition_date)
-    plot!(p1, actual_times, traj.development_fraction; label)
-    plot!(p2, actual_times, collect(uconvert.(u"mg", traj.egg_mass)); label)
+    plot!(p1, actual_times, traj.development_fraction, ylims = (0, 1); label)
+    plot!(p2, actual_times, collect(uconvert.(u"mg", traj.egg_mass)), ylims = (0.0u"mg", pars.initial_egg_mass * 2.0); label)
     plot!(p3, actual_times, collect(uconvert.(u"J/kg", traj.egg_water_potential)); label)
     plot!(p4, actual_times, collect(uconvert.(u"°C", traj.temperature)); label)
 end
