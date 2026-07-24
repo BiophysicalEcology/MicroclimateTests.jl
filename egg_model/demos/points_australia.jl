@@ -41,11 +41,12 @@ ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"#"z:/"
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
-nest_depth = 10.0u"cm"
+nest_depth = 5.0u"cm"
 
 soil_source = :sandy_loam
 
 dates = Date(2010, 1, 1):Day(1):Date(2011, 12, 31) # for microclimate
+day_range = 1:(length(dates) * 24)
 max_duration = 720.0u"d"
 forcing_end_hr = length(day_range) * 1.0u"hr"
 oviposition_date = Date(2010, 4, 1)
@@ -151,55 +152,49 @@ soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[soil_source], 
 nest_node = nearest_node(nest_depth, depths)
 environment_pars = example_environment_pars()
 
-# Batched solve MicroVectorProblem over all n_points_to_run. Each batch is
-# also cached to disk.
+# Batched solve MicroVectorProblem over all n_points_to_run, caching
+# to disk along the way 
 batch_size = 100
 
 n = length(points)
 n_batches = cld(n, batch_size)
-forcings = Vector{Any}(undef, n)
-day_range = 1:(length(dates) * 24)
+raw_results = Vector{Any}(undef, n)
 
-forcings_cache_path = joinpath(output_dir, "points_australia_forcings_n$(n_points_to_run).jls")
-if isfile(forcings_cache_path) && use_cache
-    println("Loading cached forcings from $forcings_cache_path...")
-    forcings = deserialize(forcings_cache_path)
-else
-    for b in 1:n_batches
-        i_start, i_end = (b - 1) * batch_size + 1, min(b * batch_size, n)
-        batch_points = points[i_start:i_end]
-        batch_cache_path = joinpath(output_dir, "points_australia_batch$(b)of$(n_batches)_n$(n_points_to_run).jls")
+for b in 1:n_batches
+    i_start, i_end = (b - 1) * batch_size + 1, min(b * batch_size, n)
+    batch_points = points[i_start:i_end]
+    batch_cache_path = joinpath(output_dir, "points_australia_rawbatch$(b)of$(n_batches)_n$(n_points_to_run).jls")
 
-        batch_forcings = if isfile(batch_cache_path) && use_cache
-            println("Loading cached batch $b/$n_batches ($(length(batch_points)) points)...")
-            deserialize(batch_cache_path)
-        else
-            println("Solving SILO microclimate for batch $b/$n_batches ($(length(batch_points)) points)...")
-            batch_problem = MicroVectorProblem(;
-                model, points=batch_points, dates, soil_profile,
-                init = (; soil_moisture = fill(0.2, length(depths))),
+    batch_raw = if isfile(batch_cache_path) && use_cache
+        println("Loading cached raw batch $b/$n_batches ($(length(batch_points)) points)...")
+        deserialize(batch_cache_path)
+    else
+        println("Solving SILO microclimate for batch $b/$n_batches ($(length(batch_points)) points)...")
+        batch_problem = MicroVectorProblem(;
+            model, points=batch_points, dates, soil_profile,
+            init = (; soil_moisture = fill(0.2, length(depths))),
+        )
+        @time batch_output = solve(batch_problem)
+        result = map(1:length(batch_points)) do i
+            (;
+                soil_temperature          = collect(batch_output.soil_temperature[point=i]),
+                soil_moisture             = collect(batch_output.soil_moisture[point=i]),
+                soil_water_potential      = collect(batch_output.soil_water_potential[point=i]),
+                soil_thermal_conductivity = collect(batch_output.soil_thermal_conductivity[point=i]),
+                soil_humidity             = collect(batch_output.soil_humidity[point=i]),
             )
-            @time batch_output = solve(batch_problem)
-            result = map(1:length(batch_points)) do i
-                result_i = (;
-                    soil_temperature          = collect(batch_output.soil_temperature[point=i]),
-                    soil_moisture             = collect(batch_output.soil_moisture[point=i]),
-                    soil_water_potential      = collect(batch_output.soil_water_potential[point=i]),
-                    soil_thermal_conductivity = collect(batch_output.soil_thermal_conductivity[point=i]),
-                    soil_humidity             = collect(batch_output.soil_humidity[point=i]),
-                )
-                egg_nest_forcing(result_i, day_range, nest_node, environment_pars)
-            end
-            serialize(batch_cache_path, result)
-            batch_output = nothing
-            batch_problem = nothing
-            GC.gc()
-            result
         end
-        forcings[i_start:i_end] .= batch_forcings
+        serialize(batch_cache_path, result)
+        batch_output = nothing
+        batch_problem = nothing
+        GC.gc()
+        result
     end
-    serialize(forcings_cache_path, forcings)
+    raw_results[i_start:i_end] .= batch_raw
 end
+
+# extract forcing data for chosen nest node
+forcings = [egg_nest_forcing(r, day_range, nest_node, environment_pars) for r in raw_results]
 
 soil_hydraulics = (;
     air_entry_potential    = soil_profile.hydraulics.air_entry_water_potential[nest_node],
@@ -249,17 +244,11 @@ initial_state = EggState(;
 )
 
 # ── grid loop: one egg-model integrator cache per thread, reused across all
-# points via reinit! (init_egg_cache/simulate_egg!, phases.jl) -- the same
-# per-thread-not-per-cell pattern MicroclimateMapper.jl's own grid solve uses
-# (src/common.jl's Channel-based worker pool).
+# points via reinit! (init_egg_cache/simulate_egg!, phases.jl)
 
 println("Running egg model at $(length(points)) points, lay date $oviposition_date...")
 n = length(points)
-# in test_mode, cap workers well below n so cache reuse across *different*
-# locations is actually exercised (with nworkers>=n every point would get its
-# own dedicated cache, never reinit!'d for a second location) -- the real
-# correctness property Stage 6 depends on.
-nworkers = test_mode ? min(3, n) : min(Threads.nthreads(), n)
+nworkers = min(Threads.nthreads(), n)
 
 build_cache() = init_egg_cache(egg_model, pars, initial_state, soil_hydraulics, forcings[1], tspan)
 cache_pool = Channel{typeof(build_cache())}(nworkers)
@@ -275,8 +264,6 @@ end
 close(work)
 
 results = Vector{Any}(undef, n)
-# report ~20 times over the whole run regardless of n -- Threads.Atomic since
-# multiple worker tasks increment this concurrently.
 progress = Threads.Atomic{Int}(0)
 report_every = max(1, n ÷ 20)
 @time @sync for _ in 1:nworkers
@@ -291,182 +278,164 @@ report_every = max(1, n ÷ 20)
     end
 end
 
-# for (i, r) in enumerate(results)
-#     lon, lat = points[i]
-#     outcome = if r.hatched
-#         hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
-#         "hatched on $hatch_date"
-#     elseif r.died
-#         "died of $(r.death_cause)"
-#     else
-#         "did not hatch in $(max_duration)"
-#     end
-#     println("  ($lon, $lat) -> $outcome")
-# end
-
 # ── rasterize for plotting: `all_grid_points` is the full regular 50x40 grid
 # (lon fastest), but `points`/`points` is a filtered subset (ocean points
 # removed) -- not every grid cell has a result, so this can't be a plain
 # reshape (that failed: "new dimensions (50, 40) must be consistent with
 # array length 1640"). Place each result back at its original grid index,
 # leaving filtered-out cells as NaN, then reshape the *full-length* array.
-if n_points_to_run == length(points)
-    using Plots
-    point_to_index = Dict(p => i for (i, p) in enumerate(all_grid_points))
+using Plots
+point_to_index = Dict(p => i for (i, p) in enumerate(all_grid_points))
 
-    # heatmap(x, y, z) wants z sized (length(y), length(x)) -- transpose of
-    # the (lon, lat)-shaped grid built everywhere else in this file.
-    to_heatmap_z(vals) = permutedims(reshape(vals, length(lon_range), length(lat_range)))
+# heatmap(x, y, z) wants z sized (length(y), length(x)) -- transpose of
+# the (lon, lat)-shaped grid built everywhere else in this file.
+to_heatmap_z(vals) = permutedims(reshape(vals, length(lon_range), length(lat_range)))
 
-    # ── background: state/territory boundaries + a few reference towns,
-    # matching the general look of the APLC forecaster's own hatching-
-    # prediction maps (state lines, coastline, labelled towns). Natural
-    # Earth doesn't carry the APLC's own named sub-regions (Riverina,
-    # Mallee, etc. -- those are BOM/APLC-internal management zones, not a
-    # standard public boundary dataset), so this is state-level only.
-    const GI = GeoInterface
-    function _collect_boundary!(xs, ys, geom)
-        trait = GI.geomtrait(geom)
-        if trait isa GI.AbstractPointTrait
-            push!(xs, GI.x(geom)); push!(ys, GI.y(geom))
-        elseif trait isa GI.LinearRingTrait || trait isa GI.LineStringTrait
-            for pt in GI.getpoint(geom)
-                push!(xs, GI.x(pt)); push!(ys, GI.y(pt))
-            end
-            push!(xs, NaN); push!(ys, NaN)
-        else
-            for sub in GI.getgeom(geom)
-                _collect_boundary!(xs, ys, sub)
-            end
+# ── background: state/territory boundaries + a few reference towns,
+# matching the general look of the APLC forecaster's own hatching-
+# prediction maps (state lines, coastline, labelled towns). Natural
+# Earth doesn't carry the APLC's own named sub-regions (Riverina,
+# Mallee, etc. -- those are BOM/APLC-internal management zones, not a
+# standard public boundary dataset), so this is state-level only.
+const GI = GeoInterface
+function _collect_boundary!(xs, ys, geom)
+    trait = GI.geomtrait(geom)
+    if trait isa GI.AbstractPointTrait
+        push!(xs, GI.x(geom)); push!(ys, GI.y(geom))
+    elseif trait isa GI.LinearRingTrait || trait isa GI.LineStringTrait
+        for pt in GI.getpoint(geom)
+            push!(xs, GI.x(pt)); push!(ys, GI.y(pt))
         end
-    end
-    au_states = naturalearth("admin_1_states_provinces", 10)
-    state_xs, state_ys = Float64[], Float64[]
-    for i in 1:length(au_states)
-        au_states[i].iso_a2 == "AU" || continue
-        _collect_boundary!(state_xs, state_ys, au_states[i].geometry)
-    end
-
-    map_towns = ["Birdsville, Queensland", "Roma, Queensland", "Charleville, Queensland",
-                 "Dubbo, New South Wales", "Broken Hill, New South Wales", "Bourke, New South Wales",
-                 "Mildura, Victoria", "Canberra, Australia"]
-    towns_cache_path = joinpath(output_dir, "points_australia_towns.jls")
-    towns = if isfile(towns_cache_path)
-        deserialize(towns_cache_path)
+        push!(xs, NaN); push!(ys, NaN)
     else
-        t = map(name -> geocode(name), map_towns)
-        serialize(towns_cache_path, t)
-        t
-    end
-
-    # overlays state boundaries + labelled town markers onto any heatmap `p`.
-    # Adding the (whole-country-spanning) boundary lines expands Plots.jl's
-    # auto axis limits to fit all of Australia -- reset to the actual data
-    # domain afterward so the heatmap itself stays the visual focus.
-    function add_basemap!(p)
-        plot!(p, state_xs, state_ys; color=:black, linewidth=0.75, label=nothing)
-        scatter!(p, [t.lon for t in towns], [t.lat for t in towns];
-            color=:black, markersize=2, label=nothing)
-        for t in towns
-            town_name = first(split(t.display_name, ","))
-            annotate!(p, t.lon, t.lat, text(town_name, 6, :left, :bottom))
-        end
-        xlims!(p, extrema(lon_range)...)
-        ylims!(p, extrema(lat_range)...)
-        p
-    end
-
-    hatch_days = fill(NaN, length(all_grid_points))
-    for (i, r) in enumerate(results)
-        r.hatched && (hatch_days[point_to_index[points[i]]] = ustrip(u"d", r.hatch_time))
-    end
-    hatch_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_days);
-        title="Hatch time (days since $(first(dates)))",
-        xlabel="Longitude", ylabel="Latitude",
-    )
-    add_basemap!(hatch_plot)
-
-    # Same data, plotted as actual calendar hatch dates instead of an elapsed
-    # duration. Plots.jl's GR backend colourbar doesn't support custom string
-    # tick labels (confirmed: `colorbar_ticks=(vals, labels)` silently falls
-    # back to plain numbers) -- so instead the colourbar is hidden and a
-    # normal *series* legend is built from a handful of invisible dummy
-    # points, one per representative date, each coloured by sampling the
-    # same gradient the heatmap uses. Series legends render arbitrary
-    # strings fine; colourbars don't.
-    hatch_date_ordinals = fill(NaN, length(all_grid_points))
-    for (i, r) in enumerate(results)
-        if r.hatched
-            hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
-            hatch_date_ordinals[point_to_index[points[i]]] = Dates.value(hatch_date)
+        for sub in GI.getgeom(geom)
+            _collect_boundary!(xs, ys, sub)
         end
     end
-    valid_ordinals = filter(!isnan, hatch_date_ordinals)
-    lo, hi = extrema(valid_ordinals)
-    tick_vals = round.(Int, range(lo, hi; length=6))
-    tick_labels = string.(Date.(Dates.UTD.(tick_vals)))
-    date_gradient = cgrad(:plasma)
-    hatch_date_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_date_ordinals);
-        title="Hatch date",
-        xlabel="Longitude", ylabel="Latitude",
-        color=date_gradient, colorbar=false,
-    )
-    for (v, label) in zip(tick_vals, tick_labels)
-        scatter!(hatch_date_plot, [NaN], [NaN];
-            color=date_gradient[(v - lo) / (hi - lo)], markersize=6, markerstrokewidth=0, label=label)
-    end
-    add_basemap!(hatch_date_plot)
-
-    # Outcome map: hatched / died (by cause) / survived-but-didn't-hatch in
-    # max_duration, as a small integer code per cell (categorical, not a
-    # continuous scale) -- same NaN-for-filtered-out convention as above.
-    # death_cause values come from egg_model/src/types.jl's cause_of_death;
-    # extend both dicts below if egg_model's survival_model ever gains
-    # another cause. Colours are the Okabe-Ito colourblind-safe palette.
-    # Same dummy-series-legend trick as the date plot above, for the same
-    # reason (colourbar can't show the category name strings).
-    outcome_codes = Dict(:hatched => 0, :cold => 1, :heat => 2, :desiccation => 3, :timeout => 4)
-    outcome_labels = ["hatched", "died: cold", "died: heat", "died: desiccation", "no hatch (timeout)"]
-    outcome_colors = ["#009E73", "#0072B2", "#D55E00", "#E69F00", "#999999"]
-    outcomes = fill(NaN, length(all_grid_points))
-    for (i, r) in enumerate(results)
-        code = r.hatched ? :hatched : r.died ? r.death_cause : :timeout
-        outcomes[point_to_index[points[i]]] = outcome_codes[code]
-    end
-    present_codes = Int.(sort(unique(filter(!isnan, outcomes))))
-    outcome_plot = heatmap(lon_range, lat_range, to_heatmap_z(outcomes);
-        title="Outcome",
-        xlabel="Longitude", ylabel="Latitude",
-        color=cgrad(outcome_colors[present_codes.+1]; categorical=true),
-        clims=(minimum(present_codes) - 0.5, maximum(present_codes) + 0.5),
-        colorbar=false,
-    )
-    for code in present_codes
-        scatter!(outcome_plot, [NaN], [NaN];
-            color=outcome_colors[code+1], markersize=6, markerstrokewidth=0, label=outcome_labels[code+1])
-    end
-    add_basemap!(outcome_plot)
-
-    # Egg mass at hatch (mg) -- final_state.egg_mass at the moment of
-    # hatching; NaN for cells that didn't hatch, same convention as above.
-    hatch_mass_mg = fill(NaN, length(all_grid_points))
-    for (i, r) in enumerate(results)
-        r.hatched && (hatch_mass_mg[point_to_index[points[i]]] = ustrip(u"mg", r.final_state.egg_mass))
-    end
-    mass_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_mass_mg);
-        title="Egg mass at hatch (mg)",
-        xlabel="Longitude", ylabel="Latitude",
-        color=cgrad(:viridis),
-    )
-    add_basemap!(mass_plot)
-
-    panel = plot(hatch_plot, hatch_date_plot, outcome_plot, mass_plot;
-        layout=(2, 2), size=(1400, 1050),
-        plot_title="Lay date $oviposition_date", legendfontsize=6,
-    )
-    savefig(panel, joinpath(@__DIR__, "points_australia_panel.png"))
-    display(panel)
-else
-    println("\nSkipping the hatch-date raster plot -- only $(n_points_to_run)/$(length(points)) points were run " *
-            "(set test_mode = false for the full Pass A sweep).")
 end
+au_states = naturalearth("admin_1_states_provinces", 10)
+state_xs, state_ys = Float64[], Float64[]
+for i in 1:length(au_states)
+    au_states[i].iso_a2 == "AU" || continue
+    _collect_boundary!(state_xs, state_ys, au_states[i].geometry)
+end
+
+map_towns = ["Birdsville, Queensland", "Roma, Queensland", "Charleville, Queensland",
+                "Dubbo, New South Wales", "Broken Hill, New South Wales", "Bourke, New South Wales",
+                "Mildura, Victoria", "Canberra, Australia"]
+towns_cache_path = joinpath(output_dir, "points_australia_towns.jls")
+towns = if isfile(towns_cache_path)
+    deserialize(towns_cache_path)
+else
+    t = map(name -> geocode(name), map_towns)
+    serialize(towns_cache_path, t)
+    t
+end
+
+# overlays state boundaries + labelled town markers onto any heatmap `p`.
+# Adding the (whole-country-spanning) boundary lines expands Plots.jl's
+# auto axis limits to fit all of Australia -- reset to the actual data
+# domain afterward so the heatmap itself stays the visual focus.
+function add_basemap!(p)
+    plot!(p, state_xs, state_ys; color=:black, linewidth=0.75, label=nothing)
+    scatter!(p, [t.lon for t in towns], [t.lat for t in towns];
+        color=:black, markersize=2, label=nothing)
+    for t in towns
+        town_name = first(split(t.display_name, ","))
+        annotate!(p, t.lon, t.lat, text(town_name, 6, :left, :bottom))
+    end
+    xlims!(p, extrema(lon_range)...)
+    ylims!(p, extrema(lat_range)...)
+    p
+end
+
+hatch_days = fill(NaN, length(all_grid_points))
+for (i, r) in enumerate(results)
+    r.hatched && (hatch_days[point_to_index[points[i]]] = ustrip(u"d", r.hatch_time))
+end
+hatch_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_days);
+    title="Hatch time (days since $(first(dates)))",
+    xlabel="Longitude", ylabel="Latitude",
+)
+add_basemap!(hatch_plot)
+
+# Same data, plotted as actual calendar hatch dates instead of an elapsed
+# duration. Plots.jl's GR backend colourbar doesn't support custom string
+# tick labels (confirmed: `colorbar_ticks=(vals, labels)` silently falls
+# back to plain numbers) -- so instead the colourbar is hidden and a
+# normal *series* legend is built from a handful of invisible dummy
+# points, one per representative date, each coloured by sampling the
+# same gradient the heatmap uses. Series legends render arbitrary
+# strings fine; colourbars don't.
+hatch_date_ordinals = fill(NaN, length(all_grid_points))
+for (i, r) in enumerate(results)
+    if r.hatched
+        hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
+        hatch_date_ordinals[point_to_index[points[i]]] = Dates.value(hatch_date)
+    end
+end
+valid_ordinals = filter(!isnan, hatch_date_ordinals)
+lo, hi = extrema(valid_ordinals)
+tick_vals = round.(Int, range(lo, hi; length=6))
+tick_labels = string.(Date.(Dates.UTD.(tick_vals)))
+date_gradient = cgrad(:plasma)
+hatch_date_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_date_ordinals);
+    title="Hatch date",
+    xlabel="Longitude", ylabel="Latitude",
+    color=date_gradient, colorbar=false,
+)
+for (v, label) in zip(tick_vals, tick_labels)
+    scatter!(hatch_date_plot, [NaN], [NaN];
+        color=date_gradient[(v - lo) / (hi - lo)], markersize=6, markerstrokewidth=0, label=label)
+end
+add_basemap!(hatch_date_plot)
+
+# Outcome map: hatched / died (by cause) / survived-but-didn't-hatch in
+# max_duration, as a small integer code per cell (categorical, not a
+# continuous scale) -- same NaN-for-filtered-out convention as above.
+# death_cause values come from egg_model/src/types.jl's cause_of_death;
+# extend both dicts below if egg_model's survival_model ever gains
+# another cause. Colours are the Okabe-Ito colourblind-safe palette.
+# Same dummy-series-legend trick as the date plot above, for the same
+# reason (colourbar can't show the category name strings).
+outcome_codes = Dict(:hatched => 0, :cold => 1, :heat => 2, :desiccation => 3, :timeout => 4)
+outcome_labels = ["hatched", "died: cold", "died: heat", "died: desiccation", "no hatch (timeout)"]
+outcome_colors = ["#009E73", "#0072B2", "#D55E00", "#E69F00", "#999999"]
+outcomes = fill(NaN, length(all_grid_points))
+for (i, r) in enumerate(results)
+    code = r.hatched ? :hatched : r.died ? r.death_cause : :timeout
+    outcomes[point_to_index[points[i]]] = outcome_codes[code]
+end
+present_codes = Int.(sort(unique(filter(!isnan, outcomes))))
+outcome_plot = heatmap(lon_range, lat_range, to_heatmap_z(outcomes);
+    title="Outcome",
+    xlabel="Longitude", ylabel="Latitude",
+    color=cgrad(outcome_colors[present_codes.+1]; categorical=true),
+    clims=(minimum(present_codes) - 0.5, maximum(present_codes) + 0.5),
+    colorbar=false,
+)
+for code in present_codes
+    scatter!(outcome_plot, [NaN], [NaN];
+        color=outcome_colors[code+1], markersize=6, markerstrokewidth=0, label=outcome_labels[code+1])
+end
+add_basemap!(outcome_plot)
+
+# Egg mass at hatch (mg) -- final_state.egg_mass at the moment of
+# hatching; NaN for cells that didn't hatch, same convention as above.
+hatch_mass_mg = fill(NaN, length(all_grid_points))
+for (i, r) in enumerate(results)
+    r.hatched && (hatch_mass_mg[point_to_index[points[i]]] = ustrip(u"mg", r.final_state.egg_mass))
+end
+mass_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_mass_mg);
+    title="Egg mass at hatch (mg)",
+    xlabel="Longitude", ylabel="Latitude",
+    color=cgrad(:viridis),
+)
+add_basemap!(mass_plot)
+
+panel = plot(hatch_plot, hatch_date_plot, outcome_plot, mass_plot;
+    layout=(2, 2), size=(1400, 1050),
+    plot_title="Lay date $oviposition_date", legendfontsize=6,
+)
+savefig(panel, joinpath(@__DIR__, "points_australia_panel.png"))
+display(panel)
