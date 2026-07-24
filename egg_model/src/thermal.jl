@@ -2,11 +2,10 @@ using HeatExchange
 using BiophysicalGeometry: Body, Naked, Ellipsoid
 using Unitful
 
-# Both modes are algebraic, not ODE states: an egg's thermal mass is tiny
-# relative to the hourly timestep, so it equilibrates effectively instantly —
-# no need to integrate a core_temperature state alongside development/hydrics.
-# `environment` is the `(; environment_pars, environment_vars)` NamedTuple
-# HeatExchange expects.
+# Either assume egg temperature equals soil temperature or solve a steady-state
+# heat budget, the latter being relevant for when metabolic heat production 
+# influences the vapour pressure gradient to alter weather there is a net loss
+# or gain of water vapour from the egg.
 
 egg_temperature(::SoilTemperatureEquals, egg_model, state, pars, environment) =
     environment.environment_vars.substrate_temperature
@@ -34,7 +33,7 @@ function egg_organism(egg_model::EggModel, state::EggState, pars::EggParameters)
     Organism(body, traits)
 end
 
-# full conduction/convection/radiation/evaporation budget, root-found to equilibrium.
+# full conduction/convection/radiation/evaporation budget solved for steady state.
 function egg_temperature(::FullHeatBudget, egg_model, state, pars, environment)
     organism = egg_organism(egg_model, state, pars)
     solve_temperature(organism, environment).core_temperature

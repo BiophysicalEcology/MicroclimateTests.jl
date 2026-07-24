@@ -21,6 +21,11 @@ include(joinpath(@__DIR__, "..", "src", "hydric.jl"))
 include(joinpath(@__DIR__, "..", "src", "phases.jl"))
 include(joinpath(@__DIR__, "..", "src", "forcing.jl"))
 
+# all cached/serialized run output goes here, not directly in demos/ -- one
+# gitignore entry (egg_model/demos/output/) instead of per-file patterns.
+output_dir = joinpath(@__DIR__, "output")
+mkpath(output_dir)
+
 ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
 # ── microclimate: SILO point run, extended with the soil layers the egg model needs ──
@@ -30,20 +35,16 @@ depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
 heights = [0.01, 1.2]u"m"
 nest_depth = 5.0u"cm"
 
+# Just what egg_nest_forcing (forcing.jl) actually reads, plus soil_moisture
+# (kept for a possible future moisture threshold, cheap to retain -- see
+# forcing.jl's comment for why everything else here was dropped: unused, or
+# inert under this egg model's SoilTemperatureEquals/SteadyDarcyFlux config).
 output_layers = (
     LayerSpec(:soil_temperature, :soil),
     LayerSpec(:soil_moisture, :soil),
     LayerSpec(:soil_water_potential, :soil),
     LayerSpec(:soil_thermal_conductivity, :soil),
-    LayerSpec(:soil_heat_capacity, :soil),
-    LayerSpec(:soil_bulk_density, :soil),
     LayerSpec(:soil_humidity, :soil),
-    LayerSpec(:global_radiation, :scalar),
-    LayerSpec(:sky_temperature, :scalar),
-    LayerSpec(:diffuse_fraction, :scalar),
-    LayerSpec(:reference_temperature, :scalar),
-    LayerSpec(:pressure, :scalar),
-    LayerSpec(:zenith_angle, :solar),
 )
 
 model = MicroMapModel(;
@@ -143,7 +144,7 @@ problem = MicroVectorProblem(;
 
 using Serialization
 
-cache_path = joinpath(@__DIR__, "microclimate_cache.jls")
+cache_path = joinpath(output_dir, "microclimate_cache.jls")
 if isfile(cache_path) && use_cache
     println("Loading cached microclimate result from $cache_path...")
     result = deserialize(cache_path)
@@ -155,15 +156,7 @@ else
         soil_moisture             = collect(output.soil_moisture[point=1]),
         soil_water_potential      = collect(output.soil_water_potential[point=1]),
         soil_thermal_conductivity = collect(output.soil_thermal_conductivity[point=1]),
-        soil_heat_capacity        = collect(output.soil_heat_capacity[point=1]),
-        soil_bulk_density         = collect(output.soil_bulk_density[point=1]),
         soil_humidity             = collect(output.soil_humidity[point=1]),
-        global_radiation          = collect(output.global_radiation[point=1]),
-        sky_temperature           = collect(output.sky_temperature[point=1]),
-        diffuse_fraction          = collect(output.diffuse_fraction[point=1]),
-        reference_temperature     = collect(output.reference_temperature[point=1]),
-        pressure                  = collect(output.pressure[point=1]),
-        solar_radiation           = (; zenith_angle = collect(output.zenith_angle[point=1])),
     )
     serialize(cache_path, result)
 end

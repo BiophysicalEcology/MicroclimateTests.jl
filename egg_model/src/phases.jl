@@ -2,13 +2,14 @@ using OrdinaryDiffEqTsit5
 using StaticArrays
 using Unitful
 
-# Coupled ODE state, time in hours, plain Float64 (units stripped for the
-# solver): [development_fraction, egg_mass (kg), egg_water_potential (J/kg),
-# chill_accumulation (hr), diapause_duration (hr), maximum_mass_achieved (kg)].
-# maximum_mass_achieved ratchets up with mass, never down.
-# RHS is discontinuous at every threshold crossing, so each chunk gets a fresh
-# ODEProblem (bout-chunking) rather than one continuous integration.
+# This code integrates the egg development and thermal/desiccation state through
+# time. The strategy is to use callbacks from the integration according to 
+# the phase changes of the egg, which may include diapause and quiescence,
+# stage-based changes in water permeability and in thermal sensivitiy. But
+# when saving a trajectory the values are sampled at a fixed interval defined
+# by saveat_hr.
 
+# re-attaches units to solver output
 function _unpack(u)
     development_fraction = u[1]
     egg_mass = u[2] * u"kg"
@@ -18,6 +19,7 @@ function _unpack(u)
     (; development_fraction, egg_mass, egg_water_potential, arrest_state, maximum_mass_achieved)
 end
 
+# change in egg water content (right hand side of equation for solver)
 function egg_rhs(u, p, t)
     (; egg_model, pars, soil_hydraulics, forcing) = p
     (; development_fraction, egg_mass, egg_water_potential, arrest_state, maximum_mass_achieved) = _unpack(u)

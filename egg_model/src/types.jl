@@ -97,6 +97,7 @@ abstract type AbstractHydricModel end
 
 # skips the water-balance ODE — fastest option. Quiescence still responds to
 # moisture via a direct threshold on soil water potential (cheap, no integration).
+# TODO add soil moisture as a potential threshold - just generalise this to be "critical water threshold"?
 Base.@kwdef struct NoHydricExchange{P} <: AbstractHydricModel
     critical_water_potential::P
 end
@@ -104,6 +105,7 @@ end
 struct SteadyDarcyFlux <: AbstractHydricModel end
 
 # optional transient soil-moisture correction (Tracy Appendix E), not the default.
+# TODO need the equations for this solution
 Base.@kwdef struct TransientSoilCorrection{D} <: AbstractHydricModel
     soil_diffusivity::D
 end
@@ -144,10 +146,9 @@ cause_of_death(m::HardTemperatureLimit, state, pars, temperature) =
     temperature >= m.upper_lethal_temperature ? :heat : :alive
 
 # death once water content : dry mass ratio falls to or below a critical value
-# (e.g. 0.6 for plague locust eggs).
 Base.@kwdef struct DesiccationLimit{DM,R} <: AbstractSurvivalModel
     dry_mass::DM
-    critical_water_ratio::R = 0.6
+    critical_water_ratio::R
 end
 survives(m::DesiccationLimit, state, pars, temperature) =
     (state.egg_mass - m.dry_mass) / m.dry_mass > m.critical_water_ratio
@@ -169,7 +170,7 @@ function cause_of_death(m::CombinedSurvival, state, pars, temperature)
     :alive
 end
 
-# a ThermalPhysiology.AbstractTDTModel-based cumulative thermal death time
+# TODO a ThermalPhysiology.AbstractTDTModel-based cumulative thermal death time
 # could be added later as another AbstractSurvivalModel (same `survives`
 # protocol, new dispatch), once real time-at-temperature tolerance data exists.
 
@@ -177,8 +178,7 @@ end
 
 abstract type AbstractMetabolicModel end
 
-# HeatExchange.metabolic_rate(::Nothing, mass, T) = 0.0u"W" already, so this
-# resolves to no heat generation with zero new code in HeatExchange.jl.
+# HeatExchange.metabolic_rate(::Nothing, mass, T) = 0.0u"W" already.
 struct NoMetabolicHeat <: AbstractMetabolicModel end
 
 # Wraps a developmental-stage-keyed rate function (destined for BiologicalScaling.jl).
@@ -186,12 +186,12 @@ Base.@kwdef struct EmpiricalStageMetabolicHeat{F} <: AbstractMetabolicModel
     stage_rate::F                         # (development_fraction, mass, temperature) -> W
 end
 
-# a DEB-computed rate would plug in here as another AbstractMetabolicModel (not implemented).
+# TODO a DEB-computed rate would plug in here as another AbstractMetabolicModel.
 
 metabolic_rate_function(::NoMetabolicHeat) = nothing
 metabolic_rate_function(m::EmpiricalStageMetabolicHeat) = m.stage_rate
 
-# --- top-level model config, mirrors MicroclimateMapper's MicroModel ---
+# --- top-level model config ---
 
 Base.@kwdef struct EggModel{D<:AbstractDevelopmentModel,A<:AbstractArrestModel,
                              H<:AbstractHydricModel,HS<:AbstractHydricStageModel,

@@ -3,6 +3,7 @@ using BiophysicalBehaviour: EnvironmentForcing
 using DataInterpolations
 using Dates
 using Unitful
+using FluidProperties: atmospheric_pressure
 
 nearest_node(value, nodes) = argmin(abs.(nodes .- value))
 
@@ -31,6 +32,21 @@ oviposition_offset(oviposition_date::Date, dates) = Dates.value(oviposition_date
 # air, everything read from the soil profile at that depth) -- extended with
 # soil_water_potential, which isn't part of HeatExchange's environment vocabulary
 # so it's interpolated separately, matching EnvironmentForcing's own convention.
+#
+# `result` only needs to carry soil_temperature/soil_humidity/soil_water_potential/
+# soil_thermal_conductivity (and soil_moisture, kept for a possible future
+# moisture threshold even though nothing reads it yet) -- everything else
+# EnvironmentalVarsVec asks for is either a genuine constant assumption for an
+# underground nest (near-still air, zero radiation) or, under this egg model's
+# actual config (SoilTemperatureEquals thermal model + SteadyDarcyFlux hydric
+# model), simply never read: zenith_angle/diffuse_fraction/global_radiation/
+# shade only feed the *full* radiative heat-budget path (FullHeatBudget, not
+# used here), and with global_radiation pinned at 0 their values are inert
+# regardless. atmospheric_pressure is a near-surface constant default rather
+# than the real solved series, for the same reason pressure barely matters to
+# this budget. Pulling any of these from a real solve would be pure waste
+# (memory/disk, especially cached across many points/batches) for no effect
+# on the result.
 function egg_nest_forcing(result, day_range, depth_node, environment_pars)
     n = length(day_range)
     times = (0:n-1) .* 1.0u"hr" .|> u"s"
@@ -42,11 +58,11 @@ function egg_nest_forcing(result, day_range, depth_node, environment_pars)
         substrate_temperature  = soil_T,
         relative_humidity      = result.soil_humidity[day_range, depth_node],
         wind_speed              = fill(0.01u"m/s", n),
-        atmospheric_pressure    = result.pressure[day_range],
-        zenith_angle            = result.solar_radiation.zenith_angle[day_range],
+        atmospheric_pressure    = fill(atmospheric_pressure(0.0u"m"), n),
+        zenith_angle            = fill(90.0u"°", n),
         substrate_conductivity  = result.soil_thermal_conductivity[day_range, depth_node],
         global_radiation        = fill(0.0u"W/m^2", n),
-        diffuse_fraction        = result.diffuse_fraction[day_range],
+        diffuse_fraction        = fill(0.0, n),
         shade                   = fill(1.0, n),
     ))
 

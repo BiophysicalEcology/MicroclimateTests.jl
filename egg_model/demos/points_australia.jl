@@ -23,6 +23,7 @@ using Rasters.Extents: Extent
 using DataInterpolations
 using Dates, Unitful
 using Serialization
+using NaturalEarth, GeoInterface
 
 include(joinpath(@__DIR__, "..", "src", "types.jl"))
 include(joinpath(@__DIR__, "..", "src", "development.jl"))
@@ -31,44 +32,32 @@ include(joinpath(@__DIR__, "..", "src", "hydric.jl"))
 include(joinpath(@__DIR__, "..", "src", "phases.jl"))
 include(joinpath(@__DIR__, "..", "src", "forcing.jl"))
 
-# SILO weather: either the live DataDrill point-query API (network, one HTTP
-# call per point per variable -- ~12000 calls for a 2000-point sweep, and
-# fails hard on the whole batch if even one point/response is bad, as seen
-# with the ocean points above) or SILO's regular grid-mode loader, reading
-# pre-downloaded annual NetCDF files (one file per variable per year, cropped
-# and per-point extracted locally -- far fewer, more robust network calls).
-# The user has pre-downloaded SILO (and CRUCL2) under z:/; missing years are
-# fetched on demand from the same z:/ path.
-use_local_silo = true
-if use_local_silo
-    ENV["RASTERDATASOURCES_PATH"] = "z:/"
-else
-    ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
-    ENV["SILO_EMAIL"] = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
-    MicroclimateMapper.loader(::Type{<:SILO}) = MicroclimateMapper.PointQuery()
-end
+# all cached/serialized run output goes here
+output_dir = joinpath(@__DIR__, "output")
+mkpath(output_dir)
 
-# ── microclimate: SILO points run, same setup as point_silo_deterministic.jl ──
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"#"z:/"
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
-nest_depth = 5.0u"cm"
+nest_depth = 10.0u"cm"
 
+soil_source = :sandy_loam
+
+dates = Date(2010, 1, 1):Day(1):Date(2011, 12, 31) # for microclimate
+max_duration = 720.0u"d"
+forcing_end_hr = length(day_range) * 1.0u"hr"
+oviposition_date = Date(2010, 4, 1)
+
+# layers wanted from the microclimate model runs
+# egg_nest_forcing (forcing.jl) needs only these
 output_layers = (
     LayerSpec(:soil_temperature, :soil),
     LayerSpec(:soil_moisture, :soil),
     LayerSpec(:soil_water_potential, :soil),
     LayerSpec(:soil_thermal_conductivity, :soil),
-    LayerSpec(:soil_heat_capacity, :soil),
-    LayerSpec(:soil_bulk_density, :soil),
     LayerSpec(:soil_humidity, :soil),
-    LayerSpec(:global_radiation, :scalar),
-    LayerSpec(:sky_temperature, :scalar),
-    LayerSpec(:diffuse_fraction, :scalar),
-    LayerSpec(:reference_temperature, :scalar),
-    LayerSpec(:pressure, :scalar),
-    LayerSpec(:zenith_angle, :solar),
 )
 
 model = MicroMapModel(;
@@ -79,11 +68,6 @@ model = MicroMapModel(;
         snow_model            = NoSnow(),
         config                = MicroConfig(soil_moisture_strategy = DynamicSoilMoisture()),
     ),
-    # CRUCL2's :elv band (~18 km, monthly-climate grid) instead of SRTM: SRTM at
-    # native resolution across the whole south-eastern Australia bounding box
-    # (135-153E, 39-24S) is too large to materialise in memory (OOM: "required
-    # memory ... greater than system memory"), and compute_terrain=false means
-    # only a flat elevation reference is needed here anyway, not real terrain.
     dem_source              = CRUCL2,
     weather_source          = SILO,
     surface_albedo_source   = 0.15,
@@ -92,40 +76,25 @@ model = MicroMapModel(;
     output_layers,
 )
 
-# regular grid over south-eastern Australia (broad plague-locust range: NSW,
-# VIC, SA, southern QLD), thinned to a manageable point count. n_lon*n_lat
-# below (not a fixed total) so the grid stays reshape-able into a Raster
-# directly -- no need for Rasters.rasterize since this is already regular.
+# regular grid over south-eastern Australia
 lon_range = range(135.0, 153.0; length=50)
 lat_range = range(-39.0, -24.0; length=40)
 all_grid_points = vec([(lon, lat) for lon in lon_range, lat in lat_range])   # 2000 points, column-major (lon fastest)
 
-# Reject points that fall in the ocean before handing anything to
-# MicroVectorProblem/SILO: MicroVectorProblem fetches one shared bounding-box
-# tile set for the whole batch of points, and SILO's DataDrill point API only
-# covers the Australian mainland, so even one oceanic point crashes the DEM
-# fetch or the SILO point query for *every* point in the run, not just that
-# one -- flagged as something to fix upstream in MicroclimateMapper.jl
-# (per-point masking, matching how MicroRasterProblem already skips
-# masked/oceanic grid cells), worked around here for now since that's out of
-# scope to touch right now.
-#
-# An earlier version of this check used RasterDataSources' 5°x5° SRTM tile
-# inventory (`HAS_SRTM_TILE`), but that's too coarse -- a whole tile counts as
-# "land" even when a specific point in it is offshore, and it let 0 of the
-# real ocean points here get filtered (confirmed: kept 2000/2000). Using
-# CRUCL2's `:elv` layer instead (missing over ocean, ~18 km resolution --
-# already being fetched anyway now that dem_source=CRUCL2, see above) is a
-# much finer land mask: it correctly flags 355/2000 of this grid's points as
-# ocean, which is what was actually crashing SILO's point query.
+# Reject points that fall in the ocean based on the DEM and the silo grid
+# TODO work out what DEM SILO uses anduse that instead, probably only need than and not the CRUCL2_ELV filter
 const CRUCL2_ELV = read(Raster(RasterDataSources.getraster(CRUCL2); name=:elv, lazy=true))
 has_crucl2_land(lon, lat) = !ismissing(CRUCL2_ELV[X(Near(lon)), Y(Near(lat))])
 points = filter(p -> has_crucl2_land(p...), all_grid_points)
 println("$(length(points))/$(length(all_grid_points)) grid points kept after the CRUCL2 land-mask pre-check.")
 
-# Sanity-check plot: CRUCL2 elevation over the domain, with kept (land) points
-# in green and rejected (ocean) points in red, so a bad mask is visible before
-# committing to a multi-hour SILO sweep.
+# using reference year (2020)
+const SILO_MAXTEMP_PROBE = read(Raster(RasterDataSources.getraster(SILO, :max_temp; date=Date(2020,1,1)); name=:max_temp, lazy=true)[Ti(1)])
+has_silo_land(lon, lat) = !ismissing(SILO_MAXTEMP_PROBE[X(Near(lon)), Y(Near(lat))])
+points = filter(p -> has_silo_land(p...), points)
+println("$(length(points))/$(length(all_grid_points)) grid points kept after the SILO land-mask pre-check.")
+
+# plot planned points to simulate
 using Plots
 let
     domain = Extent(X = (minimum(lon_range) - 1, maximum(lon_range) + 1),
@@ -139,30 +108,12 @@ let
     display(p)
 end
 
-# cap how many of the (already land-filtered) points actually get
-# queried/solved -- start small to verify correctness cheaply (SILO point
-# queries are network-bound, not CPU-bound, so a couple thousand of them is a
-# genuinely long first real run). Set test_mode=false for the real Pass A
-# sweep over the full (filtered) grid once this checks out.
-test_mode = false
-run_points = if test_mode
-    # a small 3x3 cluster around Bendigo (definitely on land, already
-    # validated at point scale) -- a safe, quick correctness check, unlike
-    # slicing the first few points of the full grid (tried that: it landed in
-    # the Southern Ocean south of SA, where SRTM has no tiles at all).
-    bendigo_lon, bendigo_lat = 144.2826718, -36.7590183
-    vec([(bendigo_lon + dlon, bendigo_lat + dlat) for dlon in -0.2:0.2:0.2, dlat in -0.2:0.2:0.2])
-else
-    points
-end
-n_points_to_run = length(run_points)
+n_points_to_run = length(points)
 
 # whole calendar year(s) only, per current SILO/point-query constraints.
-dates = Date(2010, 1, 1):Day(1):Date(2011, 12, 31)
 use_cache = true
 
-# ── uniform soil texture (Pass A assumption -- see module docstring above) ──
-
+# ── uniform soil texture options ──
 const CAMPBELL_NORMAN_TEXTURES = (
     sand             = (air_entry=0.7u"J/kg", b=1.7, Ksat=5.8e-3u"kg*s/m^3", field_capacity=0.09, wilting_point=0.03),
     loamy_sand       = (air_entry=0.9u"J/kg", b=2.1, Ksat=1.7e-3u"kg*s/m^3", field_capacity=0.13, wilting_point=0.06),
@@ -195,62 +146,61 @@ function soil_profile_from_texture(texture::NamedTuple, depths;
     )
 end
 
-soil_source = :sandy_loam
 soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[soil_source], depths)
-
-problem = MicroVectorProblem(;
-    model, points=run_points, dates, soil_profile,
-    init = (; soil_moisture = fill(0.2, length(depths))),
-)
-
-cache_path = joinpath(@__DIR__, "points_australia_cache_n$(n_points_to_run).jls")
-if isfile(cache_path) && use_cache
-    println("Loading cached microclimate result from $cache_path...")
-    output = deserialize(cache_path)
-else
-    println("Solving SILO microclimate at $(length(run_points)) points...")
-    @time output = solve(problem)
-    serialize(cache_path, output)
-end
 
 nest_node = nearest_node(nest_depth, depths)
 environment_pars = example_environment_pars()
 
-# result arrays are hourly (length(dates)*24 rows), not daily -- day_range
-# must span the full hourly series or the forcing silently extrapolates a
-# constant past the first length(dates) *hours*, not the full run (see
-# point_silo_deterministic.jl's identical comment). Computed from one
-# point-extracted probe (point=1), NOT the raw (still point-dimensioned)
-# `output` directly -- output.soil_temperature has an extra `point` axis, so
-# size(output.soil_temperature, 1) measures the wrong dimension entirely.
-# Same for every point since they all share the same `dates`.
-day_range = 1:size(output.soil_temperature[point=1], 1)
+# Batched solve MicroVectorProblem over all n_points_to_run. Each batch is
+# also cached to disk.
+batch_size = 100
 
-# one forcing closure per point, built once up front (cheap -- interpolators
-# only, no heavy computation) and reused across every lay date if more than
-# one is tried.
-println("Building per-point forcing...")
-forcings = map(1:length(run_points)) do i
-    result_i = (;
-        soil_temperature          = collect(output.soil_temperature[point=i]),
-        soil_moisture             = collect(output.soil_moisture[point=i]),
-        soil_water_potential      = collect(output.soil_water_potential[point=i]),
-        soil_thermal_conductivity = collect(output.soil_thermal_conductivity[point=i]),
-        soil_heat_capacity        = collect(output.soil_heat_capacity[point=i]),
-        soil_bulk_density         = collect(output.soil_bulk_density[point=i]),
-        soil_humidity             = collect(output.soil_humidity[point=i]),
-        global_radiation          = collect(output.global_radiation[point=i]),
-        sky_temperature           = collect(output.sky_temperature[point=i]),
-        diffuse_fraction          = collect(output.diffuse_fraction[point=i]),
-        reference_temperature     = collect(output.reference_temperature[point=i]),
-        pressure                  = collect(output.pressure[point=i]),
-        solar_radiation           = (; zenith_angle = collect(output.zenith_angle[point=i])),
-    )
-    egg_nest_forcing(result_i, day_range, nest_node, environment_pars)
+n = length(points)
+n_batches = cld(n, batch_size)
+forcings = Vector{Any}(undef, n)
+day_range = 1:(length(dates) * 24)
+
+forcings_cache_path = joinpath(output_dir, "points_australia_forcings_n$(n_points_to_run).jls")
+if isfile(forcings_cache_path) && use_cache
+    println("Loading cached forcings from $forcings_cache_path...")
+    forcings = deserialize(forcings_cache_path)
+else
+    for b in 1:n_batches
+        i_start, i_end = (b - 1) * batch_size + 1, min(b * batch_size, n)
+        batch_points = points[i_start:i_end]
+        batch_cache_path = joinpath(output_dir, "points_australia_batch$(b)of$(n_batches)_n$(n_points_to_run).jls")
+
+        batch_forcings = if isfile(batch_cache_path) && use_cache
+            println("Loading cached batch $b/$n_batches ($(length(batch_points)) points)...")
+            deserialize(batch_cache_path)
+        else
+            println("Solving SILO microclimate for batch $b/$n_batches ($(length(batch_points)) points)...")
+            batch_problem = MicroVectorProblem(;
+                model, points=batch_points, dates, soil_profile,
+                init = (; soil_moisture = fill(0.2, length(depths))),
+            )
+            @time batch_output = solve(batch_problem)
+            result = map(1:length(batch_points)) do i
+                result_i = (;
+                    soil_temperature          = collect(batch_output.soil_temperature[point=i]),
+                    soil_moisture             = collect(batch_output.soil_moisture[point=i]),
+                    soil_water_potential      = collect(batch_output.soil_water_potential[point=i]),
+                    soil_thermal_conductivity = collect(batch_output.soil_thermal_conductivity[point=i]),
+                    soil_humidity             = collect(batch_output.soil_humidity[point=i]),
+                )
+                egg_nest_forcing(result_i, day_range, nest_node, environment_pars)
+            end
+            serialize(batch_cache_path, result)
+            batch_output = nothing
+            batch_problem = nothing
+            GC.gc()
+            result
+        end
+        forcings[i_start:i_end] .= batch_forcings
+    end
+    serialize(forcings_cache_path, forcings)
 end
 
-# soil_hydraulics is the SAME for every point (Pass A's uniform-soil
-# assumption) -- unlike forcing, no per-point array needed.
 soil_hydraulics = (;
     air_entry_potential    = soil_profile.hydraulics.air_entry_water_potential[nest_node],
     saturated_conductivity = soil_profile.hydraulics.saturated_hydraulic_conductivity[nest_node],
@@ -262,9 +212,9 @@ soil_hydraulics = (;
 shape_b = 0.69 / 1.82
 geometry = Ellipsoid(0.0036u"g", 1000.0u"kg/m^3", 1 / shape_b, 1 / shape_b)
 arrest = ProportionWindowArrest(;
-    cold_temperature=u"K"(0.0u"°C"), diapause_window=(0.25, 0.30),
+    cold_temperature=u"K"(0.0u"°C"), diapause_window=(0.45, 0.50),
     quiescence_windows=((0.25, 0.30), (0.45, 0.50)),
-    cold_hour_threshold=1000.0u"hr", diapause_hour_threshold=240.0u"hr",
+    cold_hour_threshold=0.0u"hr", diapause_hour_threshold=0.0u"hr",
     desiccation_tolerance=0.6,
 )
 dm = arrhenius_development_model(;
@@ -291,9 +241,6 @@ egg_model = EggModel(;
     hydric_stage_model=stage, thermal_model=SoilTemperatureEquals(), survival_model, geometry,
 )
 
-max_duration = 720.0u"d"
-forcing_end_hr = length(day_range) * 1.0u"hr"
-oviposition_date = Date(2020, 9, 1)
 start_hr = oviposition_offset(oviposition_date, dates)
 tspan = (start_hr, min(start_hr + max_duration, forcing_end_hr))
 initial_state = EggState(;
@@ -306,8 +253,8 @@ initial_state = EggState(;
 # per-thread-not-per-cell pattern MicroclimateMapper.jl's own grid solve uses
 # (src/common.jl's Channel-based worker pool).
 
-println("Running egg model at $(length(run_points)) points, lay date $oviposition_date...")
-n = length(run_points)
+println("Running egg model at $(length(points)) points, lay date $oviposition_date...")
+n = length(points)
 # in test_mode, cap workers well below n so cache reuse across *different*
 # locations is actually exercised (with nworkers>=n every point would get its
 # own dedicated cache, never reinit!'d for a second location) -- the real
@@ -328,42 +275,197 @@ end
 close(work)
 
 results = Vector{Any}(undef, n)
+# report ~20 times over the whole run regardless of n -- Threads.Atomic since
+# multiple worker tasks increment this concurrently.
+progress = Threads.Atomic{Int}(0)
+report_every = max(1, n ÷ 20)
 @time @sync for _ in 1:nworkers
     Threads.@spawn begin
         cache = take!(cache_pool)
         for i in work
             results[i] = simulate_egg!(cache, initial_state, soil_hydraulics, forcings[i], tspan)
+            done = Threads.atomic_add!(progress, 1) + 1
+            (done % report_every == 0 || done == n) && println("  $done/$n egg simulations done")
         end
         put!(cache_pool, cache)
     end
 end
 
-for (i, r) in enumerate(results)
-    lon, lat = run_points[i]
-    outcome = if r.hatched
-        hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
-        "hatched on $hatch_date"
-    elseif r.died
-        "died of $(r.death_cause)"
-    else
-        "did not hatch in $(max_duration)"
-    end
-    println("  ($lon, $lat) -> $outcome")
-end
+# for (i, r) in enumerate(results)
+#     lon, lat = points[i]
+#     outcome = if r.hatched
+#         hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
+#         "hatched on $hatch_date"
+#     elseif r.died
+#         "died of $(r.death_cause)"
+#     else
+#         "did not hatch in $(max_duration)"
+#     end
+#     println("  ($lon, $lat) -> $outcome")
+# end
 
-# ── rasterize for plotting: the point grid is already regular (lon fastest,
-# see `points` construction above), so a plain reshape into a Raster is all
-# that's needed here -- no Rasters.rasterize (that's for genuinely irregular
-# point sets, e.g. if this ever switches to a random scatter instead).
+# ── rasterize for plotting: `all_grid_points` is the full regular 50x40 grid
+# (lon fastest), but `points`/`points` is a filtered subset (ocean points
+# removed) -- not every grid cell has a result, so this can't be a plain
+# reshape (that failed: "new dimensions (50, 40) must be consistent with
+# array length 1640"). Place each result back at its original grid index,
+# leaving filtered-out cells as NaN, then reshape the *full-length* array.
 if n_points_to_run == length(points)
     using Plots
-    hatch_days = map(results) do r
-        r.hatched ? ustrip(u"d", r.hatch_time) : NaN
+    point_to_index = Dict(p => i for (i, p) in enumerate(all_grid_points))
+
+    # heatmap(x, y, z) wants z sized (length(y), length(x)) -- transpose of
+    # the (lon, lat)-shaped grid built everywhere else in this file.
+    to_heatmap_z(vals) = permutedims(reshape(vals, length(lon_range), length(lat_range)))
+
+    # ── background: state/territory boundaries + a few reference towns,
+    # matching the general look of the APLC forecaster's own hatching-
+    # prediction maps (state lines, coastline, labelled towns). Natural
+    # Earth doesn't carry the APLC's own named sub-regions (Riverina,
+    # Mallee, etc. -- those are BOM/APLC-internal management zones, not a
+    # standard public boundary dataset), so this is state-level only.
+    const GI = GeoInterface
+    function _collect_boundary!(xs, ys, geom)
+        trait = GI.geomtrait(geom)
+        if trait isa GI.AbstractPointTrait
+            push!(xs, GI.x(geom)); push!(ys, GI.y(geom))
+        elseif trait isa GI.LinearRingTrait || trait isa GI.LineStringTrait
+            for pt in GI.getpoint(geom)
+                push!(xs, GI.x(pt)); push!(ys, GI.y(pt))
+            end
+            push!(xs, NaN); push!(ys, NaN)
+        else
+            for sub in GI.getgeom(geom)
+                _collect_boundary!(xs, ys, sub)
+            end
+        end
     end
-    hatch_raster = Raster(reshape(hatch_days, length(lon_range), length(lat_range)), (X(lon_range), Y(lat_range)))
-    hatch_plot = plot(hatch_raster; title="Hatch time (hours since $(first(dates))), lay date $oviposition_date")
-    savefig(hatch_plot, joinpath(@__DIR__, "points_australia_hatch.png"))
-    display(hatch_plot)
+    au_states = naturalearth("admin_1_states_provinces", 10)
+    state_xs, state_ys = Float64[], Float64[]
+    for i in 1:length(au_states)
+        au_states[i].iso_a2 == "AU" || continue
+        _collect_boundary!(state_xs, state_ys, au_states[i].geometry)
+    end
+
+    map_towns = ["Birdsville, Queensland", "Roma, Queensland", "Charleville, Queensland",
+                 "Dubbo, New South Wales", "Broken Hill, New South Wales", "Bourke, New South Wales",
+                 "Mildura, Victoria", "Canberra, Australia"]
+    towns_cache_path = joinpath(output_dir, "points_australia_towns.jls")
+    towns = if isfile(towns_cache_path)
+        deserialize(towns_cache_path)
+    else
+        t = map(name -> geocode(name), map_towns)
+        serialize(towns_cache_path, t)
+        t
+    end
+
+    # overlays state boundaries + labelled town markers onto any heatmap `p`.
+    # Adding the (whole-country-spanning) boundary lines expands Plots.jl's
+    # auto axis limits to fit all of Australia -- reset to the actual data
+    # domain afterward so the heatmap itself stays the visual focus.
+    function add_basemap!(p)
+        plot!(p, state_xs, state_ys; color=:black, linewidth=0.75, label=nothing)
+        scatter!(p, [t.lon for t in towns], [t.lat for t in towns];
+            color=:black, markersize=2, label=nothing)
+        for t in towns
+            town_name = first(split(t.display_name, ","))
+            annotate!(p, t.lon, t.lat, text(town_name, 6, :left, :bottom))
+        end
+        xlims!(p, extrema(lon_range)...)
+        ylims!(p, extrema(lat_range)...)
+        p
+    end
+
+    hatch_days = fill(NaN, length(all_grid_points))
+    for (i, r) in enumerate(results)
+        r.hatched && (hatch_days[point_to_index[points[i]]] = ustrip(u"d", r.hatch_time))
+    end
+    hatch_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_days);
+        title="Hatch time (days since $(first(dates)))",
+        xlabel="Longitude", ylabel="Latitude",
+    )
+    add_basemap!(hatch_plot)
+
+    # Same data, plotted as actual calendar hatch dates instead of an elapsed
+    # duration. Plots.jl's GR backend colourbar doesn't support custom string
+    # tick labels (confirmed: `colorbar_ticks=(vals, labels)` silently falls
+    # back to plain numbers) -- so instead the colourbar is hidden and a
+    # normal *series* legend is built from a handful of invisible dummy
+    # points, one per representative date, each coloured by sampling the
+    # same gradient the heatmap uses. Series legends render arbitrary
+    # strings fine; colourbars don't.
+    hatch_date_ordinals = fill(NaN, length(all_grid_points))
+    for (i, r) in enumerate(results)
+        if r.hatched
+            hatch_date = first(dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
+            hatch_date_ordinals[point_to_index[points[i]]] = Dates.value(hatch_date)
+        end
+    end
+    valid_ordinals = filter(!isnan, hatch_date_ordinals)
+    lo, hi = extrema(valid_ordinals)
+    tick_vals = round.(Int, range(lo, hi; length=6))
+    tick_labels = string.(Date.(Dates.UTD.(tick_vals)))
+    date_gradient = cgrad(:plasma)
+    hatch_date_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_date_ordinals);
+        title="Hatch date",
+        xlabel="Longitude", ylabel="Latitude",
+        color=date_gradient, colorbar=false,
+    )
+    for (v, label) in zip(tick_vals, tick_labels)
+        scatter!(hatch_date_plot, [NaN], [NaN];
+            color=date_gradient[(v - lo) / (hi - lo)], markersize=6, markerstrokewidth=0, label=label)
+    end
+    add_basemap!(hatch_date_plot)
+
+    # Outcome map: hatched / died (by cause) / survived-but-didn't-hatch in
+    # max_duration, as a small integer code per cell (categorical, not a
+    # continuous scale) -- same NaN-for-filtered-out convention as above.
+    # death_cause values come from egg_model/src/types.jl's cause_of_death;
+    # extend both dicts below if egg_model's survival_model ever gains
+    # another cause. Colours are the Okabe-Ito colourblind-safe palette.
+    # Same dummy-series-legend trick as the date plot above, for the same
+    # reason (colourbar can't show the category name strings).
+    outcome_codes = Dict(:hatched => 0, :cold => 1, :heat => 2, :desiccation => 3, :timeout => 4)
+    outcome_labels = ["hatched", "died: cold", "died: heat", "died: desiccation", "no hatch (timeout)"]
+    outcome_colors = ["#009E73", "#0072B2", "#D55E00", "#E69F00", "#999999"]
+    outcomes = fill(NaN, length(all_grid_points))
+    for (i, r) in enumerate(results)
+        code = r.hatched ? :hatched : r.died ? r.death_cause : :timeout
+        outcomes[point_to_index[points[i]]] = outcome_codes[code]
+    end
+    present_codes = Int.(sort(unique(filter(!isnan, outcomes))))
+    outcome_plot = heatmap(lon_range, lat_range, to_heatmap_z(outcomes);
+        title="Outcome",
+        xlabel="Longitude", ylabel="Latitude",
+        color=cgrad(outcome_colors[present_codes.+1]; categorical=true),
+        clims=(minimum(present_codes) - 0.5, maximum(present_codes) + 0.5),
+        colorbar=false,
+    )
+    for code in present_codes
+        scatter!(outcome_plot, [NaN], [NaN];
+            color=outcome_colors[code+1], markersize=6, markerstrokewidth=0, label=outcome_labels[code+1])
+    end
+    add_basemap!(outcome_plot)
+
+    # Egg mass at hatch (mg) -- final_state.egg_mass at the moment of
+    # hatching; NaN for cells that didn't hatch, same convention as above.
+    hatch_mass_mg = fill(NaN, length(all_grid_points))
+    for (i, r) in enumerate(results)
+        r.hatched && (hatch_mass_mg[point_to_index[points[i]]] = ustrip(u"mg", r.final_state.egg_mass))
+    end
+    mass_plot = heatmap(lon_range, lat_range, to_heatmap_z(hatch_mass_mg);
+        title="Egg mass at hatch (mg)",
+        xlabel="Longitude", ylabel="Latitude",
+        color=cgrad(:viridis),
+    )
+    add_basemap!(mass_plot)
+
+    panel = plot(hatch_plot, hatch_date_plot, outcome_plot, mass_plot;
+        layout=(2, 2), size=(1400, 1050),
+        plot_title="Lay date $oviposition_date", legendfontsize=6,
+    )
+    savefig(panel, joinpath(@__DIR__, "points_australia_panel.png"))
+    display(panel)
 else
     println("\nSkipping the hatch-date raster plot -- only $(n_points_to_run)/$(length(points)) points were run " *
             "(set test_mode = false for the full Pass A sweep).")
