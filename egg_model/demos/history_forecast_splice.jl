@@ -48,14 +48,32 @@ mkpath(output_dir)
 
 ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
-site = geocode("Birdsville, Qld, Australia")
+# points = [
+#     geocode("Bendigo, Australia"),
+#     geocode("Mildura, Australia"),
+#     geocode("Hay, NSW, Australia"),
+#     geocode("Ivanhoe, NSW, Australia"),
+#     geocode("Dubbo, NSW, Australia"),
+#     geocode("Bourke, NSW, Australia"),
+#     geocode("St George, Qld, Australia"),
+#     geocode("Nooyeah Downs, Qld, Australia"),
+#     geocode("Quilpie, Qld, Australia"),
+#     geocode("Roma, Qld, Australia"),
+#     geocode("Marree, SA, Australia"),
+#     geocode("Broken Hill, Australia"),
+#     geocode("Hawker, SA, Australia"),
+#     geocode("Yunta, SA, Australia"),
+#     geocode("Birdsville, Qld, Australia"),
+# ]
+
+site = geocode("Bendigo, Australia")
 points = [site]
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-ensembles = 10
+ensembles = 99
 save_trajectory = true
 diapause = true
 oviposition_date = Date(2026, 4, 25)
@@ -181,10 +199,6 @@ historical_result = (;
 )
 historical_forcing = egg_nest_forcing(historical_result, historical_day_range, nest_node, environment_pars)
 
-# soil_moisture profile at the very last historical hour -- seeds the
-# forecast's init, for continuity across the splice (microclimate-level).
-now_soil_moisture = collect(historical_output.soil_moisture[point=1, Ti=lastindex(historical_day_range)])
-
 # ── historical egg-model leg: oviposition_date -> issue_date ──
 
 historical_tspan = (0.0u"hr", length(historical_day_range) * 1.0u"hr")
@@ -197,6 +211,12 @@ println("Running historical egg-model portion...")
 historical_egg_result = simulate_egg(egg_model, pars, initial_state, soil_hydraulics, 
                                         historical_forcing, historical_tspan; save_trajectory)
 
+# soil temperature and moistures profile at the very last historical hour -- seeds the
+# forecast's init, for continuity across the splice (microclimate-level).
+now_soil_temperature = collect(historical_output.soil_temperature[point=1, Ti=lastindex(historical_day_range)])
+now_soil_moisture = collect(historical_output.soil_moisture[point=1, Ti=lastindex(historical_day_range)])
+
+label = ""
 if historical_egg_result.hatched
     println("Hatched during the historical period, before the forecast issue date -- nothing to splice.")
 elseif historical_egg_result.died
@@ -205,7 +225,7 @@ else
     println("Still developing at issue date $issue_date (development_fraction=$(historical_egg_result.final_state.development_fraction)) -- continuing into the forecast ensemble.")
 
     # ── forecast leg: ACCESS-S2, issue_date + N members ──
-    # doing user-specified number of the 99-member ensemble, cacheing along the way. 
+    # doing user-specified number of the 99-member ensemble. 
     # init_egg_cache/simulate_egg!) is built once from member 1's forcing and reused across
     # all members via reinit!.
 
@@ -230,7 +250,10 @@ else
                     soil_properties_model = example_soil_properties_model(),
                     soil_hydraulic_model  = example_soil_hydraulic_model(),
                     snow_model            = NoSnow(),
-                    config                = MicroConfig(soil_moisture_strategy = DynamicSoilMoisture()),
+                    config                = MicroConfig(
+                                            soil_moisture_strategy = DynamicSoilMoisture(),
+                                            convergence = FixedSoilTemperatureIterations(1)
+                                            ),
                 ),
                 dem_source              = CRUCL2,
                 weather_source          = AccessS2(issue_date, member),
@@ -241,9 +264,10 @@ else
             )
             forecast_problem = MicroVectorProblem(;
                 model = forecast_model, points, dates=forecast_dates, soil_profile,
-                init = (; soil_moisture = now_soil_moisture),
+                init = (; soil_moisture = now_soil_moisture, soil_temperature = now_soil_temperature),
             )
-            forecast_output = solve(forecast_problem)
+            println("simulate microclimate")
+            @time forecast_output = solve(forecast_problem)
             forecast_day_range = 1:size(forecast_output.soil_temperature[point=1], 1)
             forecast_result = (;
                 soil_temperature          = collect(forecast_output.soil_temperature[point=1]),
@@ -252,6 +276,20 @@ else
                 soil_thermal_conductivity = collect(forecast_output.soil_thermal_conductivity[point=1]),
                 soil_humidity             = collect(forecast_output.soil_humidity[point=1]),
             )
+            # # Bias-correct soil water potential at the nest depth to match the
+            # # historical leg's endpoint, decaying to zero over the first day.
+            # swp_bias = historical_result.soil_water_potential[end, nest_node] -
+            #     forecast_result.soil_water_potential[2, nest_node]
+            # temp_bias = historical_result.soil_temperature[end, nest_node] -
+            #     forecast_result.soil_temperature[2, nest_node]                
+            # println(swp_bias)
+            # println(temp_bias)
+            # blend_hours = 24
+            # n_forecast = size(forecast_result.soil_water_potential, 1)
+            # decay = clamp.(1.0 .- (0:n_forecast-1) ./ blend_hours, 0.0, 1.0)
+            # forecast_result.soil_water_potential[:, nest_node] .+= swp_bias .* decay
+            # forecast_result.soil_temperature[:, nest_node] .+= temp_bias .* decay
+
             forecast_forcing = egg_nest_forcing(forecast_result, forecast_day_range, nest_node, environment_pars)
 
             if egg_cache === nothing
@@ -284,37 +322,94 @@ else
     end
     if !isempty(hatch_dates)
         hatch_days_since_issue = [Dates.value(d - issue_date) for d in hatch_dates]
-        println("\n$(length(hatch_dates))/$(length(members)) members hatched. ",
-                "Median hatch: $(issue_date + Day(round(Int, median(hatch_days_since_issue)))), ",
-                "range: $(minimum(hatch_dates)) to $(maximum(hatch_dates))")
+        label = "$(length(hatch_dates))/$(length(members)) members hatched. " *
+        "Median hatch: $(issue_date + Day(round(Int, median(hatch_days_since_issue)))), " *
+        "range: $(minimum(hatch_dates)) to $(maximum(hatch_dates))"
+        println(label)
     end
 end
 
 
 # trajectories for every oviposition date, overlaid on the same panels.
 using Plots
-p1 = plot(; ylabel="development", title=split(site.display_name, ",")[1] * ", lay date: " * string(oviposition_date), legend=false)#, legend=:outerright)
-p2 = plot(; ylabel="egg mass", legend=false)
-p3 = plot(; ylabel="water\npotential", legend=false)
-p4 = plot(; ylabel="egg\ntemperature", xlabel="date", legend=false)
+
+p1 = plot(;
+    ylabel = "development",
+    title = split(site.display_name, ",")[1] *
+            ", lay date: " * string(oviposition_date) *
+            ", diapause = " * string(diapause),
+    legend = false,
+    ylims = (0, 1)
+)
+p2 = plot(; ylabel="egg mass", legend=false, ylims = (minimum_egg_mass, maximum_egg_mass))
+p3 = plot(; ylabel="egg\ntemperature", xlabel="date", legend=false)
+
 silo_t = ustrip.(u"s", historical_egg_result.trajectory.t)
+
 for i in 1:ensembles
     traj = forecast_outcomes[i].trajectory
     access_t = ustrip.(u"s", traj.t) .+ last(silo_t)
     combined_t = vcat(silo_t, access_t)
-    development_fraction = vcat(historical_egg_result.trajectory.development_fraction, traj.development_fraction)
-    egg_mass = vcat(historical_egg_result.trajectory.egg_mass, traj.egg_mass)
-    egg_water_potential = vcat(historical_egg_result.trajectory.egg_water_potential, traj.egg_water_potential)
-    temperature = vcat(historical_egg_result.trajectory.temperature, traj.temperature)
-    # traj.t is simulation time in hours since dates[1] -- convert to actual
-    # calendar DateTimes so each lay date's trajectory sits at when it really
-    # occurred through the year, rather than all overlaid from a shared zero.
-    actual_times = DateTime(oviposition_date) .+ Dates.Second.(round.(Int, combined_t))
-    plot!(p1, actual_times, development_fraction, ylims = (0, 1))
-    plot!(p2, actual_times, collect(uconvert.(u"mg", egg_mass)), ylims = (0.0u"mg", pars.initial_egg_mass * 2.0))
-    plot!(p3, actual_times, collect(uconvert.(u"J/kg", egg_water_potential)))
-    plot!(p4, actual_times, collect(uconvert.(u"°C", temperature)))
+    development_fraction = vcat(
+        historical_egg_result.trajectory.development_fraction,
+        traj.development_fraction
+    )
+    egg_mass = vcat(
+        historical_egg_result.trajectory.egg_mass,
+        traj.egg_mass
+    )
+    egg_water_potential = vcat(
+        historical_egg_result.trajectory.egg_water_potential,
+        traj.egg_water_potential
+    )
+    temperature = vcat(
+        historical_egg_result.trajectory.temperature,
+        traj.temperature
+    )
+    actual_times =
+        DateTime(oviposition_date) .+
+        Dates.Second.(round.(Int, combined_t))
+    plot!(p1, actual_times, development_fraction)
+    plot!(
+        p2,
+        actual_times,
+        collect(uconvert.(u"mg", egg_mass));
+        ylims = (0.0u"mg", pars.initial_egg_mass * 2.0)
+    )
+    plot!(
+        p3,
+        actual_times,
+        collect(uconvert.(u"°C", temperature))
+    )
 end
-combined_plot = plot(p1, p2, p3, p4; layout=(4, 1), size=(1000, 900), link=:x)
-savefig(combined_plot, joinpath(@__DIR__, "history_forecast_splice.png"))
+
+label = if isempty(hatch_dates)
+    "0/$(length(members)) members hatched.\n" *
+    "Median hatch: none\n" *
+    "Range: none"
+else
+    "$(length(hatch_dates))/$(length(members)) members hatched.\n" *
+    "Median hatch: $(issue_date + Day(round(Int, median(hatch_days_since_issue)))),\n" *
+    "Range: $(minimum(hatch_dates)) to $(maximum(hatch_dates))"
+end
+
+annotate!(
+    p1,
+    DateTime(oviposition_date),
+    0.85,
+    text(label, 10, :black, :left)
+)
+
+combined_plot = plot(
+    p1, p2, p3;
+    layout = (3, 1),
+    size = (1000, 900),
+    link = :x
+)
+
+savefig(
+    combined_plot,
+    joinpath(@__DIR__, "history_forecast_splice.png")
+)
+
 display(combined_plot)

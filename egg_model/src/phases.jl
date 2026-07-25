@@ -243,7 +243,7 @@ reuse correct across locations with different forcing.
 """
 function init_egg_cache(egg_model::EggModel, pars::EggParameters, prototype_initial_state::EggState,
                         prototype_soil_hydraulics, prototype_forcing, prototype_tspan_hr;
-                        save_trajectory=false, saveat_hr=1.0)
+                        save_trajectory=false, saveat_hr=1.0, dtmax=1.0)
     conditions = _conditions(egg_model, pars)
     # dtmax caps the adaptive step at the forcing's own resolution (1hr) --
     # otherwise Tsit5's error control can grow the step past a fast diurnal
@@ -264,8 +264,8 @@ function init_egg_cache(egg_model::EggModel, pars::EggParameters, prototype_init
     # rather than resolving to SciMLBase's.
     problem = ODEProblem{false}(egg_rhs, u, (t, t_end), p)
     integrator = need_hourly_points ?
-        SciMLBase.init(problem, Tsit5(); callback, saveat=saveat_hr, dtmax=1.0) :
-        SciMLBase.init(problem, Tsit5(); callback, dtmax=1.0, save_everystep=false)
+        SciMLBase.init(problem, Tsit5(); callback, saveat=saveat_hr, dtmax) :
+        SciMLBase.init(problem, Tsit5(); callback, dtmax, save_everystep=false)
 
     (; integrator, conditions, need_hourly_points, save_trajectory, egg_model, pars)
 end
@@ -410,9 +410,9 @@ Single-location convenience wrapper around [`init_egg_cache`](@ref) +
 reuse across locations doesn't matter (see those two for the grid-scale path).
 """
 function simulate_egg(egg_model::EggModel, pars::EggParameters, initial_state::EggState,
-                      soil_hydraulics, forcing, tspan_hr; save_trajectory=false, saveat_hr=1.0)
+                      soil_hydraulics, forcing, tspan_hr; save_trajectory=false, saveat_hr=1.0, dtmax=1.0)
     cache = init_egg_cache(
-        egg_model, pars, initial_state, soil_hydraulics, forcing, tspan_hr; save_trajectory, saveat_hr,
+        egg_model, pars, initial_state, soil_hydraulics, forcing, tspan_hr; save_trajectory, saveat_hr, dtmax,
     )
     simulate_egg!(cache, initial_state, soil_hydraulics, forcing, tspan_hr)
 end

@@ -14,6 +14,7 @@ hydraulic_conductance   = 2.347802e-9 * u"kg/m^2/s/(J/kg)"
 specific_hydration      = 3.04e-4 * u"m^3/m^3/(J/kg)"
 conduction_fraction     = 0.5
 skin_wetness            = 0.0035
+egg_water_potential     = -709.4682u"J/kg"
 
 # arrest traits
 cold_temperature        = u"K"(12.5u"°C")
