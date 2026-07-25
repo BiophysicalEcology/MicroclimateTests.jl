@@ -28,6 +28,8 @@ using Rasters, RasterDataSources, PointDataSources
 using Dates, Unitful, Statistics
 using Serialization
 
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"#"z:/"
+
 include(joinpath(@__DIR__, "..", "src", "types.jl"))
 include(joinpath(@__DIR__, "..", "src", "development.jl"))
 include(joinpath(@__DIR__, "..", "src", "thermal.jl"))
@@ -36,6 +38,9 @@ include(joinpath(@__DIR__, "..", "src", "phases.jl"))
 include(joinpath(@__DIR__, "..", "src", "forcing.jl"))
 include(joinpath(@__DIR__, "..", "src", "access_s2.jl"))
 
+# load parameters
+include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
+
 # all cached/serialized run output goes here, not directly in demos/ -- one
 # gitignore entry (egg_model/demos/output/) instead of per-file patterns.
 output_dir = joinpath(@__DIR__, "output")
@@ -43,12 +48,26 @@ mkpath(output_dir)
 
 ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
+site = geocode("Birdsville, Qld, Australia")
+points = [site]
+
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
-nest_depth = 5.0u"cm"
+
+ensembles = 10
+save_trajectory = true
+diapause = true
+oviposition_date = Date(2026, 4, 25)
+
+if diapause
+    nest_depth = 5.0u"cm"
+    cold_hour_threshold     = 30u"d"
+else
+    nest_depth = 10.0u"cm"
+    cold_hour_threshold     = 0.0u"d"
+end
 nest_node = nearest_node(nest_depth, depths)
-environment_pars = example_environment_pars()
 
 # Just what egg_nest_forcing (forcing.jl) actually reads, plus soil_moisture
 # (kept for a possible future moisture threshold, cheap to retain -- see
@@ -62,8 +81,7 @@ output_layers = (
     LayerSpec(:soil_humidity, :soil),
 )
 
-bendigo = (144.2826718, -36.7590183)
-
+environment_pars = example_environment_pars()
 const SANDY_LOAM = (air_entry=1.5u"J/kg", b=3.1, Ksat=7.2e-4u"kg*s/m^3", field_capacity=0.21, wilting_point=0.10)
 function soil_profile_from_texture(texture::NamedTuple, depths;
     bulk_density=1.3u"Mg/m^3", mineral_density=2.560u"Mg/m^3",
@@ -90,28 +108,24 @@ soil_hydraulics = (;
 
 # ── egg model, identical config to point_silo_deterministic.jl ──
 
-shape_b = 0.69 / 1.82
-geometry = Ellipsoid(0.0036u"g", 1000.0u"kg/m^3", 1 / shape_b, 1 / shape_b)
+geometry = Ellipsoid(initial_egg_mass, egg_density, axis_ratio, axis_ratio)
+
 arrest = ProportionWindowArrest(;
-    cold_temperature=u"K"(0.0u"°C"), diapause_window=(0.25, 0.30),
-    quiescence_windows=((0.25, 0.30), (0.45, 0.50)),
-    cold_hour_threshold=1000.0u"hr", diapause_hour_threshold=240.0u"hr",
-    desiccation_tolerance=0.6,
+    cold_temperature, diapause_window, quiescence_windows,
+    cold_hour_threshold, diapause_hour_threshold,
+    desiccation_tolerance,
 )
 dm = arrhenius_development_model(;
-    T_A=6641.6175, T_AL=33600.0, T_AH=48000.0, T_L=289.15, T_H=314.65, T_ref=301.65,
-    rate_at_reference=1 / 17.4, rate_unit=1.0u"d^-1",
+    T_A, T_AL, T_AH, T_L, T_H, T_ref, rate_at_reference, rate_unit,
 )
-base_K_e = 2.347802e-9 * u"kg/m^2/s/(J/kg)"
+
 stage = SteppedHydricStage(;
-    conductance_threshold=0.25, wetness_threshold=0.45,
-    dormant_conductance=0.0u"kg/m^2/s/(J/kg)", active_conductance=base_K_e * 3,
-    dormant_wetness=0.35 / 100, active_wetness=0.35,
+    conductance_threshold, wetness_threshold, dormant_conductance, active_conductance,
+    dormant_wetness, active_wetness,
 )
 pars = EggParameters(;
-    hydraulic_conductance=base_K_e, specific_hydration=0.000304u"m^3/m^3/(J/kg)",
-    conduction_fraction=0.5, skin_wetness=0.35 / 100,
-    initial_egg_mass=0.0036u"g", minimum_egg_mass=0.0026u"g",
+    hydraulic_conductance, specific_hydration, conduction_fraction, skin_wetness,
+    initial_egg_mass, minimum_egg_mass, maximum_egg_mass,
 )
 survival_model = CombinedSurvival(
     HardTemperatureLimit(; lower_lethal_temperature=u"K"(-5.0u"°C"), upper_lethal_temperature=u"K"(52.0u"°C")),
@@ -122,12 +136,16 @@ egg_model = EggModel(;
     hydric_stage_model=stage, thermal_model=SoilTemperatureEquals(), survival_model, geometry,
 )
 
+initial_state = EggState(;
+    egg_mass=pars.initial_egg_mass, egg_water_potential=-709.4682u"J/kg",
+    maximum_mass_achieved=pars.initial_egg_mass, arrest_state=initial_arrest_state(arrest),
+)
+
 # ── historical leg: SILO, oviposition_date through issue_date ("now") ──
 # Genuinely sub-yearly (Jan-Jun) -- this is exactly what the sub-yearly-run
 # fix (MicroclimateMapper.jl PR #29) unblocked.
 
-oviposition_date = Date(2024, 5, 1)
-issue_date = Date(2024, 6, 1)   # ACCESS-S2 issue date -- "now"
+issue_date = Date(2026, 7, 1)   # ACCESS-S2 issue date -- "now"
 historical_dates = oviposition_date:Day(1):issue_date
 
 historical_model = MicroMapModel(;
@@ -148,7 +166,7 @@ historical_model = MicroMapModel(;
 
 println("Solving historical (SILO) microclimate: $oviposition_date to $issue_date...")
 historical_problem = MicroVectorProblem(;
-    model = historical_model, points=[bendigo], dates=historical_dates, soil_profile,
+    model = historical_model, points, dates=historical_dates, soil_profile,
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 @time historical_output = solve(historical_problem)
@@ -175,8 +193,9 @@ initial_state = EggState(;
     maximum_mass_achieved=pars.initial_egg_mass, arrest_state=initial_arrest_state(arrest),
 )
 
-println("Running historical egg-model leg...")
-historical_egg_result = simulate_egg(egg_model, pars, initial_state, soil_hydraulics, historical_forcing, historical_tspan)
+println("Running historical egg-model portion...")
+historical_egg_result = simulate_egg(egg_model, pars, initial_state, soil_hydraulics, 
+                                        historical_forcing, historical_tspan; save_trajectory)
 
 if historical_egg_result.hatched
     println("Hatched during the historical period, before the forecast issue date -- nothing to splice.")
@@ -186,15 +205,11 @@ else
     println("Still developing at issue date $issue_date (development_fraction=$(historical_egg_result.final_state.development_fraction)) -- continuing into the forecast ensemble.")
 
     # ── forecast leg: ACCESS-S2, issue_date + N members ──
-    # Full 99-member ensemble. Each member's outcome is cached to disk
-    # individually -- solving 99 separate ACCESS-S2 microclimates is the
-    # dominant cost, so an interrupted run shouldn't have to redo already-
-    # finished members. The egg-model integrator itself (init_egg_cache/
-    # simulate_egg!) is built once from member 1's forcing and reused across
-    # all members via reinit! rather than rebuilt per member (phases.jl's
-    # standard cache-reuse pattern -- see points_australia.jl).
+    # doing user-specified number of the 99-member ensemble, cacheing along the way. 
+    # init_egg_cache/simulate_egg!) is built once from member 1's forcing and reused across
+    # all members via reinit!.
 
-    members = 1:99
+    members = 1:ensembles
     forecast_horizon_days = 214
     forecast_dates = issue_date:Day(1):(issue_date + Day(forecast_horizon_days - 1))
     forecast_tspan = (0.0u"hr", length(forecast_dates) * 24.0u"hr")   # hours, not days
@@ -225,7 +240,7 @@ else
                 output_layers,
             )
             forecast_problem = MicroVectorProblem(;
-                model = forecast_model, points=[bendigo], dates=forecast_dates, soil_profile,
+                model = forecast_model, points, dates=forecast_dates, soil_profile,
                 init = (; soil_moisture = now_soil_moisture),
             )
             forecast_output = solve(forecast_problem)
@@ -241,11 +256,11 @@ else
 
             if egg_cache === nothing
                 global egg_cache = init_egg_cache(egg_model, pars, historical_egg_result.final_state,
-                    soil_hydraulics, forecast_forcing, forecast_tspan)
+                    soil_hydraulics, forecast_forcing, forecast_tspan; save_trajectory)
             end
             result = simulate_egg!(egg_cache, historical_egg_result.final_state,
                 soil_hydraulics, forecast_forcing, forecast_tspan)
-            serialize(member_cache_path, result)
+            #serialize(member_cache_path, result)
             result
         end
         global progress += 1
@@ -274,3 +289,32 @@ else
                 "range: $(minimum(hatch_dates)) to $(maximum(hatch_dates))")
     end
 end
+
+
+# trajectories for every oviposition date, overlaid on the same panels.
+using Plots
+p1 = plot(; ylabel="development", title=split(site.display_name, ",")[1] * ", lay date: " * string(oviposition_date), legend=false)#, legend=:outerright)
+p2 = plot(; ylabel="egg mass", legend=false)
+p3 = plot(; ylabel="water\npotential", legend=false)
+p4 = plot(; ylabel="egg\ntemperature", xlabel="date", legend=false)
+silo_t = ustrip.(u"s", historical_egg_result.trajectory.t)
+for i in 1:ensembles
+    traj = forecast_outcomes[i].trajectory
+    access_t = ustrip.(u"s", traj.t) .+ last(silo_t)
+    combined_t = vcat(silo_t, access_t)
+    development_fraction = vcat(historical_egg_result.trajectory.development_fraction, traj.development_fraction)
+    egg_mass = vcat(historical_egg_result.trajectory.egg_mass, traj.egg_mass)
+    egg_water_potential = vcat(historical_egg_result.trajectory.egg_water_potential, traj.egg_water_potential)
+    temperature = vcat(historical_egg_result.trajectory.temperature, traj.temperature)
+    # traj.t is simulation time in hours since dates[1] -- convert to actual
+    # calendar DateTimes so each lay date's trajectory sits at when it really
+    # occurred through the year, rather than all overlaid from a shared zero.
+    actual_times = DateTime(oviposition_date) .+ Dates.Second.(round.(Int, combined_t))
+    plot!(p1, actual_times, development_fraction, ylims = (0, 1))
+    plot!(p2, actual_times, collect(uconvert.(u"mg", egg_mass)), ylims = (0.0u"mg", pars.initial_egg_mass * 2.0))
+    plot!(p3, actual_times, collect(uconvert.(u"J/kg", egg_water_potential)))
+    plot!(p4, actual_times, collect(uconvert.(u"°C", temperature)))
+end
+combined_plot = plot(p1, p2, p3, p4; layout=(4, 1), size=(1000, 900), link=:x)
+savefig(combined_plot, joinpath(@__DIR__, "history_forecast_splice.png"))
+display(combined_plot)

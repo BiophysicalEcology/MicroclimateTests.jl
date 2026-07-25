@@ -12,7 +12,7 @@ using Rasters, RasterDataSources, PointDataSources
 using Dates, Unitful
 using Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "z:/"
+ENV["RASTERDATASOURCES_PATH"] = "z:/"#"c:/Spatial_Data"
 
 include(joinpath(@__DIR__, "..", "src", "access_s2.jl"))
 
@@ -27,9 +27,9 @@ output_layers = (
 )
 
 bendigo = (144.2826718, -36.7590183)
-issue_date = Date(2024, 6, 1)
+issue_date = Date(2024, 6, 1) #Date(2026, 7, 1)
 member = 1
-horizon_days = 214   # arbitrary sub-yearly window, no longer needs year-end alignment
+horizon_days = 214
 dates = issue_date:Day(1):(issue_date + Day(horizon_days - 1))
 
 model = MicroMapModel(;
@@ -75,12 +75,11 @@ problem = MicroVectorProblem(;
 )
 @time access_result = solve(problem)
 
-println("reference_temperature range: ", extrema(ustrip.(u"°C", access_result.reference_temperature[point=1])))
-println("global_radiation range: ", extrema(ustrip.(u"W/m^2", access_result.global_radiation[point=1])))
-println("soil_temperature[node=1] range: ", extrema(ustrip.(u"°C", access_result.soil_temperature[point=1, depth=1])))
+println("reference_temperature range: ", uconvert.(u"°C", extrema(access_result.reference_temperature[point=1])))
+println("global_radiation range: ", extrema(access_result.global_radiation[point=1]))
+println("soil_temperature[node=1] range: ", uconvert.(u"°C", extrema(access_result.soil_temperature[point=1, depth=1])))
 
 # ── SILO comparison over the same real calendar dates, for sanity ──
-
 silo_model = MicroMapModel(;
     micro_model = model.micro_model, dem_source = CRUCL2, weather_source = SILO,
     surface_albedo_source = 0.15, roughness_height_source = 0.004u"m",
@@ -91,10 +90,10 @@ silo_problem = MicroVectorProblem(;
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 @time silo_result = solve(silo_problem)
-println("SILO reference_temperature range: ", extrema(ustrip.(u"°C", silo_result.reference_temperature[point=1])))
+println("SILO reference_temperature range: ", uconvert.(u"°C", extrema(silo_result.reference_temperature[point=1])))
 
-p = plot(ustrip.(u"°C", access_result.reference_temperature[point=1]); label="ACCESS-S2 (member $member)",
-         title="Bendigo reference air temperature, issue $issue_date", xlabel="hour", ylabel="°C")
-plot!(p, ustrip.(u"°C", silo_result.reference_temperature[point=1]); label="SILO (observed)")
+p = plot(uconvert.(u"°C", access_result.reference_temperature[point=1]); label="ACCESS-S2 (member $member)",
+         title="Bendigo reference air temperature, issue $issue_date", xlabel="hour")
+plot!(p, uconvert.(u"°C", silo_result.reference_temperature[point=1]); label="SILO (observed)")
 savefig(p, joinpath(@__DIR__, "access_s2_vs_silo_bendigo.png"))
 display(p)

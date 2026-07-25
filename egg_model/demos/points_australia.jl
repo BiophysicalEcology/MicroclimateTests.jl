@@ -32,6 +32,9 @@ include(joinpath(@__DIR__, "..", "src", "hydric.jl"))
 include(joinpath(@__DIR__, "..", "src", "phases.jl"))
 include(joinpath(@__DIR__, "..", "src", "forcing.jl"))
 
+# load parameters
+include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
+
 # all cached/serialized run output goes here
 output_dir = joinpath(@__DIR__, "output")
 mkpath(output_dir)
@@ -41,14 +44,19 @@ ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"#"z:/"
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
-nest_depth = 5.0u"cm"
+nest_depth = 2.5u"cm"
 
-soil_source = :sandy_loam
+# raw batch caches only keep depths down to this value -- set past whatever
+# nest_depth values you want to compare (deeper needs a fresh solve).
+cache_max_depth = 15.0u"cm"
+CACHED_DEPTH_RANGE = 1:nearest_node(cache_max_depth, depths)
+soil_source = :sandy_loam # slga, sand, loamy_sand, sandy_loam, loam, silt_loam, sandy_clay_loam, clay_loam, silty_clay_loam, sandy_clay, silty_clay, clay
 
 dates = Date(2010, 1, 1):Day(1):Date(2011, 12, 31) # for microclimate
 day_range = 1:(length(dates) * 24)
 max_duration = 720.0u"d"
 forcing_end_hr = length(day_range) * 1.0u"hr"
+
 oviposition_date = Date(2010, 4, 1)
 
 # layers wanted from the microclimate model runs
@@ -150,6 +158,8 @@ end
 soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[soil_source], depths)
 
 nest_node = nearest_node(nest_depth, depths)
+nest_node in CACHED_DEPTH_RANGE || error(
+    "nest_depth=$nest_depth is deeper than cache_max_depth=$cache_max_depth -- raise cache_max_depth and re-solve")
 environment_pars = example_environment_pars()
 
 # Batched solve MicroVectorProblem over all n_points_to_run, caching
@@ -175,13 +185,14 @@ for b in 1:n_batches
             init = (; soil_moisture = fill(0.2, length(depths))),
         )
         @time batch_output = solve(batch_problem)
+        # trimmed to CACHED_DEPTH_RANGE + Float32 -- see its definition for why
         result = map(1:length(batch_points)) do i
             (;
-                soil_temperature          = collect(batch_output.soil_temperature[point=i]),
-                soil_moisture             = collect(batch_output.soil_moisture[point=i]),
-                soil_water_potential      = collect(batch_output.soil_water_potential[point=i]),
-                soil_thermal_conductivity = collect(batch_output.soil_thermal_conductivity[point=i]),
-                soil_humidity             = collect(batch_output.soil_humidity[point=i]),
+                soil_temperature          = Float32.(collect(batch_output.soil_temperature[point=i, depth=CACHED_DEPTH_RANGE])),
+                soil_moisture             = Float32.(collect(batch_output.soil_moisture[point=i, depth=CACHED_DEPTH_RANGE])),
+                soil_water_potential      = Float32.(collect(batch_output.soil_water_potential[point=i, depth=CACHED_DEPTH_RANGE])),
+                soil_thermal_conductivity = Float32.(collect(batch_output.soil_thermal_conductivity[point=i, depth=CACHED_DEPTH_RANGE])),
+                soil_humidity             = Float32.(collect(batch_output.soil_humidity[point=i, depth=CACHED_DEPTH_RANGE])),
             )
         end
         serialize(batch_cache_path, result)
@@ -204,28 +215,24 @@ soil_hydraulics = (;
 
 # ── egg model, identical config to point_silo_deterministic.jl ──
 
-shape_b = 0.69 / 1.82
-geometry = Ellipsoid(0.0036u"g", 1000.0u"kg/m^3", 1 / shape_b, 1 / shape_b)
+geometry = Ellipsoid(initial_egg_mass, egg_density, axis_ratio, axis_ratio)
+
 arrest = ProportionWindowArrest(;
-    cold_temperature=u"K"(0.0u"°C"), diapause_window=(0.45, 0.50),
-    quiescence_windows=((0.25, 0.30), (0.45, 0.50)),
-    cold_hour_threshold=0.0u"hr", diapause_hour_threshold=0.0u"hr",
-    desiccation_tolerance=0.6,
+    cold_temperature, diapause_window, quiescence_windows,
+    cold_hour_threshold, diapause_hour_threshold,
+    desiccation_tolerance,
 )
 dm = arrhenius_development_model(;
-    T_A=6641.6175, T_AL=33600.0, T_AH=48000.0, T_L=289.15, T_H=314.65, T_ref=301.65,
-    rate_at_reference=1 / 17.4, rate_unit=1.0u"d^-1",
+    T_A, T_AL, T_AH, T_L, T_H, T_ref, rate_at_reference, rate_unit,
 )
-base_K_e = 2.347802e-9 * u"kg/m^2/s/(J/kg)"
+
 stage = SteppedHydricStage(;
-    conductance_threshold=0.25, wetness_threshold=0.45,
-    dormant_conductance=0.0u"kg/m^2/s/(J/kg)", active_conductance=base_K_e * 3,
-    dormant_wetness=0.35 / 100, active_wetness=0.35,
+    conductance_threshold, wetness_threshold, dormant_conductance, active_conductance,
+    dormant_wetness, active_wetness,
 )
 pars = EggParameters(;
-    hydraulic_conductance=base_K_e, specific_hydration=0.000304u"m^3/m^3/(J/kg)",
-    conduction_fraction=0.5, skin_wetness=0.35 / 100,
-    initial_egg_mass=0.0036u"g", minimum_egg_mass=0.0026u"g",
+    hydraulic_conductance, specific_hydration, conduction_fraction, skin_wetness,
+    initial_egg_mass, minimum_egg_mass, maximum_egg_mass,
 )
 survival_model = CombinedSurvival(
     HardTemperatureLimit(; lower_lethal_temperature=u"K"(-5.0u"°C"), upper_lethal_temperature=u"K"(52.0u"°C")),

@@ -43,8 +43,12 @@ function egg_rhs(u, p, t)
     SVector(d_dev, ustrip(u"kg/hr", d_mass), ustrip(u"J/kg/hr", d_water_potential), d_chill, d_diapause_duration, d_max_mass)
 end
 
-# hydration_index as a function of (u[2], u[6]) directly -- desiccation_tolerance
-# crossing is a condition on this, not a fixed mass threshold (m_max is dynamic).
+# hydration_index - egg may start under-hydrated (to maximise space for eggs in
+# the mother) so the desiccation tolerance needs to be relative to the maximum
+# egg mass reached thus far, not the initial egg mass. The hydration index thus
+# indicates the ratio of the current water gain since the egg was laid to the 
+# maximum water it gained since being laid and uses that to if it has reached the
+# desiccation threshold.
 _hydration_index_u(u, pars) =
     clamp((u[2] - ustrip(u"kg", pars.initial_egg_mass)) / (u[6] - ustrip(u"kg", pars.initial_egg_mass)), 0.0, 1.0)
 

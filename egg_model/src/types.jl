@@ -229,10 +229,7 @@ Base.@kwdef struct EggParameters{HC,SH,CF,SW,IM,MM,MX}
     skin_wetness::SW                      # baseline, before stage-dependent switching in phases.jl
     initial_egg_mass::IM
     minimum_egg_mass::MM                  # hard floor (dry mass)
-    # hard ceiling on uptake: shell/membrane tension opposes further water gain
-    # once fully turgid, a counter-force the Darcy flux term itself lacks.
-    # Placeholder (2x initial mass) -- needs a real turgid-mass estimate.
-    maximum_egg_mass::MX = 2 * initial_egg_mass
+    maximum_egg_mass::MX                  # hard ceiling on uptake: shell/membrane tension opposes further water gain
 end
 
 # builds a HeatExchange.HydraulicParameters snapshot for the current state.
