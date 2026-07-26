@@ -222,14 +222,13 @@ end
 
 # --- egg parameters (fixed, species-level) ---
 
-Base.@kwdef struct EggParameters{HC,SH,CF,SW,IM,MM,MX}
+Base.@kwdef struct EggParameters{HC,SH,CF,SW,IM,MM}
     hydraulic_conductance::HC             # egg shell K_e, HeatExchange's K_skin equivalent
     specific_hydration::SH
     conduction_fraction::CF               # soil-contact fraction, HeatExchange's ExternalConductionParameters equivalent
     skin_wetness::SW                      # baseline, before stage-dependent switching in phases.jl
     initial_egg_mass::IM
     minimum_egg_mass::MM                  # hard floor (dry mass)
-    maximum_egg_mass::MX                  # hard ceiling on uptake: shell/membrane tension opposes further water gain
 end
 
 # builds a HeatExchange.HydraulicParameters snapshot for the current state.

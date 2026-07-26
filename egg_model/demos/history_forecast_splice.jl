@@ -80,10 +80,12 @@ oviposition_date = Date(2026, 4, 25)
 
 if diapause
     nest_depth = 5.0u"cm"
-    cold_hour_threshold     = 30u"d"
+    cold_hour_threshold = 30u"d"
+    diapause_hour_threshold = 0.0u"d"
 else
     nest_depth = 10.0u"cm"
-    cold_hour_threshold     = 0.0u"d"
+    cold_hour_threshold = 0.0u"d"
+    diapause_hour_threshold = 0.0u"d"
 end
 nest_node = nearest_node(nest_depth, depths)
 
@@ -143,7 +145,7 @@ stage = SteppedHydricStage(;
 )
 pars = EggParameters(;
     hydraulic_conductance, specific_hydration, conduction_fraction, skin_wetness,
-    initial_egg_mass, minimum_egg_mass, maximum_egg_mass,
+    initial_egg_mass, minimum_egg_mass,
 )
 survival_model = CombinedSurvival(
     HardTemperatureLimit(; lower_lethal_temperature=u"K"(-5.0u"°C"), upper_lethal_temperature=u"K"(52.0u"°C")),

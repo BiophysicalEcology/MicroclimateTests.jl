@@ -75,11 +75,7 @@ function hydric_rate(::SteadyDarcyFlux, egg_model, state, pars, environment, soi
 
     conductance = stage_hydraulic_conductance(egg_model.hydric_stage_model, state.development_fraction, pars)
     # check-valve: liquid uptake is soil->egg only. Once soil dries out below
-    # the egg's own water potential, block this pathway entirely rather than
-    # letting the (symmetric) Darcy formula run it in reverse -- otherwise a
-    # wet spell's gains keep leaking back out through this term as the soil
-    # dries again, on top of ordinary evaporative loss, and the egg can never
-    # net-accumulate water.
+    # the egg's own water potential, block this pathway entirely
     if min(-0.001u"J/kg", soil_water_potential) < state.egg_water_potential
         conductance = zero(conductance)
     end
@@ -90,19 +86,12 @@ function hydric_rate(::SteadyDarcyFlux, egg_model, state, pars, environment, soi
     m_vapor = cutaneous_water_loss(organism, state, core_temperature, environment, air_exposed_area)
 
     d_mass = m_liquid - m_vapor
-    # dry-mass floor: egg_mass can't drop below minimum_egg_mass (the egg's dry
-    # mass) -- clamp the flux itself once there, not just the denominator below,
-    # or the continuous ODE state drifts through and past it (even negative).
+
+    # dry-mass floor
     if state.egg_mass <= pars.minimum_egg_mass && d_mass < zero(d_mass)
         d_mass = zero(d_mass)
     end
-    # turgid-mass ceiling: shell/membrane tension resists further uptake once
-    # fully hydrated -- the Darcy flux term alone has no such counter-force,
-    # and uptake vs. surface-area growth is a positive feedback with no other
-    # brake, so egg mass would otherwise run away unboundedly.
-    if state.egg_mass >= pars.maximum_egg_mass && d_mass > zero(d_mass)
-        d_mass = zero(d_mass)
-    end
+
     floored_mass = max(state.egg_mass, pars.minimum_egg_mass)
     d_water_potential = d_mass / (pars.specific_hydration * floored_mass)
     (; d_mass, d_water_potential)

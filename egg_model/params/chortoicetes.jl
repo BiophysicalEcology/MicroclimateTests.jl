@@ -9,9 +9,9 @@ axis_ratio              = 1.82 / 0.69
 egg_density             = 1000.0u"kg/m^3"
 
 # hydric traits
-base_K_e                = 2.347802e-9 * u"kg/m^2/s/(J/kg)"
-hydraulic_conductance   = 2.347802e-9 * u"kg/m^2/s/(J/kg)"
-specific_hydration      = 3.04e-4 * u"m^3/m^3/(J/kg)"
+base_K_e                = 2.3e-9 * u"kg/m^2/s/(J/kg)"
+hydraulic_conductance   = 2.3e-9 * u"kg/m^2/s/(J/kg)"
+specific_hydration      = 1.3e-3 * u"m^3/m^3/(J/kg)"
 conduction_fraction     = 0.5
 skin_wetness            = 0.0035
 egg_water_potential     = -709.4682u"J/kg"
@@ -20,7 +20,7 @@ egg_water_potential     = -709.4682u"J/kg"
 cold_temperature        = u"K"(12.5u"°C")
 diapause_window         = (0.45, 0.50) # development thresholds
 quiescence_windows      = ((0.25, 0.30), (0.45, 0.50)) # development thresholds
-cold_hour_threshold     = 0.0u"d" # 30u"d"
+cold_hour_threshold     = 30.0u"d" # 30u"d"
 diapause_hour_threshold = 1240.0u"hr"
 
 # hydric limits

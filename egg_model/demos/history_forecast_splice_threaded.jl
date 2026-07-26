@@ -69,9 +69,9 @@ depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
     20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-ensembles = 99
+ensembles = 1
 save_trajectory = true
-diapause = false
+diapause = true
 oviposition_date = Date(2026, 4, 25)
 
 if diapause
@@ -139,7 +139,7 @@ stage = SteppedHydricStage(;
 )
 pars = EggParameters(;
     hydraulic_conductance, specific_hydration, conduction_fraction, skin_wetness,
-    initial_egg_mass, minimum_egg_mass, maximum_egg_mass,
+    initial_egg_mass, minimum_egg_mass,
 )
 survival_model = CombinedSurvival(
     HardTemperatureLimit(; lower_lethal_temperature, upper_lethal_temperature),
