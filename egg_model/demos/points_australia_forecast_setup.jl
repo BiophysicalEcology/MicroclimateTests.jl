@@ -194,11 +194,27 @@ _selected_layers(batch_output, i, d) = (;
 # depth it actually wants, plus zlib compression on top -- this replaces the
 # old .jls cache, which forced reading every cached depth (~30GB for a full
 # forecast run) no matter which one was needed.
+# NetCDF variables hold plain numbers, not Unitful Quantities (soil_temperature
+# is K, soil_water_potential is J/kg, soil_moisture/soil_humidity are bare
+# fractions) -- ustrip before writing, and record the unit as a "units"
+# attribute (read back by _parse_unit) rather than hardcoding which fields
+# happen to carry units, so this doesn't silently break if that ever changes.
+
+# string(unit(x)) prints compound units space-separated ("J kg^-1"), which
+# isn't valid Julia syntax for uparse to re-parse -- swap in explicit `*`s.
+# unit_context=Unitful is needed too: Unitful doesn't export bare unit
+# symbols like J/kg/K (that's what the u"..." macro is for), but they exist
+# as plain bindings inside the Unitful module itself.
+_parse_unit(str) = isempty(str) ? NoUnits : uparse(replace(str, " " => "*"); unit_context=Unitful)
+_field_unit(raster, d) = unit(raster[point=1, depth=d, Ti=1])
+
 function _write_batch_cache(path, batch_output, n_pts)
-    # batch_output's raw axis order is (point, Ti, depth) -- size(...,1)
-    # silently gives the point count, not the hour count; size(...,Ti)
-    # looks the dimension up by name instead of position.
+    # batch_output's raw axis order is (point, Ti, depth) -- size(...,1) would
+    # silently give the point count, not the hour count; size(...,Ti) looks
+    # the dimension up by name instead of position, so it's correct
+    # regardless of storage order.
     n_hours = size(batch_output.soil_temperature, Ti)
+    d1 = first(CACHED_DEPTH_RANGE)
     isfile(path) && rm(path)
     NCDataset(path, "c") do ds
         defDim(ds, "depth", length(CACHED_DEPTH_RANGE))
@@ -210,12 +226,17 @@ function _write_batch_cache(path, batch_output, n_pts)
         vWP = defVar(ds, "soil_water_potential", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
         vK  = defVar(ds, "soil_thermal_conductivity", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
         vH  = defVar(ds, "soil_humidity", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vT.attrib["units"]  = string(_field_unit(batch_output.soil_temperature, d1))
+        vM.attrib["units"]  = string(_field_unit(batch_output.soil_moisture, d1))
+        vWP.attrib["units"] = string(_field_unit(batch_output.soil_water_potential, d1))
+        vK.attrib["units"]  = string(_field_unit(batch_output.soil_thermal_conductivity, d1))
+        vH.attrib["units"]  = string(_field_unit(batch_output.soil_humidity, d1))
         for i in 1:n_pts, (dj, d) in enumerate(CACHED_DEPTH_RANGE)
-            vT[dj, :, i]  = Float32.(collect(batch_output.soil_temperature[point=i, depth=d]))
-            vM[dj, :, i]  = Float32.(collect(batch_output.soil_moisture[point=i, depth=d]))
-            vWP[dj, :, i] = Float32.(collect(batch_output.soil_water_potential[point=i, depth=d]))
-            vK[dj, :, i]  = Float32.(collect(batch_output.soil_thermal_conductivity[point=i, depth=d]))
-            vH[dj, :, i]  = Float32.(collect(batch_output.soil_humidity[point=i, depth=d]))
+            vT[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_temperature[point=i, depth=d])))
+            vM[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_moisture[point=i, depth=d])))
+            vWP[dj, :, i] = Float32.(ustrip.(collect(batch_output.soil_water_potential[point=i, depth=d])))
+            vK[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_thermal_conductivity[point=i, depth=d])))
+            vH[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_humidity[point=i, depth=d])))
         end
         # full (untrimmed) depth profile at the last hour, for splice continuity --
         # kept Float64 (unlike the trimmed depth vars above): this seeds
@@ -223,26 +244,32 @@ function _write_batch_cache(path, batch_output, n_pts)
         last_hour = n_hours
         fT = defVar(ds, "final_soil_temperature", Float64, ("depth_full", "point"))
         fM = defVar(ds, "final_soil_moisture", Float64, ("depth_full", "point"))
+        fT.attrib["units"] = string(_field_unit(batch_output.soil_temperature, d1))
+        fM.attrib["units"] = string(_field_unit(batch_output.soil_moisture, d1))
         for i in 1:n_pts
-            fT[:, i] = collect(batch_output.soil_temperature[point=i, Ti=last_hour])
-            fM[:, i] = collect(batch_output.soil_moisture[point=i, Ti=last_hour])
+            fT[:, i] = ustrip.(collect(batch_output.soil_temperature[point=i, Ti=last_hour]))
+            fM[:, i] = ustrip.(collect(batch_output.soil_moisture[point=i, Ti=last_hour]))
         end
     end
 end
 
 # only reads the one depth (depth_local_index, this run's nest_node) out of
-# whatever was cached -- one chunk per field, not the whole file.
+# whatever was cached -- one chunk per field, not the whole file. Re-attaches
+# each field's unit (from the "units" attribute _write_batch_cache wrote) so
+# callers see the same Unitful Quantities they would from a fresh solve.
 function _read_batch_cache(path, depth_local_index, n_pts)
     NCDataset(path) do ds
-        T  = Array(ds["soil_temperature"][depth_local_index, :, :])
-        M  = Array(ds["soil_moisture"][depth_local_index, :, :])
-        WP = Array(ds["soil_water_potential"][depth_local_index, :, :])
-        K  = Array(ds["soil_thermal_conductivity"][depth_local_index, :, :])
-        H  = Array(ds["soil_humidity"][depth_local_index, :, :])
+        T  = Array(ds["soil_temperature"][depth_local_index, :, :])       .* _parse_unit(ds["soil_temperature"].attrib["units"])
+        M  = Array(ds["soil_moisture"][depth_local_index, :, :])          .* _parse_unit(ds["soil_moisture"].attrib["units"])
+        WP = Array(ds["soil_water_potential"][depth_local_index, :, :])   .* _parse_unit(ds["soil_water_potential"].attrib["units"])
+        K  = Array(ds["soil_thermal_conductivity"][depth_local_index, :, :]) .* _parse_unit(ds["soil_thermal_conductivity"].attrib["units"])
+        H  = Array(ds["soil_humidity"][depth_local_index, :, :])          .* _parse_unit(ds["soil_humidity"].attrib["units"])
         per_point = [(; soil_temperature=T[:, i], soil_moisture=M[:, i], soil_water_potential=WP[:, i],
                         soil_thermal_conductivity=K[:, i], soil_humidity=H[:, i]) for i in 1:n_pts]
-        final_soil_temperature = [Array(ds["final_soil_temperature"][:, i]) for i in 1:n_pts]
-        final_soil_moisture    = [Array(ds["final_soil_moisture"][:, i]) for i in 1:n_pts]
+        fT_unit = _parse_unit(ds["final_soil_temperature"].attrib["units"])
+        fM_unit = _parse_unit(ds["final_soil_moisture"].attrib["units"])
+        final_soil_temperature = [Array(ds["final_soil_temperature"][:, i]) .* fT_unit for i in 1:n_pts]
+        final_soil_moisture    = [Array(ds["final_soil_moisture"][:, i]) .* fM_unit for i in 1:n_pts]
         (; per_point, final_soil_temperature, final_soil_moisture)
     end
 end
