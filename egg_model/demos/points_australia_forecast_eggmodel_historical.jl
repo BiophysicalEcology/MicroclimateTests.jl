@@ -65,7 +65,7 @@ else
         (; soil_moisture=fill(0.2, length(depths))), nest_node)
     historical_day_range = 1:size(historical_raw.per_point[1].soil_temperature, 1)
     historical_tspan = (0.0u"hr", length(historical_day_range) * 1.0u"hr")
-    historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, nest_node, environment_pars)
+    historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, 1, environment_pars)
                             for i in 1:n]
 
     # ── egg-model cache pool: one integrator per thread, reinit! per work item ──

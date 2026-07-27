@@ -61,7 +61,7 @@ historical_raw = solve_batched(build_historical_model(), historical_label(), poi
 
 historical_day_range = 1:size(historical_raw.per_point[1].soil_temperature, 1)
 historical_tspan = (0.0u"hr", length(historical_day_range) * 1.0u"hr")
-historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, nest_node, environment_pars)
+historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, 1, environment_pars)
                         for i in 1:n]
 
 # ── egg-model cache pool: one integrator per thread, reinit! per work item ──
@@ -115,7 +115,7 @@ if !isempty(forecast_point_indices)
             (; soil_moisture=fill(0.2, length(depths))), nest_node)   # init unused on a cache hit
 
         forecast_day_range = 1:size(forecast_raw.per_point[1].soil_temperature, 1)
-        forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, nest_node, environment_pars)
+        forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, 1, environment_pars)
                                   for i in forecast_point_indices)
 
         member_outcomes = Vector{Any}(undef, n)

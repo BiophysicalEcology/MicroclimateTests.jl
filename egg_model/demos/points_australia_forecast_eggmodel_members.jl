@@ -113,7 +113,7 @@ else
         forecast_raw = solve_batched(build_forecast_model(member), forecast_label(member), points, forecast_dates,
             (; soil_moisture=fill(0.2, length(depths))), nest_node)   # init unused on a cache hit
         forecast_day_range = 1:size(forecast_raw.per_point[1].soil_temperature, 1)
-        forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, nest_node, environment_pars)
+        forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, 1, environment_pars)
                                   for i in forecast_point_indices)
 
         first_i = forecast_point_indices[1]
