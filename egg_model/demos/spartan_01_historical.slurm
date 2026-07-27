@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=pa_forecast_historical
 #SBATCH --account=punim0593
-#SBATCH --partition=cascade,sapphire
+#SBATCH --partition=sapphire
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --time=00:10:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
@@ -16,8 +16,7 @@
 
 set -euo pipefail
 
-module purge
-module load Julia/1.12.6-linux-x86-64   # check `module avail julia` if this version disappears
+module load Julia/1.12.6-linux-x86_64   # check `module avail julia` if this version disappears
 
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export GKSwstype=100   # headless plotting -- no display on a compute node

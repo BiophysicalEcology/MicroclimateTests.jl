@@ -57,7 +57,7 @@ initial_state = EggState(;
 
 println("Loading historical SILO microclimate for $n points...")
 historical_raw = solve_batched(build_historical_model(), historical_label(), points, historical_dates,
-    (; soil_moisture=fill(0.2, length(depths))))
+    (; soil_moisture=fill(0.2, length(depths))), nest_node)
 
 historical_day_range = 1:size(historical_raw.per_point[1].soil_temperature, 1)
 historical_tspan = (0.0u"hr", length(historical_day_range) * 1.0u"hr")
@@ -112,7 +112,7 @@ if !isempty(forecast_point_indices)
     for (member_index, member) in pairs(members)
         println("\nACCESS-S2 member $member/$(length(members)): loading microclimate for $n points...")
         forecast_raw = solve_batched(build_forecast_model(member), forecast_label(member), points, forecast_dates,
-            (; soil_moisture=fill(0.2, length(depths))))   # init unused on a cache hit
+            (; soil_moisture=fill(0.2, length(depths))), nest_node)   # init unused on a cache hit
 
         forecast_day_range = 1:size(forecast_raw.per_point[1].soil_temperature, 1)
         forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, nest_node, environment_pars)

@@ -10,6 +10,7 @@ using Rasters, RasterDataSources, PointDataSources
 using Rasters.Extents: Extent
 using Dates, Unitful
 using Serialization
+using NCDatasets
 
 include(joinpath(@__DIR__, "..", "src", "types.jl"))
 include(joinpath(@__DIR__, "..", "src", "development.jl"))
@@ -175,50 +176,107 @@ build_forecast_model(member) = MicroMapModel(;
 historical_label() = "splice_historical_lay$(oviposition_date)_issue$(issue_date)"
 forecast_label(member) = "splice_forecast_member$(member)_issue$(issue_date)"
 
-_raw_layers(output, i) = (;
-    soil_temperature          = Float32.(collect(output.soil_temperature[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_moisture             = Float32.(collect(output.soil_moisture[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_water_potential      = Float32.(collect(output.soil_water_potential[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_thermal_conductivity = Float32.(collect(output.soil_thermal_conductivity[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_humidity             = Float32.(collect(output.soil_humidity[point=i, depth=CACHED_DEPTH_RANGE])),
+# per-point, single-depth slice -- the shape solve_batched hands back to
+# callers, whether freshly solved (batch_output, in-memory) or reloaded from
+# a cached .nc file (_read_batch_cache below).
+_selected_layers(batch_output, i, d) = (;
+    soil_temperature           = Float32.(collect(batch_output.soil_temperature[point=i, depth=d])),
+    soil_moisture               = Float32.(collect(batch_output.soil_moisture[point=i, depth=d])),
+    soil_water_potential         = Float32.(collect(batch_output.soil_water_potential[point=i, depth=d])),
+    soil_thermal_conductivity    = Float32.(collect(batch_output.soil_thermal_conductivity[point=i, depth=d])),
+    soil_humidity                = Float32.(collect(batch_output.soil_humidity[point=i, depth=d])),
 )
 
-# Solves `model` over `points` in batches, caching each batch to disk under
-# `label`. On a cache hit (the expected case for every call except the one
-# job that actually solves a given leg/member), this just deserializes --
-# `model`/`dates`/`init` are cheap to reconstruct regardless of whether
-# they'll actually be used, so every script can safely call this the same
-# way without needing to know whether the underlying solve already ran.
-function solve_batched(model, label, points, dates, init)
+# writes every cached depth (not just nest_node's) so a later run at a
+# different nest_depth (e.g. toggling `diapause`) can reuse this file without
+# a fresh solve. Each depth is its own chunk (dims ordered depth x hour x
+# point, chunksizes=(1,:,:)) so _read_batch_cache only ever touches the one
+# depth it actually wants, plus zlib compression on top -- this replaces the
+# old .jls cache, which forced reading every cached depth (~30GB for a full
+# forecast run) no matter which one was needed.
+function _write_batch_cache(path, batch_output, n_pts)
+    # batch_output's raw axis order is (point, Ti, depth) -- size(...,1)
+    # silently gives the point count, not the hour count; size(...,Ti)
+    # looks the dimension up by name instead of position.
+    n_hours = size(batch_output.soil_temperature, Ti)
+    isfile(path) && rm(path)
+    NCDataset(path, "c") do ds
+        defDim(ds, "depth", length(CACHED_DEPTH_RANGE))
+        defDim(ds, "hour", n_hours)
+        defDim(ds, "point", n_pts)
+        defDim(ds, "depth_full", length(depths))
+        vT  = defVar(ds, "soil_temperature", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vM  = defVar(ds, "soil_moisture", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vWP = defVar(ds, "soil_water_potential", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vK  = defVar(ds, "soil_thermal_conductivity", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vH  = defVar(ds, "soil_humidity", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        for i in 1:n_pts, (dj, d) in enumerate(CACHED_DEPTH_RANGE)
+            vT[dj, :, i]  = Float32.(collect(batch_output.soil_temperature[point=i, depth=d]))
+            vM[dj, :, i]  = Float32.(collect(batch_output.soil_moisture[point=i, depth=d]))
+            vWP[dj, :, i] = Float32.(collect(batch_output.soil_water_potential[point=i, depth=d]))
+            vK[dj, :, i]  = Float32.(collect(batch_output.soil_thermal_conductivity[point=i, depth=d]))
+            vH[dj, :, i]  = Float32.(collect(batch_output.soil_humidity[point=i, depth=d]))
+        end
+        # full (untrimmed) depth profile at the last hour, for splice continuity --
+        # kept Float64 (unlike the trimmed depth vars above): this seeds
+        # MicroVectorProblem's init=, which expects Float64 internally.
+        last_hour = n_hours
+        fT = defVar(ds, "final_soil_temperature", Float64, ("depth_full", "point"))
+        fM = defVar(ds, "final_soil_moisture", Float64, ("depth_full", "point"))
+        for i in 1:n_pts
+            fT[:, i] = collect(batch_output.soil_temperature[point=i, Ti=last_hour])
+            fM[:, i] = collect(batch_output.soil_moisture[point=i, Ti=last_hour])
+        end
+    end
+end
+
+# only reads the one depth (depth_local_index, this run's nest_node) out of
+# whatever was cached -- one chunk per field, not the whole file.
+function _read_batch_cache(path, depth_local_index, n_pts)
+    NCDataset(path) do ds
+        T  = Array(ds["soil_temperature"][depth_local_index, :, :])
+        M  = Array(ds["soil_moisture"][depth_local_index, :, :])
+        WP = Array(ds["soil_water_potential"][depth_local_index, :, :])
+        K  = Array(ds["soil_thermal_conductivity"][depth_local_index, :, :])
+        H  = Array(ds["soil_humidity"][depth_local_index, :, :])
+        per_point = [(; soil_temperature=T[:, i], soil_moisture=M[:, i], soil_water_potential=WP[:, i],
+                        soil_thermal_conductivity=K[:, i], soil_humidity=H[:, i]) for i in 1:n_pts]
+        final_soil_temperature = [Array(ds["final_soil_temperature"][:, i]) for i in 1:n_pts]
+        final_soil_moisture    = [Array(ds["final_soil_moisture"][:, i]) for i in 1:n_pts]
+        (; per_point, final_soil_temperature, final_soil_moisture)
+    end
+end
+
+# solves `model` over `points` in batches, caching each batch to disk under
+# `label` -- shared by the historical leg and every forecast member.
+# `nest_node` picks which cached depth this call actually needs; the cache
+# max_depth is folded into the file name so changing cache_max_depth can't
+# silently reuse a file written with a different (incompatible) depth range.
+function solve_batched(model, label, points, dates, init, nest_node)
     n = length(points)
     n_batches = cld(n, batch_size)
+    depth_local_index = findfirst(==(nest_node), CACHED_DEPTH_RANGE)
     per_point = Vector{Any}(undef, n)
     final_soil_temperature = Vector{Any}(undef, n)
     final_soil_moisture = Vector{Any}(undef, n)
     for b in 1:n_batches
         i_start, i_end = (b - 1) * batch_size + 1, min(b * batch_size, n)
         batch_points = points[i_start:i_end]
-        batch_cache_path = joinpath(output_dir, "$(label)_batch$(b)of$(n_batches)_n$(n).jls")
+        batch_cache_path = joinpath(output_dir, "$(label)_maxdepth$(cache_max_depth)_batch$(b)of$(n_batches)_n$(n).nc")
         batch = if isfile(batch_cache_path) && use_cache
             println("Loading cached $label batch $b/$n_batches ($(length(batch_points)) points)...")
-            deserialize(batch_cache_path)
+            _read_batch_cache(batch_cache_path, depth_local_index, length(batch_points))
         else
             println("Solving $label batch $b/$n_batches ($(length(batch_points)) points)...")
             batch_problem = MicroVectorProblem(; model, points=batch_points, dates, soil_profile, init)
             @time batch_output = solve(batch_problem)
-            # batch_output's raw axis order is (point, Ti, depth) -- size(...,1)
-            # silently gives the point count, not the hour count; size(...,Ti)
-            # looks the dimension up by name instead of position.
+            _write_batch_cache(batch_cache_path, batch_output, length(batch_points))
             last_hour = size(batch_output.soil_temperature, Ti)
             result = (;
-                per_point = [_raw_layers(batch_output, i) for i in 1:length(batch_points)],
-                # full (untrimmed) depth profile at the last hour, for splice continuity --
-                # kept Float64 (unlike per_point's Float32 trim): this seeds
-                # MicroVectorProblem's init=, which expects Float64 internally.
+                per_point = [_selected_layers(batch_output, i, nest_node) for i in 1:length(batch_points)],
                 final_soil_temperature = [collect(batch_output.soil_temperature[point=i, Ti=last_hour]) for i in 1:length(batch_points)],
                 final_soil_moisture    = [collect(batch_output.soil_moisture[point=i, Ti=last_hour]) for i in 1:length(batch_points)],
             )
-            serialize(batch_cache_path, result)
             batch_output = nothing
             batch_problem = nothing
             GC.gc()

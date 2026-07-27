@@ -48,7 +48,7 @@ if member_start == 0
 
     println("[member 0] Solving historical SILO microclimate for $n points: $oviposition_date to $issue_date...")
     solve_batched(build_historical_model(), historical_label(), points, historical_dates,
-        (; soil_moisture=fill(0.2, length(depths))))
+        (; soil_moisture=fill(0.2, length(depths))), nest_node)
     println("[member 0] Historical leg done.")
 else
     1 <= member_start <= member_end <= n_ensembles || error("member range $member_start:$member_end out of bounds 1:$n_ensembles")
@@ -59,7 +59,7 @@ else
     # re-solve. Loaded once and shared across every member in the range.
     println("[members $member_start:$member_end] Loading historical leg for splice continuity...")
     historical_raw = solve_batched(build_historical_model(), historical_label(), points, historical_dates,
-        (; soil_moisture=fill(0.2, length(depths))))
+        (; soil_moisture=fill(0.2, length(depths))), nest_node)
     # MicroVectorProblem takes one shared init.soil_moisture/soil_temperature
     # vector for all points, not a point x depth matrix -- average the
     # per-point historical endpoints across points (a known approximation,
@@ -70,7 +70,7 @@ else
     for member in member_start:member_end
         println("[member $member] Solving ACCESS-S2 forecast microclimate for $n points...")
         solve_batched(build_forecast_model(member), forecast_label(member), points, forecast_dates,
-            (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature))
+            (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature), nest_node)
         println("[member $member] Forecast leg done.")
     end
 end

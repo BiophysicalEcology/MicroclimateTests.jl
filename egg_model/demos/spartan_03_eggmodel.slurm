@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pa_forecast_eggmodel
 #SBATCH --account=punim0593
-#SBATCH --partition=cascade,sapphire
+#SBATCH --partition=sapphire
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -17,8 +17,7 @@
 
 set -euo pipefail
 
-module purge
-module load Julia/1.12.6-linux-x86-64
+module load Julia/1.12.6-linux-x86_64
 
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export GKSwstype=100

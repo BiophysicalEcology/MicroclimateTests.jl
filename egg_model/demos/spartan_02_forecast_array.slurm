@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=pa_forecast_members
 #SBATCH --account=punim0593
-#SBATCH --partition=cascade,sapphire
-#SBATCH --array=0-4                     # (n_ensembles / members_per_task) - 1 -- 25/5 here; update both if n_ensembles changes
+#SBATCH --partition=sapphire
+#SBATCH --array=0-24                     # (n_ensembles / members_per_task) - 1 -- 25/5 here; update both if n_ensembles changes
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -21,8 +21,7 @@
 
 set -euo pipefail
 
-module purge
-module load Julia/1.12.6-linux-x86-64
+module load Julia/1.12.6-linux-x86_64
 
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export GKSwstype=100
@@ -33,7 +32,7 @@ export JULIA_PKG_PRECOMPILE_AUTO=0   # cache was already warmed by spartan_01 --
 PROJECT_DIR=/home/mrke/git/BiophysicalEcologyEnv
 SCRIPT=/home/mrke/git/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_microclimate.jl
 
-members_per_task=5   # match: n_ensembles (points_australia_forecast_setup.jl) / (array upper bound + 1)
+members_per_task=1   # match: n_ensembles (points_australia_forecast_setup.jl) / (array upper bound + 1)
 start=$((SLURM_ARRAY_TASK_ID * members_per_task + 1))
 end=$((start + members_per_task - 1))
 
