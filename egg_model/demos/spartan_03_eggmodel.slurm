@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pa_forecast_eggmodel
-#SBATCH --account=REPLACE_ME
-#SBATCH --partition=REPLACE_ME
+#SBATCH --account=punim0593
+#SBATCH --partition=cascade,sapphire
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -17,13 +17,16 @@
 
 set -euo pipefail
 
-module load Julia
+module purge
+module load Julia/1.12.6-linux-x86-64
 
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export GKSwstype=100
-export RASTERDATASOURCES_PATH=/data/projects/REPLACE_ME/spatial_data
+export RASTERDATASOURCES_PATH=/data/scratch/projects/punim0593/rasters
+export LOCUST_FORECAST_OUTPUT_DIR=/data/scratch/projects/punim0593/locust_forecast
+export JULIA_PKG_PRECOMPILE_AUTO=0   # cache was already warmed by spartan_01
 
-PROJECT_DIR=/home/REPLACE_ME/BiophysicalEcologyEnv
-SCRIPT=/home/REPLACE_ME/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_eggmodel.jl
+PROJECT_DIR=/home/mrke/git/BiophysicalEcologyEnv
+SCRIPT=/home/mrke/git/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_eggmodel.jl
 
 julia --project=$PROJECT_DIR --threads=$SLURM_CPUS_PER_TASK $SCRIPT

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pa_forecast_historical
-#SBATCH --account=REPLACE_ME
-#SBATCH --partition=REPLACE_ME
+#SBATCH --account=punim0593
+#SBATCH --partition=cascade,sapphire
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -16,13 +16,17 @@
 
 set -euo pipefail
 
-module load Julia   # check `module avail julia` for the exact module name/version
+module purge
+module load Julia/1.12.6-linux-x86-64   # check `module avail julia` if this version disappears
 
 export JULIA_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export GKSwstype=100   # headless plotting -- no display on a compute node
-export RASTERDATASOURCES_PATH=/data/projects/REPLACE_ME/spatial_data
+export RASTERDATASOURCES_PATH=/data/scratch/projects/punim0593/rasters
+export LOCUST_FORECAST_OUTPUT_DIR=/data/scratch/projects/punim0593/locust_forecast
+export JULIA_PKG_PRECOMPILE_AUTO=0   # this job precompiles explicitly below; the array job (spartan_02) inherits the warm cache and must not race to recompile it
 
-PROJECT_DIR=/home/REPLACE_ME/BiophysicalEcologyEnv
-SCRIPT=/home/REPLACE_ME/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_microclimate.jl
+PROJECT_DIR=/home/mrke/git/BiophysicalEcologyEnv
+SCRIPT=/home/mrke/git/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_microclimate.jl
 
+julia --project=$PROJECT_DIR -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --project=$PROJECT_DIR --threads=$SLURM_CPUS_PER_TASK $SCRIPT 0

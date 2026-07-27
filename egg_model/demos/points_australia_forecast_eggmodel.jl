@@ -132,11 +132,13 @@ end
 function summarize_point(historical_egg_result, point_outcomes, members)
     if historical_egg_result.hatched
         return (; status=:hatched_historically, counts=Dict(:hatched => 1),
-            earliest=nothing, median=nothing, latest=nothing)
+            earliest=nothing, median=nothing, latest=nothing,
+            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
     elseif historical_egg_result.died
         return (; status=Symbol("died_historically_$(historical_egg_result.death_cause)"),
             counts=Dict(historical_egg_result.death_cause => 1),
-            earliest=nothing, median=nothing, latest=nothing)
+            earliest=nothing, median=nothing, latest=nothing,
+            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
     end
     counts = Dict{Symbol,Int}()
     for r in point_outcomes
@@ -145,11 +147,16 @@ function summarize_point(historical_egg_result, point_outcomes, members)
     end
     hatched = [(member, r) for (member, r) in zip(members, point_outcomes) if r.hatched]
     if isempty(hatched)
-        return (; status=:no_hatch, counts, earliest=nothing, median=nothing, latest=nothing)
+        return (; status=:no_hatch, counts, earliest=nothing, median=nothing, latest=nothing,
+            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
     end
     sorted = sort(hatched; by=x -> x[2].hatch_time)
+    # std needs >=2 points to be meaningful -- nothing (blank in the CSV) otherwise.
+    std_hatch_days = length(hatched) >= 2 ? std([ustrip(u"d", r.hatch_time) for (_, r) in hatched]) : nothing
+    std_hatch_mass_mg = length(hatched) >= 2 ? std([ustrip(u"mg", r.final_state.egg_mass) for (_, r) in hatched]) : nothing
     (; status=:forecast, counts,
-        earliest=sorted[1], median=sorted[cld(length(sorted), 2)], latest=sorted[end])
+        earliest=sorted[1], median=sorted[cld(length(sorted), 2)], latest=sorted[end],
+        std_hatch_days, std_hatch_mass_mg)
 end
 
 hatch_date_of(member_result, issue_date) =
@@ -164,7 +171,7 @@ stats_path = joinpath(output_dir, "history_forecast_splice_stats.csv")
 open(stats_path, "w") do io
     println(io, "lon,lat,status,n_members,n_hatched,n_died_cold,n_died_heat,n_died_desiccation,n_timeout," *
                  "earliest_hatch_date,earliest_hatch_mass_mg,median_hatch_date,median_hatch_mass_mg," *
-                 "latest_hatch_date,latest_hatch_mass_mg")
+                 "latest_hatch_date,latest_hatch_mass_mg,std_hatch_days,std_hatch_mass_mg")
     for i in 1:n
         s = point_summaries[i]
         n_run = s.earliest === nothing && s.status != :no_hatch ? 0 : length(members)
@@ -176,8 +183,10 @@ open(stats_path, "w") do io
              string(hatch_date_of(s.median, issue_date)), string(round(mass_mg_of(s.median); digits=2)),
              string(hatch_date_of(s.latest, issue_date)), string(round(mass_mg_of(s.latest); digits=2)))
         end
+        std_days_str = s.std_hatch_days === nothing ? "" : string(round(s.std_hatch_days; digits=2))
+        std_mass_str = s.std_hatch_mass_mg === nothing ? "" : string(round(s.std_hatch_mass_mg; digits=2))
         println(io, join((points[i][1], points[i][2], s.status, n_run, c(:hatched), c(:cold), c(:heat),
-            c(:desiccation), c(:timeout), fields...), ","))
+            c(:desiccation), c(:timeout), fields..., std_days_str, std_mass_str), ","))
     end
 end
 println("Saved $stats_path")
@@ -243,6 +252,8 @@ latest_dates = fill(NaN, length(all_grid_points))
 median_mass = fill(NaN, length(all_grid_points))
 earliest_mass = fill(NaN, length(all_grid_points))
 latest_mass = fill(NaN, length(all_grid_points))
+std_dates = fill(NaN, length(all_grid_points))
+std_mass = fill(NaN, length(all_grid_points))
 frac_hatched = fill(NaN, length(all_grid_points))
 frac_cold = fill(NaN, length(all_grid_points))
 frac_heat = fill(NaN, length(all_grid_points))
@@ -263,6 +274,8 @@ for i in 1:n
         earliest_mass[gi] = mass_mg_of(s.earliest)
         latest_mass[gi] = mass_mg_of(s.latest)
     end
+    s.std_hatch_days !== nothing && (std_dates[gi] = s.std_hatch_days)
+    s.std_hatch_mass_mg !== nothing && (std_mass[gi] = s.std_hatch_mass_mg)
     # historically-resolved points are a single outcome (n=1), not an ensemble
     total = s.status == :hatched_historically || startswith(string(s.status), "died_historically") ? 1 : length(members)
     frac_hatched[gi] = get(s.counts, :hatched, 0) / total
@@ -273,25 +286,81 @@ end
 
 # Colourbars can't show date strings (Plots.jl GR limitation) -- build a
 # series legend from dummy points instead, same trick as points_australia.jl.
-function date_heatmap(title, ordinals)
+# `lo`/`hi` are shared across median/earliest/latest so the same colour
+# always means the same date in every subplot; the legend (redundant once
+# shared) is only drawn when show_legend=true.
+function date_heatmap(title, ordinals, lo, hi; show_legend=false)
     valid = filter(!isnan, ordinals)
     isempty(valid) && return add_basemap!(heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
         title, xlabel="Longitude", ylabel="Latitude"))
-    lo, hi = extrema(valid)
     gradient = cgrad(:plasma)
     p = heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
-        title, xlabel="Longitude", ylabel="Latitude", color=gradient, colorbar=false)
-    tick_vals = round.(Int, range(lo, hi; length=min(6, length(unique(round.(Int, valid))))))
-    for v in unique(tick_vals)
-        scatter!(p, [NaN], [NaN]; color=gradient[(v - lo) / max(hi - lo, 1)], markersize=6,
-            markerstrokewidth=0, label=string(Date(Dates.UTD(v))))
+        title, xlabel="Longitude", ylabel="Latitude", color=gradient, clims=(lo, hi), colorbar=false)
+    if show_legend
+        tick_vals = round.(Int, range(lo, hi; length=min(6, length(unique(round.(Int, valid))))))
+        for v in unique(tick_vals)
+            scatter!(p, [NaN], [NaN]; color=gradient[(v - lo) / max(hi - lo, 1)], markersize=6,
+                markerstrokewidth=0, label=string(Date(Dates.UTD(v))))
+        end
     end
     add_basemap!(p)
 end
 
-function mass_heatmap(title, vals)
+# Fixed colour scheme + date bounds matching the APLC forecaster's own
+# hatching-prediction map exactly (dekad bands, 11 Aug - 31 Oct) -- not
+# derived from this run's own data, so a hatch date genuinely before or
+# after that reference range gets its own distinct outlier colour.
+const HATCH_DATE_BANDS = [
+    (8, 11, "11-20/Aug"), (8, 21, "21-31/Aug"), (9, 1, "01-10/Sep"), (9, 11, "11-20/Sep"),
+    (9, 21, "21-30/Sep"), (10, 1, "01-10/Oct"), (10, 11, "11-20/Oct"), (10, 21, "21-31/Oct"),
+]
+const HATCH_DATE_BAND_COLORS = ["#D2691E", "#F2A900", "#FFFF00", "#8CC63F",
+                                  "#22B14C", "#2E9E83", "#3B7EA8", "#1B3F8B"]
+const HATCH_DATE_EARLY_COLOR = "#9400D3"
+const HATCH_DATE_LATE_COLOR = "#FF0000"
+const N_HATCH_BANDS = length(HATCH_DATE_BANDS)
+const HATCH_DATE_PALETTE = vcat(HATCH_DATE_EARLY_COLOR, HATCH_DATE_BAND_COLORS, HATCH_DATE_LATE_COLOR)
+const HATCH_DATE_LABELS = vcat("before 11/Aug (too early)", last.(HATCH_DATE_BANDS), "beyond 31/Oct (too late)")
+
+# band_edges: N_HATCH_BANDS start dates + 1 final (exclusive) end date, all
+# in `year_ref` -- searchsortedlast on this gives 0 (before the first band,
+# i.e. too early) through N_HATCH_BANDS+1 (at/after the last edge, too late).
+hatch_band_edges(year_ref) = Dates.value.(vcat(
+    [Date(year_ref, m, d) for (m, d, _) in HATCH_DATE_BANDS],
+    Date(year_ref, 11, 1),   # exclusive end of the last band (21-31/Oct)
+))
+hatch_band_of(v, band_edges) = searchsortedlast(band_edges, v)
+
+# band_edges is the same fixed reference for every subplot, so a given band
+# is always the same colour and date range everywhere. legend_present (the
+# union of bands actually occurring across all subplots) is only drawn once,
+# on whichever call passes it.
+function banded_date_heatmap(title, ordinals, band_edges; legend_present=nothing)
+    valid = filter(!isnan, ordinals)
+    isempty(valid) && return add_basemap!(heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
+        title, xlabel="Longitude", ylabel="Latitude"))
+    codes = [isnan(v) ? NaN : Float64(hatch_band_of(v, band_edges)) for v in ordinals]
+    p = heatmap(lon_range, lat_range, to_heatmap_z(codes);
+        title, xlabel="Longitude", ylabel="Latitude",
+        color=cgrad(HATCH_DATE_PALETTE; categorical=true),
+        clims=(-0.5, N_HATCH_BANDS + 1.5), colorbar=false)
+    if legend_present !== nothing
+        for code in legend_present
+            code_i = Int(code)
+            scatter!(p, [NaN], [NaN]; color=HATCH_DATE_PALETTE[code_i+1], markersize=6, markerstrokewidth=0,
+                label=HATCH_DATE_LABELS[code_i+1])
+        end
+    end
+    add_basemap!(p)
+end
+
+# `clims`, when given, is shared across a group of subplots so they're all on
+# the same colour scale; `colorbar` is only enabled on one of them to avoid
+# redundant repeated colorbars.
+function mass_heatmap(title, vals; clims=nothing, colorbar=true)
+    kw = clims === nothing ? (;) : (; clims)
     p = heatmap(lon_range, lat_range, to_heatmap_z(vals);
-        title, xlabel="Longitude", ylabel="Latitude", color=cgrad(:viridis))
+        title, xlabel="Longitude", ylabel="Latitude", color=cgrad(:viridis), colorbar, kw...)
     add_basemap!(p)
 end
 function frac_heatmap(title, vals)
@@ -302,20 +371,46 @@ end
 
 plot_title = "Lay date $oviposition_date, issue date $issue_date, diapause=$diapause"
 
+# shared across median/earliest/latest so the same colour (band) always
+# means the same date range in every subplot -- otherwise each independently
+# picks its own scale and the panels aren't comparable at a glance.
+shared_hatch_date_lo, shared_hatch_date_hi = extrema(filter(!isnan, vcat(median_dates, earliest_dates, latest_dates)))
+
 hatch_date_panel = plot(
-    date_heatmap("Median hatch date", median_dates),
-    date_heatmap("Earliest hatch date", earliest_dates),
-    date_heatmap("Latest hatch date", latest_dates);
-    layout=(2, 2), size=(1400, 1050), legendfontsize=6, plot_title,
+    date_heatmap("Median hatch date", median_dates, shared_hatch_date_lo, shared_hatch_date_hi; show_legend=true),
+    date_heatmap("Earliest hatch date", earliest_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    date_heatmap("Latest hatch date", latest_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    mass_heatmap("Std. dev. of hatch date (days)", std_dates);
+    layout=(2, 2), size=(1400, 1050), legendfontsize=9, plot_title,
 )
 hatch_date_path = joinpath(output_dir, "history_forecast_splice_hatch_dates.png")
 savefig(hatch_date_panel, hatch_date_path)
 println("Saved $hatch_date_path")
 
+fixed_band_edges = hatch_band_edges(year(oviposition_date))
+hatch_present_overall = sort(unique(Float64(hatch_band_of(v, fixed_band_edges))
+    for v in filter(!isnan, vcat(median_dates, earliest_dates, latest_dates))))
+
+hatch_date_banded_panel = plot(
+    banded_date_heatmap("Median hatch date", median_dates, fixed_band_edges; legend_present=hatch_present_overall),
+    banded_date_heatmap("Earliest hatch date", earliest_dates, fixed_band_edges),
+    banded_date_heatmap("Latest hatch date", latest_dates, fixed_band_edges),
+    mass_heatmap("Std. dev. of hatch date (days)", std_dates);
+    layout=(2, 2), size=(1400, 1050), legendfontsize=9, plot_title,
+)
+hatch_date_banded_path = joinpath(output_dir, "history_forecast_splice_hatch_dates_banded.png")
+savefig(hatch_date_banded_panel, hatch_date_banded_path)
+println("Saved $hatch_date_banded_path")
+
+# shared across median/earliest/latest for the same reason as the hatch-date
+# panels above; std_mass is a different quantity/scale so it keeps its own.
+shared_mass_clims = extrema(filter(!isnan, vcat(median_mass, earliest_mass, latest_mass)))
+
 mass_panel = plot(
-    mass_heatmap("Median egg mass at hatch (mg)", median_mass),
-    mass_heatmap("Earliest egg mass at hatch (mg)", earliest_mass),
-    mass_heatmap("Latest egg mass at hatch (mg)", latest_mass);
+    mass_heatmap("Median egg mass at hatch (mg)", median_mass; clims=shared_mass_clims, colorbar=true),
+    mass_heatmap("Earliest egg mass at hatch (mg)", earliest_mass; clims=shared_mass_clims, colorbar=false),
+    mass_heatmap("Latest egg mass at hatch (mg)", latest_mass; clims=shared_mass_clims, colorbar=false),
+    mass_heatmap("Std. dev. of egg mass at hatch (mg)", std_mass);
     layout=(2, 2), size=(1400, 1050), plot_title,
 )
 mass_path = joinpath(output_dir, "history_forecast_splice_mass.png")

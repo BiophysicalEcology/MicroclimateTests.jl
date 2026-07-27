@@ -18,6 +18,7 @@ using Rasters, RasterDataSources, PointDataSources
 using Rasters.Extents: Extent
 using Dates, Unitful, Statistics
 using Serialization
+using NCDatasets
 using NaturalEarth, GeoInterface
 
 ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
@@ -32,21 +33,25 @@ include(joinpath(@__DIR__, "..", "src", "access_s2.jl"))
 
 include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
 
-output_dir = joinpath(@__DIR__, "output")
+output_dir = get(ENV, "LOCUST_FORECAST_OUTPUT_DIR", joinpath(@__DIR__, "output"))
 mkpath(output_dir)
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-n_ensembles = 25    # how many of the up-to-99 ACCESS-S2 members to run
+n_ensembles = 1    # how many of the up-to-99 ACCESS-S2 members to run
 # no trajectories needed -- outputs are maps + a stats CSV, not per-point
 # development/mass/temperature curves.
 save_trajectory = false
-diapause = true
+diapause = false
 oviposition_date = Date(2026, 4, 25)
 use_cache = true
 batch_size = 100
+
+# tags result file names (stats CSV + figures) so diapause on/off and
+# different lay dates don't overwrite each other's output.
+run_tag = "lay$(oviposition_date)_$(diapause ? "diapause" : "nodiapause")"
 
 if diapause
     nest_depth = 5.0u"cm"
@@ -91,7 +96,7 @@ has_crucl2_land(lon, lat) = !ismissing(CRUCL2_ELV[X(Near(lon)), Y(Near(lat))])
 points = filter(p -> has_crucl2_land(p...), all_grid_points)
 println("$(length(points))/$(length(all_grid_points)) grid points kept after the CRUCL2 land-mask pre-check.")
 
-const SILO_MAXTEMP_PROBE = read(Raster(RasterDataSources.getraster(SILO, :max_temp; date=Date(2020, 1, 1)); name=:max_temp, lazy=true)[Ti(1)])
+const SILO_MAXTEMP_PROBE = read(Raster(RasterDataSources.getraster(SILO, :max_temp; date=Date(2025, 1, 1)); name=:max_temp, lazy=true)[Ti(1)])
 has_silo_land(lon, lat) = !ismissing(SILO_MAXTEMP_PROBE[X(Near(lon)), Y(Near(lat))])
 points = filter(p -> has_silo_land(p...), points)
 println("$(length(points))/$(length(all_grid_points)) grid points kept after the SILO land-mask pre-check.")
@@ -198,43 +203,135 @@ members = 1:n_ensembles
 n = length(points)
 n_batches = cld(n, batch_size)
 
-_raw_layers(output, i) = (;
-    soil_temperature          = Float32.(collect(output.soil_temperature[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_moisture             = Float32.(collect(output.soil_moisture[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_water_potential      = Float32.(collect(output.soil_water_potential[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_thermal_conductivity = Float32.(collect(output.soil_thermal_conductivity[point=i, depth=CACHED_DEPTH_RANGE])),
-    soil_humidity             = Float32.(collect(output.soil_humidity[point=i, depth=CACHED_DEPTH_RANGE])),
+# per-point, single-depth slice -- the shape solve_batched hands back to
+# callers, whether freshly solved (batch_output, in-memory) or reloaded from
+# a cached .nc file (_read_batch_cache below).
+_selected_layers(batch_output, i, d) = (;
+    soil_temperature           = Float32.(collect(batch_output.soil_temperature[point=i, depth=d])),
+    soil_moisture               = Float32.(collect(batch_output.soil_moisture[point=i, depth=d])),
+    soil_water_potential         = Float32.(collect(batch_output.soil_water_potential[point=i, depth=d])),
+    soil_thermal_conductivity    = Float32.(collect(batch_output.soil_thermal_conductivity[point=i, depth=d])),
+    soil_humidity                = Float32.(collect(batch_output.soil_humidity[point=i, depth=d])),
 )
+
+# writes every cached depth (not just nest_node's) so a later run at a
+# different nest_depth (e.g. toggling `diapause`) can reuse this file without
+# a fresh solve. Each depth is its own chunk (dims ordered depth x hour x
+# point, chunksizes=(1,:,:)) so _read_batch_cache only ever touches the one
+# depth it actually wants, plus zlib compression on top -- this is what
+# replaces the old .jls cache, which forced reading every cached depth
+# (~30GB for a full forecast run) no matter which one was needed.
+# NetCDF variables hold plain numbers, not Unitful Quantities (soil_temperature
+# is K, soil_water_potential is J/kg, soil_moisture/soil_humidity are bare
+# fractions) -- ustrip before writing, and record the unit as a "units"
+# attribute (read back by _parse_unit) rather than hardcoding which fields
+# happen to carry units, so this doesn't silently break if that ever changes.
+
+# string(unit(x)) prints compound units space-separated ("J kg^-1"), which
+# isn't valid Julia syntax for uparse to re-parse -- swap in explicit `*`s.
+# unit_context=Unitful is needed too: Unitful doesn't export bare unit
+# symbols like J/kg/K (that's what the u"..." macro is for), but they exist
+# as plain bindings inside the Unitful module itself.
+_parse_unit(str) = isempty(str) ? NoUnits : uparse(replace(str, " " => "*"); unit_context=Unitful)
+_field_unit(raster, d) = unit(raster[point=1, depth=d, Ti=1])
+
+function _write_batch_cache(path, batch_output, n_pts)
+    # batch_output's raw axis order is (point, Ti, depth) -- size(...,1) would
+    # silently give the point count, not the hour count; size(...,Ti) looks
+    # the dimension up by name instead of position, so it's correct
+    # regardless of storage order.
+    n_hours = size(batch_output.soil_temperature, Ti)
+    d1 = first(CACHED_DEPTH_RANGE)
+    isfile(path) && rm(path)
+    NCDataset(path, "c") do ds
+        defDim(ds, "depth", length(CACHED_DEPTH_RANGE))
+        defDim(ds, "hour", n_hours)
+        defDim(ds, "point", n_pts)
+        defDim(ds, "depth_full", length(depths))
+        vT  = defVar(ds, "soil_temperature", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vM  = defVar(ds, "soil_moisture", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vWP = defVar(ds, "soil_water_potential", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vK  = defVar(ds, "soil_thermal_conductivity", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vH  = defVar(ds, "soil_humidity", Float32, ("depth", "hour", "point"); chunksizes=(1, n_hours, n_pts), deflatelevel=4)
+        vT.attrib["units"]  = string(_field_unit(batch_output.soil_temperature, d1))
+        vM.attrib["units"]  = string(_field_unit(batch_output.soil_moisture, d1))
+        vWP.attrib["units"] = string(_field_unit(batch_output.soil_water_potential, d1))
+        vK.attrib["units"]  = string(_field_unit(batch_output.soil_thermal_conductivity, d1))
+        vH.attrib["units"]  = string(_field_unit(batch_output.soil_humidity, d1))
+        for i in 1:n_pts, (dj, d) in enumerate(CACHED_DEPTH_RANGE)
+            vT[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_temperature[point=i, depth=d])))
+            vM[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_moisture[point=i, depth=d])))
+            vWP[dj, :, i] = Float32.(ustrip.(collect(batch_output.soil_water_potential[point=i, depth=d])))
+            vK[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_thermal_conductivity[point=i, depth=d])))
+            vH[dj, :, i]  = Float32.(ustrip.(collect(batch_output.soil_humidity[point=i, depth=d])))
+        end
+        # full (untrimmed) depth profile at the last hour, for splice continuity --
+        # kept Float64 (unlike the trimmed depth vars above): this seeds
+        # MicroVectorProblem's init=, which expects Float64 internally.
+        last_hour = n_hours
+        fT = defVar(ds, "final_soil_temperature", Float64, ("depth_full", "point"))
+        fM = defVar(ds, "final_soil_moisture", Float64, ("depth_full", "point"))
+        fT.attrib["units"] = string(_field_unit(batch_output.soil_temperature, d1))
+        fM.attrib["units"] = string(_field_unit(batch_output.soil_moisture, d1))
+        for i in 1:n_pts
+            fT[:, i] = ustrip.(collect(batch_output.soil_temperature[point=i, Ti=last_hour]))
+            fM[:, i] = ustrip.(collect(batch_output.soil_moisture[point=i, Ti=last_hour]))
+        end
+    end
+end
+
+# only reads the one depth (depth_local_index, this run's nest_node) out of
+# whatever was cached -- one chunk per field, not the whole file. Re-attaches
+# each field's unit (from the "units" attribute _write_batch_cache wrote) so
+# callers see the same Unitful Quantities they would from a fresh solve.
+function _read_batch_cache(path, depth_local_index, n_pts)
+    NCDataset(path) do ds
+        T  = Array(ds["soil_temperature"][depth_local_index, :, :])       .* _parse_unit(ds["soil_temperature"].attrib["units"])
+        M  = Array(ds["soil_moisture"][depth_local_index, :, :])          .* _parse_unit(ds["soil_moisture"].attrib["units"])
+        WP = Array(ds["soil_water_potential"][depth_local_index, :, :])   .* _parse_unit(ds["soil_water_potential"].attrib["units"])
+        K  = Array(ds["soil_thermal_conductivity"][depth_local_index, :, :]) .* _parse_unit(ds["soil_thermal_conductivity"].attrib["units"])
+        H  = Array(ds["soil_humidity"][depth_local_index, :, :])          .* _parse_unit(ds["soil_humidity"].attrib["units"])
+        per_point = [(; soil_temperature=T[:, i], soil_moisture=M[:, i], soil_water_potential=WP[:, i],
+                        soil_thermal_conductivity=K[:, i], soil_humidity=H[:, i]) for i in 1:n_pts]
+        fT_unit = _parse_unit(ds["final_soil_temperature"].attrib["units"])
+        fM_unit = _parse_unit(ds["final_soil_moisture"].attrib["units"])
+        final_soil_temperature = [Array(ds["final_soil_temperature"][:, i]) .* fT_unit for i in 1:n_pts]
+        final_soil_moisture    = [Array(ds["final_soil_moisture"][:, i]) .* fM_unit for i in 1:n_pts]
+        (; per_point, final_soil_temperature, final_soil_moisture)
+    end
+end
 
 # solves `model` over `points` in batches, caching each batch to disk under
 # `label` -- shared by the historical leg and every forecast member.
-function solve_batched(model, label, points, dates, init)
+# `nest_node` picks which cached depth this call actually needs; the cache
+# max_depth is folded into the file name so changing cache_max_depth can't
+# silently reuse a file written with a different (incompatible) depth range.
+function solve_batched(model, label, points, dates, init, nest_node)
     n = length(points)
     n_batches = cld(n, batch_size)
+    depth_local_index = findfirst(==(nest_node), CACHED_DEPTH_RANGE)
     per_point = Vector{Any}(undef, n)
     final_soil_temperature = Vector{Any}(undef, n)
     final_soil_moisture = Vector{Any}(undef, n)
     for b in 1:n_batches
         i_start, i_end = (b - 1) * batch_size + 1, min(b * batch_size, n)
         batch_points = points[i_start:i_end]
-        batch_cache_path = joinpath(output_dir, "$(label)_batch$(b)of$(n_batches)_n$(n).jls")
+        batch_cache_path = joinpath(output_dir, "$(label)_maxdepth$(cache_max_depth)_batch$(b)of$(n_batches)_n$(n).nc")
         batch = if isfile(batch_cache_path) && use_cache
             println("Loading cached $label batch $b/$n_batches ($(length(batch_points)) points)...")
-            deserialize(batch_cache_path)
+            _read_batch_cache(batch_cache_path, depth_local_index, length(batch_points))
         else
             println("Solving $label batch $b/$n_batches ($(length(batch_points)) points)...")
             batch_problem = MicroVectorProblem(; model, points=batch_points, dates, soil_profile, init)
             @time batch_output = solve(batch_problem)
-            last_hour = size(batch_output.soil_temperature, 1)
+            _write_batch_cache(batch_cache_path, batch_output, length(batch_points))
+            # see the matching comment in _write_batch_cache -- axis 1 is point, not Ti.
+            last_hour = size(batch_output.soil_temperature, Ti)
             result = (;
-                per_point = [_raw_layers(batch_output, i) for i in 1:length(batch_points)],
-                # full (untrimmed) depth profile at the last hour, for splice continuity --
-                # kept Float64 (unlike per_point's Float32 trim): this seeds
-                # MicroVectorProblem's init=, which expects Float64 internally.
+                per_point = [_selected_layers(batch_output, i, nest_node) for i in 1:length(batch_points)],
                 final_soil_temperature = [collect(batch_output.soil_temperature[point=i, Ti=last_hour]) for i in 1:length(batch_points)],
                 final_soil_moisture    = [collect(batch_output.soil_moisture[point=i, Ti=last_hour]) for i in 1:length(batch_points)],
             )
-            serialize(batch_cache_path, result)
             batch_output = nothing
             batch_problem = nothing
             GC.gc()
@@ -263,11 +360,13 @@ historical_model = MicroMapModel(;
 )
 println("Solving historical SILO microclimate for $n points: $oviposition_date to $issue_date...")
 historical_raw = solve_batched(historical_model, "splice_historical_lay$(oviposition_date)_issue$(issue_date)",
-    points, historical_dates, (; soil_moisture=fill(0.2, length(depths))))
+    points, historical_dates, (; soil_moisture=fill(0.2, length(depths))), nest_node)
 
 historical_day_range = 1:size(historical_raw.per_point[1].soil_temperature, 1)
 historical_tspan = (0.0u"hr", length(historical_day_range) * 1.0u"hr")
-historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, nest_node, environment_pars)
+# depth_node=1 -- historical_raw.per_point is already trimmed to the single
+# nest_node depth by solve_batched, so there's only one column to index.
+historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, 1, environment_pars)
                         for i in 1:n]
 
 # MicroVectorProblem takes one shared init.soil_moisture/soil_temperature
@@ -343,10 +442,11 @@ if !isempty(forecast_point_indices)
             compute_terrain=false, output_layers,
         )
         forecast_raw = solve_batched(forecast_model, "splice_forecast_member$(member)_issue$(issue_date)",
-            points, forecast_dates, (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature))
+            points, forecast_dates, (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature), nest_node)
 
         forecast_day_range = 1:size(forecast_raw.per_point[1].soil_temperature, 1)
-        forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, nest_node, environment_pars)
+        # depth_node=1 -- see the matching comment at historical_forcings above.
+        forecast_forcings = Dict(i => egg_nest_forcing(forecast_raw.per_point[i], forecast_day_range, 1, environment_pars)
                                   for i in forecast_point_indices)
 
         member_outcomes = Vector{Any}(undef, n)
@@ -363,11 +463,13 @@ end
 function summarize_point(historical_egg_result, point_outcomes, members)
     if historical_egg_result.hatched
         return (; status=:hatched_historically, counts=Dict(:hatched => 1),
-            earliest=nothing, median=nothing, latest=nothing)
+            earliest=nothing, median=nothing, latest=nothing,
+            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
     elseif historical_egg_result.died
         return (; status=Symbol("died_historically_$(historical_egg_result.death_cause)"),
             counts=Dict(historical_egg_result.death_cause => 1),
-            earliest=nothing, median=nothing, latest=nothing)
+            earliest=nothing, median=nothing, latest=nothing,
+            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
     end
     counts = Dict{Symbol,Int}()
     for r in point_outcomes
@@ -376,11 +478,16 @@ function summarize_point(historical_egg_result, point_outcomes, members)
     end
     hatched = [(member, r) for (member, r) in zip(members, point_outcomes) if r.hatched]
     if isempty(hatched)
-        return (; status=:no_hatch, counts, earliest=nothing, median=nothing, latest=nothing)
+        return (; status=:no_hatch, counts, earliest=nothing, median=nothing, latest=nothing,
+            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
     end
     sorted = sort(hatched; by=x -> x[2].hatch_time)
+    # std needs >=2 points to be meaningful -- nothing (blank in the CSV) otherwise.
+    std_hatch_days = length(hatched) >= 2 ? std([ustrip(u"d", r.hatch_time) for (_, r) in hatched]) : nothing
+    std_hatch_mass_mg = length(hatched) >= 2 ? std([ustrip(u"mg", r.final_state.egg_mass) for (_, r) in hatched]) : nothing
     (; status=:forecast, counts,
-        earliest=sorted[1], median=sorted[cld(length(sorted), 2)], latest=sorted[end])
+        earliest=sorted[1], median=sorted[cld(length(sorted), 2)], latest=sorted[end],
+        std_hatch_days, std_hatch_mass_mg)
 end
 
 hatch_date_of(member_result, issue_date) =
@@ -391,11 +498,11 @@ point_summaries = [summarize_point(historical_egg_results[i],
     [forecast_outcomes[i, m] for m in eachindex(members) if forecast_outcomes[i, m] !== nothing], members)
     for i in 1:n]
 
-stats_path = joinpath(output_dir, "history_forecast_splice_stats.csv")
+stats_path = joinpath(output_dir, "history_forecast_splice_stats_$(run_tag).csv")
 open(stats_path, "w") do io
     println(io, "lon,lat,status,n_members,n_hatched,n_died_cold,n_died_heat,n_died_desiccation,n_timeout," *
                  "earliest_hatch_date,earliest_hatch_mass_mg,median_hatch_date,median_hatch_mass_mg," *
-                 "latest_hatch_date,latest_hatch_mass_mg")
+                 "latest_hatch_date,latest_hatch_mass_mg,std_hatch_days,std_hatch_mass_mg")
     for i in 1:n
         s = point_summaries[i]
         n_run = s.earliest === nothing && s.status != :no_hatch ? 0 : length(members)
@@ -407,8 +514,10 @@ open(stats_path, "w") do io
              string(hatch_date_of(s.median, issue_date)), string(round(mass_mg_of(s.median); digits=2)),
              string(hatch_date_of(s.latest, issue_date)), string(round(mass_mg_of(s.latest); digits=2)))
         end
+        std_days_str = s.std_hatch_days === nothing ? "" : string(round(s.std_hatch_days; digits=2))
+        std_mass_str = s.std_hatch_mass_mg === nothing ? "" : string(round(s.std_hatch_mass_mg; digits=2))
         println(io, join((points[i][1], points[i][2], s.status, n_run, c(:hatched), c(:cold), c(:heat),
-            c(:desiccation), c(:timeout), fields...), ","))
+            c(:desiccation), c(:timeout), fields..., std_days_str, std_mass_str), ","))
     end
 end
 println("Saved $stats_path")
@@ -472,6 +581,8 @@ latest_dates = fill(NaN, length(all_grid_points))
 median_mass = fill(NaN, length(all_grid_points))
 earliest_mass = fill(NaN, length(all_grid_points))
 latest_mass = fill(NaN, length(all_grid_points))
+std_dates = fill(NaN, length(all_grid_points))
+std_mass = fill(NaN, length(all_grid_points))
 frac_hatched = fill(NaN, length(all_grid_points))
 frac_cold = fill(NaN, length(all_grid_points))
 frac_heat = fill(NaN, length(all_grid_points))
@@ -492,6 +603,8 @@ for i in 1:n
         earliest_mass[gi] = mass_mg_of(s.earliest)
         latest_mass[gi] = mass_mg_of(s.latest)
     end
+    s.std_hatch_days !== nothing && (std_dates[gi] = s.std_hatch_days)
+    s.std_hatch_mass_mg !== nothing && (std_mass[gi] = s.std_hatch_mass_mg)
     # historically-resolved points are a single outcome (n=1), not an ensemble
     total = s.status == :hatched_historically || startswith(string(s.status), "died_historically") ? 1 : length(members)
     frac_hatched[gi] = get(s.counts, :hatched, 0) / total
@@ -500,27 +613,89 @@ for i in 1:n
     frac_desiccation[gi] = get(s.counts, :desiccation, 0) / total
 end
 
-# Colourbars can't show date strings (Plots.jl GR limitation) -- build a
-# series legend from dummy points instead, same trick as points_australia.jl.
-function date_heatmap(title, ordinals)
-    valid = filter(!isnan, ordinals)
-    isempty(valid) && return add_basemap!(heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
+# Colourbars can't show date strings (Plots.jl GR limitation) -- a series
+# legend is built separately (legend_bar below) and shown once, as its own
+# panel, rather than attached to any one subplot here. `lo`/`hi` are shared
+# across median/earliest/latest so the same colour always means the same
+# date in every subplot.
+const HATCH_DATE_GRADIENT = cgrad(:plasma)
+function date_heatmap(title, ordinals, lo, hi)
+    isempty(filter(!isnan, ordinals)) && return add_basemap!(heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
         title, xlabel="Longitude", ylabel="Latitude"))
-    lo, hi = extrema(valid)
-    gradient = cgrad(:plasma)
     p = heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
-        title, xlabel="Longitude", ylabel="Latitude", color=gradient, colorbar=false)
-    tick_vals = round.(Int, range(lo, hi; length=min(6, length(unique(round.(Int, valid))))))
-    for v in unique(tick_vals)
-        scatter!(p, [NaN], [NaN]; color=gradient[(v - lo) / max(hi - lo, 1)], markersize=6,
-            markerstrokewidth=0, label=string(Date(Dates.UTD(v))))
-    end
+        title, xlabel="Longitude", ylabel="Latitude", color=HATCH_DATE_GRADIENT, clims=(lo, hi), colorbar=false)
     add_basemap!(p)
 end
 
-function mass_heatmap(title, vals)
+# A legend-only panel: adjacent colour swatches (a 1-row categorical
+# heatmap, no gaps) with the date range as an x-tick label under each one --
+# same visual convention as the APLC reference, and immune to Plots.jl's
+# legend-engine auto-wrap/clipping quirks since there's no legend involved.
+function legend_bar(entries)   # entries :: Vector of (color, label)
+    n = length(entries)
+    heatmap(1:n, [1], reshape(1:n, 1, n);
+        color=cgrad(first.(entries); categorical=true), clims=(0.5, n + 0.5),
+        colorbar=false, yticks=false, xticks=(1:n, last.(entries)),
+        xlabel="", ylabel="", framestyle=:box, tickfontsize=8)
+end
+
+# Fixed colour scheme + date bounds: the APLC forecaster's own 8 dekad bands
+# (11 Aug - 31 Oct) kept exactly as published, extended with finer-grained
+# dekads on both sides (mid-Jul - 10 Aug early, 1 Nov - 31 Dec late) for
+# resolution beyond that reference window. Not derived from this run's own
+# data, so genuinely early/late hatch dates land in real dated bands rather
+# than a single "too early"/"too late" catch-all.
+const HATCH_DATE_BANDS = [
+    # early extension -- red tones leading into the APLC's own burnt orange
+    (7, 11, "11-20/Jul"), (7, 21, "21-31/Jul"), (8, 1, "01-10/Aug"),
+    # unchanged APLC reference bands
+    (8, 11, "11-20/Aug"), (8, 21, "21-31/Aug"), (9, 1, "01-10/Sep"), (9, 11, "11-20/Sep"),
+    (9, 21, "21-30/Sep"), (10, 1, "01-10/Oct"), (10, 11, "11-20/Oct"), (10, 21, "21-31/Oct"),
+    # late extension -- purple/violet tones continuing from the APLC's own navy
+    (11, 1, "01-10/Nov"), (11, 11, "11-20/Nov"), (11, 21, "21-30/Nov"),
+    (12, 1, "01-10/Dec"), (12, 11, "11-20/Dec"), (12, 21, "21-31/Dec"),
+]
+const HATCH_DATE_BAND_COLORS = [
+    "#7A0C0C", "#A31515", "#C2401A",                                                 # early extension
+    "#D2691E", "#F2A900", "#FFFF00", "#8CC63F", "#22B14C", "#2E9E83", "#3B7EA8", "#1B3F8B",  # APLC, unchanged
+    "#3B2F8B", "#5B2E99", "#7A2EA6", "#992EB3", "#B82EC0", "#D62ECC",                # late extension
+]
+const HATCH_DATE_EARLY_COLOR = "#3D0000"   # safety net, beyond even the extended early range
+const HATCH_DATE_LATE_COLOR = "#3D003D"    # safety net, beyond even the extended late range
+const N_HATCH_BANDS = length(HATCH_DATE_BANDS)
+const HATCH_DATE_PALETTE = vcat(HATCH_DATE_EARLY_COLOR, HATCH_DATE_BAND_COLORS, HATCH_DATE_LATE_COLOR)
+const HATCH_DATE_LABELS = vcat("before 11/Jul", last.(HATCH_DATE_BANDS), "after 31/Dec")
+
+# band_edges: N_HATCH_BANDS start dates + 1 final (exclusive) end date --
+# the last band (21-31/Dec) ends in `year_ref+1`. searchsortedlast on this
+# gives 0 (before the first band) through N_HATCH_BANDS+1 (at/after the last edge).
+hatch_band_edges(year_ref) = Dates.value.(vcat(
+    [Date(year_ref, m, d) for (m, d, _) in HATCH_DATE_BANDS],
+    Date(year_ref + 1, 1, 1),   # exclusive end of the last band (21-31/Dec)
+))
+hatch_band_of(v, band_edges) = searchsortedlast(band_edges, v)
+
+# band_edges is the same fixed reference for every subplot, so a given band
+# is always the same colour and date range everywhere. legend_present (the
+# legend is built separately (legend_bar) and shown once as its own panel.
+function banded_date_heatmap(title, ordinals, band_edges)
+    isempty(filter(!isnan, ordinals)) && return add_basemap!(heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
+        title, xlabel="Longitude", ylabel="Latitude"))
+    codes = [isnan(v) ? NaN : Float64(hatch_band_of(v, band_edges)) for v in ordinals]
+    p = heatmap(lon_range, lat_range, to_heatmap_z(codes);
+        title, xlabel="Longitude", ylabel="Latitude",
+        color=cgrad(HATCH_DATE_PALETTE; categorical=true),
+        clims=(-0.5, N_HATCH_BANDS + 1.5), colorbar=false)
+    add_basemap!(p)
+end
+
+# `clims`, when given, is shared across a group of subplots so they're all on
+# the same colour scale; `colorbar` is only enabled on one of them to avoid
+# redundant repeated colorbars.
+function mass_heatmap(title, vals; clims=nothing, colorbar=true)
+    kw = clims === nothing ? (;) : (; clims)
     p = heatmap(lon_range, lat_range, to_heatmap_z(vals);
-        title, xlabel="Longitude", ylabel="Latitude", color=cgrad(:viridis))
+        title, xlabel="Longitude", ylabel="Latitude", color=cgrad(:viridis), colorbar, kw...)
     add_basemap!(p)
 end
 function frac_heatmap(title, vals)
@@ -531,24 +706,69 @@ end
 
 plot_title = "Lay date $oviposition_date, issue date $issue_date, diapause=$diapause"
 
+# shared across median/earliest/latest so the same colour (band) always
+# means the same date range in every subplot -- otherwise each independently
+# picks its own scale and the panels aren't comparable at a glance.
+shared_hatch_date_lo, shared_hatch_date_hi = extrema(filter(!isnan, vcat(median_dates, earliest_dates, latest_dates)))
+
+# 2x2 map grid + a slim legend-only strip along the bottom (APLC-style)
+# instead of attaching a legend to any one subplot. A fresh @layout is built
+# for each panel below -- reusing the same layout object across two plot()
+# calls corrupts the second render (confirmed: only one subplot renders, in
+# the wrong slot, the rest blank).
+
+date_tick_vals = unique(round.(Int, range(shared_hatch_date_lo, shared_hatch_date_hi;
+    length=min(6, length(unique(round.(Int, filter(!isnan, vcat(median_dates, earliest_dates, latest_dates)))))))))
+hatch_date_legend = legend_bar([
+    (HATCH_DATE_GRADIENT[(v - shared_hatch_date_lo) / max(shared_hatch_date_hi - shared_hatch_date_lo, 1)], string(Date(Dates.UTD(v))))
+    for v in date_tick_vals
+])
+
 hatch_date_panel = plot(
-    date_heatmap("Median hatch date", median_dates),
-    date_heatmap("Earliest hatch date", earliest_dates),
-    date_heatmap("Latest hatch date", latest_dates);
-    layout=(2, 2), size=(1400, 1050), legendfontsize=6, plot_title,
+    date_heatmap("Median hatch date", median_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    date_heatmap("Earliest hatch date", earliest_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    date_heatmap("Latest hatch date", latest_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    mass_heatmap("Std. dev. of hatch date (days)", std_dates),
+    hatch_date_legend;
+    layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
 )
-hatch_date_path = joinpath(output_dir, "history_forecast_splice_hatch_dates.png")
+hatch_date_path = joinpath(output_dir, "history_forecast_splice_hatch_dates_$(run_tag).png")
 savefig(hatch_date_panel, hatch_date_path)
 println("Saved $hatch_date_path")
 display(hatch_date_panel)
 
+fixed_band_edges = hatch_band_edges(year(oviposition_date))
+hatch_present_overall = sort(unique(Float64(hatch_band_of(v, fixed_band_edges))
+    for v in filter(!isnan, vcat(median_dates, earliest_dates, latest_dates))))
+hatch_date_banded_legend = legend_bar([
+    (HATCH_DATE_PALETTE[Int(code)+1], HATCH_DATE_LABELS[Int(code)+1]) for code in hatch_present_overall
+])
+
+hatch_date_banded_panel = plot(
+    banded_date_heatmap("Median hatch date", median_dates, fixed_band_edges),
+    banded_date_heatmap("Earliest hatch date", earliest_dates, fixed_band_edges),
+    banded_date_heatmap("Latest hatch date", latest_dates, fixed_band_edges),
+    mass_heatmap("Std. dev. of hatch date (days)", std_dates),
+    hatch_date_banded_legend;
+    layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
+)
+hatch_date_banded_path = joinpath(output_dir, "history_forecast_splice_hatch_dates_banded_$(run_tag).png")
+savefig(hatch_date_banded_panel, hatch_date_banded_path)
+println("Saved $hatch_date_banded_path")
+display(hatch_date_banded_panel)
+
+# shared across median/earliest/latest for the same reason as the hatch-date
+# panels above; std_mass is a different quantity/scale so it keeps its own.
+shared_mass_clims = extrema(filter(!isnan, vcat(median_mass, earliest_mass, latest_mass)))
+
 mass_panel = plot(
-    mass_heatmap("Median egg mass at hatch (mg)", median_mass),
-    mass_heatmap("Earliest egg mass at hatch (mg)", earliest_mass),
-    mass_heatmap("Latest egg mass at hatch (mg)", latest_mass);
+    mass_heatmap("Median egg mass at hatch (mg)", median_mass; clims=shared_mass_clims, colorbar=true),
+    mass_heatmap("Earliest egg mass at hatch (mg)", earliest_mass; clims=shared_mass_clims, colorbar=false),
+    mass_heatmap("Latest egg mass at hatch (mg)", latest_mass; clims=shared_mass_clims, colorbar=false),
+    mass_heatmap("Std. dev. of egg mass at hatch (mg)", std_mass);
     layout=(2, 2), size=(1400, 1050), plot_title,
 )
-mass_path = joinpath(output_dir, "history_forecast_splice_mass.png")
+mass_path = joinpath(output_dir, "history_forecast_splice_mass_$(run_tag).png")
 savefig(mass_panel, mass_path)
 println("Saved $mass_path")
 display(mass_panel)
@@ -560,7 +780,7 @@ mortality_panel = plot(
     frac_heatmap("Fraction died of desiccation", frac_desiccation);
     layout=(2, 2), size=(1400, 1050), plot_title,
 )
-mortality_path = joinpath(output_dir, "history_forecast_splice_mortality.png")
+mortality_path = joinpath(output_dir, "history_forecast_splice_mortality_$(run_tag).png")
 savefig(mortality_panel, mortality_path)
 println("Saved $mortality_path")
 display(mortality_panel)

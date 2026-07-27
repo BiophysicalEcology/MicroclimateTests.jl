@@ -1,23 +1,36 @@
 # Stage 8, HPC split (1/2): solves and caches ONE leg's microclimate --
-# historical (member index 0) or one ACCESS-S2 forecast member (1..n_ensembles)
-# -- and nothing else. No egg model here; that's points_australia_forecast_eggmodel.jl,
-# run afterward once every microclimate job below has completed.
+# historical (member index 0) or one or more ACCESS-S2 forecast members
+# (1..n_ensembles) -- and nothing else. No egg model here; that's
+# points_australia_forecast_eggmodel.jl, run afterward once every microclimate
+# job below has completed.
 #
 # Usage: julia points_australia_forecast_microclimate.jl <member>
-#   member = 0        -> solve the historical (SILO) leg
-#   member = 1..99     -> solve that ACCESS-S2 forecast member's leg
+#        julia points_australia_forecast_microclimate.jl <member_start> <member_end>
+#   member = 0                 -> solve the historical (SILO) leg (must be run alone)
+#   member/member_start:member_end in 1..99 -> solve that ACCESS-S2 forecast
+#     member (or inclusive range of members) -- a range bundles several
+#     members into one julia process/array task, sharing one historical-leg
+#     load across all of them instead of paying julia startup + reload per member.
 #
-# Intended as a SLURM job array over 0:n_ensembles, with the forecast members
-# (1:n_ensembles) depending on member 0 finishing first (they need its
+# Intended as a SLURM job array over 0:n_ensembles (or chunks thereof), with
+# the forecast members depending on member 0 finishing first (they need its
 # final soil state as their `init=`).
 
 ENV["RASTERDATASOURCES_PATH"] = get(ENV, "RASTERDATASOURCES_PATH", "c:/Spatial_Data/")
 
 include(joinpath(@__DIR__, "points_australia_forecast_setup.jl"))
 
-member = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 0
+member_start, member_end = if length(ARGS) >= 2
+    parse(Int, ARGS[1]), parse(Int, ARGS[2])
+elseif length(ARGS) == 1
+    parse(Int, ARGS[1]), parse(Int, ARGS[1])
+else
+    0, 0
+end
 
-if member == 0
+if member_start == 0
+    member_end == 0 || error("member 0 (historical) must be solved alone, not as part of a range")
+
     # sanity check before committing to the full (expensive) solve below --
     # only the historical (member 0) job runs this, so concurrent array
     # tasks don't race to write the same domain-check png.
@@ -38,12 +51,13 @@ if member == 0
         (; soil_moisture=fill(0.2, length(depths))))
     println("[member 0] Historical leg done.")
 else
-    1 <= member <= n_ensembles || error("member=$member out of range 1:$n_ensembles")
+    1 <= member_start <= member_end <= n_ensembles || error("member range $member_start:$member_end out of bounds 1:$n_ensembles")
 
-    # Needs the historical leg's final soil state to seed this member's init=
+    # Needs the historical leg's final soil state to seed each member's init=
     # -- expected to already be cached (this job should be scheduled with a
-    # dependency on member 0), so this is just a fast deserialize, not a re-solve.
-    println("[member $member] Loading historical leg for splice continuity...")
+    # dependency on member 0), so this is just a fast deserialize, not a
+    # re-solve. Loaded once and shared across every member in the range.
+    println("[members $member_start:$member_end] Loading historical leg for splice continuity...")
     historical_raw = solve_batched(build_historical_model(), historical_label(), points, historical_dates,
         (; soil_moisture=fill(0.2, length(depths))))
     # MicroVectorProblem takes one shared init.soil_moisture/soil_temperature
@@ -53,8 +67,10 @@ else
     now_soil_temperature = reduce(+, historical_raw.final_soil_temperature) ./ n
     now_soil_moisture = reduce(+, historical_raw.final_soil_moisture) ./ n
 
-    println("[member $member] Solving ACCESS-S2 forecast microclimate for $n points...")
-    solve_batched(build_forecast_model(member), forecast_label(member), points, forecast_dates,
-        (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature))
-    println("[member $member] Forecast leg done.")
+    for member in member_start:member_end
+        println("[member $member] Solving ACCESS-S2 forecast microclimate for $n points...")
+        solve_batched(build_forecast_model(member), forecast_label(member), points, forecast_dates,
+            (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature))
+        println("[member $member] Forecast leg done.")
+    end
 end

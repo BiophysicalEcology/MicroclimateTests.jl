@@ -21,7 +21,7 @@ include(joinpath(@__DIR__, "..", "src", "access_s2.jl"))
 
 include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
 
-output_dir = joinpath(@__DIR__, "output")
+output_dir = get(ENV, "LOCUST_FORECAST_OUTPUT_DIR", joinpath(@__DIR__, "output"))
 mkpath(output_dir)
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
@@ -77,7 +77,7 @@ has_crucl2_land(lon, lat) = !ismissing(CRUCL2_ELV[X(Near(lon)), Y(Near(lat))])
 points = filter(p -> has_crucl2_land(p...), all_grid_points)
 println("$(length(points))/$(length(all_grid_points)) grid points kept after the CRUCL2 land-mask pre-check.")
 
-const SILO_MAXTEMP_PROBE = read(Raster(RasterDataSources.getraster(SILO, :max_temp; date=Date(2020, 1, 1)); name=:max_temp, lazy=true)[Ti(1)])
+const SILO_MAXTEMP_PROBE = read(Raster(RasterDataSources.getraster(SILO, :max_temp; date=Date(2025, 1, 1)); name=:max_temp, lazy=true)[Ti(1)])
 has_silo_land(lon, lat) = !ismissing(SILO_MAXTEMP_PROBE[X(Near(lon)), Y(Near(lat))])
 points = filter(p -> has_silo_land(p...), points)
 println("$(length(points))/$(length(all_grid_points)) grid points kept after the SILO land-mask pre-check.")
@@ -206,7 +206,10 @@ function solve_batched(model, label, points, dates, init)
             println("Solving $label batch $b/$n_batches ($(length(batch_points)) points)...")
             batch_problem = MicroVectorProblem(; model, points=batch_points, dates, soil_profile, init)
             @time batch_output = solve(batch_problem)
-            last_hour = size(batch_output.soil_temperature, 1)
+            # batch_output's raw axis order is (point, Ti, depth) -- size(...,1)
+            # silently gives the point count, not the hour count; size(...,Ti)
+            # looks the dimension up by name instead of position.
+            last_hour = size(batch_output.soil_temperature, Ti)
             result = (;
                 per_point = [_raw_layers(batch_output, i) for i in 1:length(batch_points)],
                 # full (untrimmed) depth profile at the last hour, for splice continuity --
