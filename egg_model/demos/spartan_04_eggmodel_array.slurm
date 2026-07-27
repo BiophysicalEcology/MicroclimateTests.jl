@@ -39,7 +39,12 @@ PROJECT_DIR=/home/mrke/git/BiophysicalEcologyEnv
 SCRIPT=/home/mrke/git/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_eggmodel_members.jl
 
 members_per_task=${MEMBERS_PER_TASK_EGG:-5}   # set by spartan_submit_all.sh; falls back to 5 when run standalone
+n_ensembles=${LOCUST_N_ENSEMBLES:-25}
 start=$((SLURM_ARRAY_TASK_ID * members_per_task + 1))
 end=$((start + members_per_task - 1))
+# n_ensembles doesn't always divide evenly by members_per_task -- without
+# this the last task's range overshoots n_ensembles (e.g. 99 members,
+# members_per_task=5 -> last task computes end=100) and fails outright.
+(( end > n_ensembles )) && end=$n_ensembles
 
 julia --project=$PROJECT_DIR --threads=$SLURM_CPUS_PER_TASK $SCRIPT $start $end
