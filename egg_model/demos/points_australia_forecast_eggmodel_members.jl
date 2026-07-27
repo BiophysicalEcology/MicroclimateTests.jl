@@ -74,9 +74,13 @@ historical_egg_results = deserialize(historical_egg_cache_path)
 forecast_point_indices = [i for i in 1:n
                            if !historical_egg_results[i].hatched && !historical_egg_results[i].died]
 
-if isempty(forecast_point_indices)
-    println("No points continue into the forecast (all hatched or died historically) -- nothing to do.")
-else
+# Everything mutated while processing members (cache_pool, nworkers) lives
+# inside this function, as genuine function-locals -- Julia's top-level
+# "soft scope" ambiguity (reassigning a pre-existing name inside a `for`
+# loop, which is otherwise ambiguous between rebinding the outer variable
+# and shadowing it) only applies to top-level script scope, not function
+# bodies, so no `global` annotations are needed anywhere here.
+function run_forecast_members(member_start, member_end, forecast_point_indices, historical_egg_results)
     # Built lazily on the first member actually solved below (not every
     # member in this task's range is guaranteed to need solving -- some may
     # already be cached from a previous partial run) and reused across the
@@ -145,4 +149,10 @@ else
         serialize(outcome_path, member_outcomes)
         println("[member $member] Egg-model outcomes cached.")
     end
+end
+
+if isempty(forecast_point_indices)
+    println("No points continue into the forecast (all hatched or died historically) -- nothing to do.")
+else
+    run_forecast_members(member_start, member_end, forecast_point_indices, historical_egg_results)
 end
