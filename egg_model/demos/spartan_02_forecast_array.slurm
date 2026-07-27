@@ -5,7 +5,7 @@
 #SBATCH --array=0-24                     # (n_ensembles / members_per_task) - 1 -- 25/5 here; update both if n_ensembles changes
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
 #SBATCH --output=%x_%A_%a.out
