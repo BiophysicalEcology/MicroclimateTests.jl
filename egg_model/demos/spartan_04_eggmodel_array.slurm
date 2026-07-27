@@ -2,22 +2,25 @@
 #SBATCH --job-name=pa_forecast_eggmembers
 #SBATCH --account=punim0593
 #SBATCH --partition=sapphire
-#SBATCH --array=1-25                    # one array task per ACCESS-S2 member -- update to match n_ensembles
+#SBATCH --array=0-4                     # (n_ensembles / members_per_task) - 1 -- 25/5 here; update both if n_ensembles changes
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=01:00:00
 #SBATCH --output=%x_%A_%a.out
 #SBATCH --error=%x_%A_%a.err
 
-# One array task per ACCESS-S2 member -- spread across as many nodes as
-# Slurm has free, rather than chunking several members onto one node like
-# spartan_02_forecast_array.slurm does for the (much heavier) microclimate
-# solve. The egg model itself is cheap per member (microclimate is loaded
-# from a single-depth NetCDF cache, not re-solved), so per-member overhead
-# here is dominated by node/job startup, not compute -- worth paying that to
-# get full member-level concurrency across nodes.
+# Each array task solves a *chunk* of members_per_task ACCESS-S2 members --
+# same members_per_task pattern as spartan_02_forecast_array.slurm. Fewer
+# array tasks means fewer separate jobs competing for a priority slot on a
+# busy shared partition (25 one-member-each tasks were queuing slowly under
+# `(Priority)`, not a resource shortage); cpus-per-task is also shrunk from
+# 32 to 8 since the egg model is cheap per point (microclimate is loaded
+# from a single-depth NetCDF cache, not re-solved) -- smaller resource asks
+# backfill faster. Each member's outcome is cache-skipped if already on
+# disk, so re-chunking after a partial run is safe -- already-done members
+# are skipped, not resolved.
 # Submit with --dependency=afterok:<spartan_02 job id>:<spartan_03 job id>,
 # since every member needs its own cached forecast microclimate (spartan_02)
 # and the historical egg-model cache (spartan_03).
@@ -35,4 +38,8 @@ export JULIA_PKG_PRECOMPILE_AUTO=0   # cache was already warmed by spartan_01
 PROJECT_DIR=/home/mrke/git/BiophysicalEcologyEnv
 SCRIPT=/home/mrke/git/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_eggmodel_members.jl
 
-julia --project=$PROJECT_DIR --threads=$SLURM_CPUS_PER_TASK $SCRIPT $SLURM_ARRAY_TASK_ID $SLURM_ARRAY_TASK_ID
+members_per_task=5   # match: n_ensembles (points_australia_forecast_setup.jl) / (array upper bound + 1)
+start=$((SLURM_ARRAY_TASK_ID * members_per_task + 1))
+end=$((start + members_per_task - 1))
+
+julia --project=$PROJECT_DIR --threads=$SLURM_CPUS_PER_TASK $SCRIPT $start $end
