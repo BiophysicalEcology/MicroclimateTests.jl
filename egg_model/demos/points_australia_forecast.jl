@@ -40,7 +40,8 @@ depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-n_ensembles = 1    # how many of the up-to-99 ACCESS-S2 members to run
+n_ensembles = parse(Int, get(ENV, "LOCUST_N_ENSEMBLES", "1"))    # how many of the up-to-99 ACCESS-S2 members to run
+1 <= n_ensembles <= 99 || error("LOCUST_N_ENSEMBLES=$n_ensembles out of bounds 1:99 -- ACCESS-S2 only has 99 members")
 # no trajectories needed -- outputs are maps + a stats CSV, not per-point
 # development/mass/temperature curves.
 save_trajectory = false
@@ -83,11 +84,28 @@ output_layers = (
 
 issue_date = Date(2026, 7, 1)   # ACCESS-S2 issue date -- also used below for the ACCESS-S2 land-mask probe
 
-# ── regular grid over south-eastern Australia, land-masked (points_australia.jl) ──
+# ── regular grid over eastern/central Australia (default extent), land-masked
+# (points_australia.jl) -- extent/spacing overridable via ENV so the same
+# script can run a coarser scan or a finer/smaller-area zoom without editing
+# this file. `min:spacing:max` (not `range(...; length=N)`) so spacing is the
+# thing that's actually configured -- point count follows.
+# Default extent matches the APLC operational area (Chortoicetes survey
+# records' cleaned alpha-shape bounds, ±1° padding, from
+# APLC_extent_polygon_alpha_CLEANED.shp: lon 132.59:151.62, lat -36.96:-16.83).
+grid_lon_min = parse(Float64, get(ENV, "LOCUST_LON_MIN", "131.6"))
+grid_lon_max = parse(Float64, get(ENV, "LOCUST_LON_MAX", "152.6"))
+grid_lat_min = parse(Float64, get(ENV, "LOCUST_LAT_MIN", "-38.0"))
+grid_lat_max = parse(Float64, get(ENV, "LOCUST_LAT_MAX", "-15.8"))
+grid_spacing_deg = parse(Float64, get(ENV, "LOCUST_GRID_SPACING_DEG", "0.375"))
 
-lon_range = range(135.0, 153.0; length=50)
-lat_range = range(-39.0, -24.0; length=40)
+lon_range = grid_lon_min:grid_spacing_deg:grid_lon_max
+lat_range = grid_lat_min:grid_spacing_deg:grid_lat_max
 all_grid_points = vec([(lon, lat) for lon in lon_range, lat in lat_range])   # column-major (lon fastest)
+
+# short, collision-safe stand-in for the grid config in cache file names --
+# needed since two different extents/spacings can produce the same point
+# count, so `n` alone isn't a safe cache key on its own.
+grid_tag = string(hash((grid_lon_min, grid_lon_max, grid_lat_min, grid_lat_max, grid_spacing_deg)); base=16)[1:8]
 
 # TODO work out what DEM SILO uses and use that instead, probably only need
 # that and not the CRUCL2_ELV filter.
@@ -359,7 +377,7 @@ historical_model = MicroMapModel(;
     compute_terrain=false, output_layers,
 )
 println("Solving historical SILO microclimate for $n points: $oviposition_date to $issue_date...")
-historical_raw = solve_batched(historical_model, "splice_historical_lay$(oviposition_date)_issue$(issue_date)",
+historical_raw = solve_batched(historical_model, "splice_historical_$(grid_tag)_lay$(oviposition_date)_issue$(issue_date)",
     points, historical_dates, (; soil_moisture=fill(0.2, length(depths))), nest_node)
 
 historical_day_range = 1:size(historical_raw.per_point[1].soil_temperature, 1)
@@ -441,7 +459,7 @@ if !isempty(forecast_point_indices)
             surface_albedo_source=0.15, roughness_height_source=0.004u"m",
             compute_terrain=false, output_layers,
         )
-        forecast_raw = solve_batched(forecast_model, "splice_forecast_member$(member)_issue$(issue_date)",
+        forecast_raw = solve_batched(forecast_model, "splice_forecast_$(grid_tag)_member$(member)_issue$(issue_date)",
             points, forecast_dates, (; soil_moisture=now_soil_moisture, soil_temperature=now_soil_temperature), nest_node)
 
         forecast_day_range = 1:size(forecast_raw.per_point[1].soil_temperature, 1)

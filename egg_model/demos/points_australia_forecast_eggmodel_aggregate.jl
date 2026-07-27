@@ -20,7 +20,7 @@ using Serialization
 
 include(joinpath(@__DIR__, "points_australia_forecast_setup.jl"))
 
-historical_egg_cache_path = joinpath(output_dir, "$(historical_label())_diapause$(diapause)_eggresults_n$(n).jls")
+historical_egg_cache_path = joinpath(egg_dir, "$(historical_label())_$(diapause ? "dia" : "nodia")_egg_n$(n).jls")
 isfile(historical_egg_cache_path) || error(
     "Historical egg-model cache not found at $historical_egg_cache_path -- " *
     "run points_australia_forecast_eggmodel_historical.jl first.")
@@ -43,7 +43,7 @@ forecast_outcomes = Matrix{Union{Nothing,ResultType}}(nothing, n, length(members
 
 if !isempty(forecast_point_indices)
     for (member_index, member) in pairs(members)
-        outcome_path = joinpath(output_dir, "$(forecast_label(member))_diapause$(diapause)_eggoutcomes_n$(n).jls")
+        outcome_path = joinpath(egg_dir, "$(forecast_label(member))_$(diapause ? "dia" : "nodia")_eggout_n$(n).jls")
         isfile(outcome_path) || error(
             "Missing egg-model outcomes for member $member at $outcome_path -- " *
             "did every array task in points_australia_forecast_eggmodel_members.jl finish?")
@@ -93,7 +93,7 @@ point_summaries = [summarize_point(historical_egg_results[i],
     [forecast_outcomes[i, m] for m in eachindex(members) if forecast_outcomes[i, m] !== nothing], members)
     for i in 1:n]
 
-stats_path = joinpath(output_dir, "history_forecast_splice_stats.csv")
+stats_path = joinpath(egg_dir, "splice_stats_$(run_tag).csv")
 open(stats_path, "w") do io
     println(io, "lon,lat,status,n_members,n_hatched,n_died_cold,n_died_heat,n_died_desiccation,n_timeout," *
                  "earliest_hatch_date,earliest_hatch_mass_mg,median_hatch_date,median_hatch_mass_mg," *
@@ -150,7 +150,7 @@ end
 map_towns = ["Birdsville, Queensland", "Roma, Queensland", "Charleville, Queensland",
              "Dubbo, New South Wales", "Broken Hill, New South Wales", "Bourke, New South Wales",
              "Mildura, Victoria", "Canberra, Australia"]
-towns_cache_path = joinpath(output_dir, "points_australia_towns.jls")
+towns_cache_path = joinpath(egg_dir, "points_australia_towns.jls")
 towns = if isfile(towns_cache_path)
     deserialize(towns_cache_path)
 else
@@ -329,7 +329,7 @@ hatch_date_panel = plot(
     hatch_date_legend;
     layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
 )
-hatch_date_path = joinpath(output_dir, "history_forecast_splice_hatch_dates.png")
+hatch_date_path = joinpath(egg_dir, "splice_hatch_dates_$(run_tag).png")
 savefig(hatch_date_panel, hatch_date_path)
 println("Saved $hatch_date_path")
 
@@ -348,7 +348,7 @@ hatch_date_banded_panel = plot(
     hatch_date_banded_legend;
     layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
 )
-hatch_date_banded_path = joinpath(output_dir, "history_forecast_splice_hatch_dates_banded.png")
+hatch_date_banded_path = joinpath(egg_dir, "splice_hatch_dates_banded_$(run_tag).png")
 savefig(hatch_date_banded_panel, hatch_date_banded_path)
 println("Saved $hatch_date_banded_path")
 
@@ -363,7 +363,7 @@ mass_panel = plot(
     mass_heatmap("Std. dev. of egg mass at hatch (mg)", std_mass);
     layout=(2, 2), size=(1400, 1050), plot_title,
 )
-mass_path = joinpath(output_dir, "history_forecast_splice_mass.png")
+mass_path = joinpath(egg_dir, "splice_mass_$(run_tag).png")
 savefig(mass_panel, mass_path)
 println("Saved $mass_path")
 
@@ -374,6 +374,6 @@ mortality_panel = plot(
     frac_heatmap("Fraction died of desiccation", frac_desiccation);
     layout=(2, 2), size=(1400, 1050), plot_title,
 )
-mortality_path = joinpath(output_dir, "history_forecast_splice_mortality.png")
+mortality_path = joinpath(egg_dir, "splice_mortality_$(run_tag).png")
 savefig(mortality_panel, mortality_path)
 println("Saved $mortality_path")

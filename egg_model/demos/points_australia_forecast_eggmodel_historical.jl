@@ -55,7 +55,7 @@ initial_state = EggState(;
 
 # cache key includes diapause since it changes nest_node/arrest params, so
 # toggling it can't silently reuse a cache written under the other setting.
-historical_egg_cache_path = joinpath(output_dir, "$(historical_label())_diapause$(diapause)_eggresults_n$(n).jls")
+historical_egg_cache_path = joinpath(egg_dir, "$(historical_label())_$(diapause ? "dia" : "nodia")_egg_n$(n).jls")
 
 if isfile(historical_egg_cache_path) && use_cache
     println("Historical egg-model results already cached at $historical_egg_cache_path -- nothing to do.")

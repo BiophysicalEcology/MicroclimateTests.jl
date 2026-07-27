@@ -43,7 +43,7 @@ if member_start == 0
         rejected = setdiff(all_grid_points, points)
         scatter!(p, first.(points), last.(points); markersize=2, markerstrokewidth=0, color=:green, label="kept")
         scatter!(p, first.(rejected), last.(rejected); markersize=2, markerstrokewidth=0, color=:red, label="rejected")
-        savefig(p, joinpath(output_dir, "history_forecast_splice_domain_check.png"))
+        savefig(p, joinpath(history_dir, "history_forecast_splice_domain_check.png"))
     end
 
     println("[member 0] Solving historical SILO microclimate for $n points: $oviposition_date to $issue_date...")

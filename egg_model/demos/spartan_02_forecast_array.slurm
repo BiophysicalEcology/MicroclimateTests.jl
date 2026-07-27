@@ -2,7 +2,7 @@
 #SBATCH --job-name=pa_forecast_members
 #SBATCH --account=punim0593
 #SBATCH --partition=sapphire
-#SBATCH --array=0-24                     # (n_ensembles / members_per_task) - 1 -- 25/5 here; update both if n_ensembles changes
+#SBATCH --array=0-24                     # default for n_ensembles=25, members_per_task=1 -- spartan_submit_all.sh overrides this via `sbatch --array=...` when N_ENSEMBLES/MEMBERS_PER_TASK_FORECAST differ
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
@@ -32,7 +32,7 @@ export JULIA_PKG_PRECOMPILE_AUTO=0   # cache was already warmed by spartan_01 --
 PROJECT_DIR=/home/mrke/git/BiophysicalEcologyEnv
 SCRIPT=/home/mrke/git/MicroclimateTests.jl/egg_model/demos/points_australia_forecast_microclimate.jl
 
-members_per_task=1   # match: n_ensembles (points_australia_forecast_setup.jl) / (array upper bound + 1)
+members_per_task=${MEMBERS_PER_TASK_FORECAST:-1}   # set by spartan_submit_all.sh; falls back to 1 (one member/task) when run standalone
 start=$((SLURM_ARRAY_TASK_ID * members_per_task + 1))
 end=$((start + members_per_task - 1))
 

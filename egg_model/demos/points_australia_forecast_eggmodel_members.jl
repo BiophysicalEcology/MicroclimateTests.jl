@@ -65,7 +65,7 @@ else
 end
 1 <= member_start <= member_end <= n_ensembles || error("member range $member_start:$member_end out of bounds 1:$n_ensembles")
 
-historical_egg_cache_path = joinpath(output_dir, "$(historical_label())_diapause$(diapause)_eggresults_n$(n).jls")
+historical_egg_cache_path = joinpath(egg_dir, "$(historical_label())_$(diapause ? "dia" : "nodia")_egg_n$(n).jls")
 isfile(historical_egg_cache_path) || error(
     "Historical egg-model cache not found at $historical_egg_cache_path -- " *
     "run points_australia_forecast_eggmodel_historical.jl first.")
@@ -107,7 +107,7 @@ function run_forecast_members(member_start, member_end, forecast_point_indices, 
     end
 
     for member in member_start:member_end
-        outcome_path = joinpath(output_dir, "$(forecast_label(member))_diapause$(diapause)_eggoutcomes_n$(n).jls")
+        outcome_path = joinpath(egg_dir, "$(forecast_label(member))_$(diapause ? "dia" : "nodia")_eggout_n$(n).jls")
         if isfile(outcome_path) && use_cache
             println("[member $member] Egg-model outcomes already cached, skipping.")
             continue

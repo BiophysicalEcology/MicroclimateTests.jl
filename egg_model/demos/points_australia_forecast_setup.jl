@@ -23,13 +23,19 @@ include(joinpath(@__DIR__, "..", "src", "access_s2.jl"))
 include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
 
 output_dir = get(ENV, "LOCUST_FORECAST_OUTPUT_DIR", joinpath(@__DIR__, "output"))
-mkpath(output_dir)
+history_dir  = joinpath(output_dir, "history")   # historical-leg microclimate cache + domain-check plot
+forecast_dir = joinpath(output_dir, "forecast")  # forecast-member microclimate cache
+egg_dir      = joinpath(output_dir, "egg")       # egg-model caches + final stats CSV/maps
+mkpath(history_dir)
+mkpath(forecast_dir)
+mkpath(egg_dir)
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-n_ensembles = 25    # how many of the up-to-99 ACCESS-S2 members to run
+n_ensembles = parse(Int, get(ENV, "LOCUST_N_ENSEMBLES", "25"))   # how many of the up-to-99 ACCESS-S2 members to run
+1 <= n_ensembles <= 99 || error("LOCUST_N_ENSEMBLES=$n_ensembles out of bounds 1:99 -- ACCESS-S2 only has 99 members")
 diapause = true
 oviposition_date = Date(2026, 4, 25)
 use_cache = true
@@ -65,11 +71,29 @@ output_layers = (
 
 issue_date = Date(2026, 7, 1)   # ACCESS-S2 issue date -- also used below for the ACCESS-S2 land-mask probe
 
-# ── regular grid over south-eastern Australia, land-masked (points_australia.jl) ──
+# ── regular grid over eastern/central Australia (default extent), land-masked
+# (points_australia.jl) -- extent/spacing overridable via ENV so the same
+# pipeline can run a coarser scan or a finer/smaller-area zoom without
+# editing this file. `min:spacing:max` (not `range(...; length=N)`) so
+# spacing is the thing that's actually configured -- point count follows.
+# Default extent matches the APLC operational area (Chortoicetes survey
+# records' cleaned alpha-shape bounds, ±1° padding, from
+# APLC_extent_polygon_alpha_CLEANED.shp: lon 132.59:151.62, lat -36.96:-16.83).
+grid_lon_min = parse(Float64, get(ENV, "LOCUST_LON_MIN", "131.6"))
+grid_lon_max = parse(Float64, get(ENV, "LOCUST_LON_MAX", "152.6"))
+grid_lat_min = parse(Float64, get(ENV, "LOCUST_LAT_MIN", "-38.0"))
+grid_lat_max = parse(Float64, get(ENV, "LOCUST_LAT_MAX", "-15.8"))
+grid_spacing_deg = parse(Float64, get(ENV, "LOCUST_GRID_SPACING_DEG", "0.375"))
 
-lon_range = range(135.0, 153.0; length=50)
-lat_range = range(-39.0, -24.0; length=40)
+lon_range = grid_lon_min:grid_spacing_deg:grid_lon_max
+lat_range = grid_lat_min:grid_spacing_deg:grid_lat_max
 all_grid_points = vec([(lon, lat) for lon in lon_range, lat in lat_range])   # column-major (lon fastest)
+
+# Short, collision-safe stand-in for the grid config in cache/output file
+# names -- spelling out extent+spacing+n_ensembles in every file name gets
+# unwieldy fast, and just using point count (`n`) isn't safe since two
+# different extents/spacings can happen to produce the same count.
+grid_tag = string(hash((grid_lon_min, grid_lon_max, grid_lat_min, grid_lat_max, grid_spacing_deg)); base=16)[1:8]
 
 # TODO work out what DEM SILO uses and use that instead, probably only need
 # that and not the CRUCL2_ELV filter.
@@ -173,8 +197,13 @@ build_forecast_model(member) = MicroMapModel(;
     compute_terrain=false, output_layers,
 )
 
-historical_label() = "splice_historical_lay$(oviposition_date)_issue$(issue_date)"
-forecast_label(member) = "splice_forecast_member$(member)_issue$(issue_date)"
+historical_label() = "hist_$(grid_tag)_lay$(oviposition_date)_iss$(issue_date)"
+forecast_label(member) = "fcst_$(grid_tag)_m$(member)_iss$(issue_date)"
+
+# shared by the aggregate script's output file names -- not by the cache
+# names above, which need grid_tag+issue_date but not diapause (the
+# microclimate solve doesn't depend on it, only the egg model does).
+run_tag = "$(grid_tag)_lay$(oviposition_date)_$(diapause ? "dia" : "nodia")"
 
 # per-point, single-depth slice -- the shape solve_batched hands back to
 # callers, whether freshly solved (batch_output, in-memory) or reloaded from
@@ -283,13 +312,17 @@ function solve_batched(model, label, points, dates, init, nest_node)
     n = length(points)
     n_batches = cld(n, batch_size)
     depth_local_index = findfirst(==(nest_node), CACHED_DEPTH_RANGE)
+    # historical_label()/forecast_label() always start with "hist_"/"fcst_" --
+    # routes into history_dir/forecast_dir without solve_batched's callers
+    # needing to say which leg this is themselves.
+    cache_dir = startswith(label, "hist_") ? history_dir : forecast_dir
     per_point = Vector{Any}(undef, n)
     final_soil_temperature = Vector{Any}(undef, n)
     final_soil_moisture = Vector{Any}(undef, n)
     for b in 1:n_batches
         i_start, i_end = (b - 1) * batch_size + 1, min(b * batch_size, n)
         batch_points = points[i_start:i_end]
-        batch_cache_path = joinpath(output_dir, "$(label)_maxdepth$(cache_max_depth)_batch$(b)of$(n_batches)_n$(n).nc")
+        batch_cache_path = joinpath(cache_dir, "$(label)_d$(ustrip(u"cm", cache_max_depth))_b$(b)of$(n_batches)_n$(n).nc")
         batch = if isfile(batch_cache_path) && use_cache
             println("Loading cached $label batch $b/$n_batches ($(length(batch_points)) points)...")
             _read_batch_cache(batch_cache_path, depth_local_index, length(batch_points))
