@@ -16,7 +16,7 @@
 set -euo pipefail
 
 N_ENSEMBLES=${N_ENSEMBLES:-99}                    # how many of the up-to-99 ACCESS-S2 members to run
-MEMBERS_PER_TASK_FORECAST=${MEMBERS_PER_TASK_FORECAST:-1}   # microclimate array chunk size (spartan_02)
+MEMBERS_PER_TASK_FORECAST=${MEMBERS_PER_TASK_FORECAST:-10}  # microclimate array chunk size (spartan_02) -- fewer, chunkier tasks clear a busy priority queue faster than many 1-member tasks
 MEMBERS_PER_TASK_EGG=${MEMBERS_PER_TASK_EGG:-5}             # egg-model array chunk size (spartan_04)
 
 (( N_ENSEMBLES >= 1 && N_ENSEMBLES <= 99 )) || { echo "N_ENSEMBLES=$N_ENSEMBLES out of bounds 1:99 -- ACCESS-S2 only has 99 members" >&2; exit 1; }
