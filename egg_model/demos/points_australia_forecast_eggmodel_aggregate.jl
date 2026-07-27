@@ -52,19 +52,19 @@ if !isempty(forecast_point_indices)
     end
 end
 
-# ── per-point summary: median/earliest/latest hatching member, death-cause
+# ── per-point summary: median/p25/p75 hatching member, death-cause
 # counts, saved to one combined CSV ──
 
 function summarize_point(historical_egg_result, point_outcomes, members)
     if historical_egg_result.hatched
         return (; status=:hatched_historically, counts=Dict(:hatched => 1),
-            earliest=nothing, median=nothing, latest=nothing,
-            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
+            p25=nothing, median=nothing, p75=nothing,
+            cv_hatch_days=nothing, cv_hatch_mass_mg=nothing)
     elseif historical_egg_result.died
         return (; status=Symbol("died_historically_$(historical_egg_result.death_cause)"),
             counts=Dict(historical_egg_result.death_cause => 1),
-            earliest=nothing, median=nothing, latest=nothing,
-            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
+            p25=nothing, median=nothing, p75=nothing,
+            cv_hatch_days=nothing, cv_hatch_mass_mg=nothing)
     end
     counts = Dict{Symbol,Int}()
     for r in point_outcomes
@@ -73,16 +73,35 @@ function summarize_point(historical_egg_result, point_outcomes, members)
     end
     hatched = [(member, r) for (member, r) in zip(members, point_outcomes) if r.hatched]
     if isempty(hatched)
-        return (; status=:no_hatch, counts, earliest=nothing, median=nothing, latest=nothing,
-            std_hatch_days=nothing, std_hatch_mass_mg=nothing)
+        return (; status=:no_hatch, counts, p25=nothing, median=nothing, p75=nothing,
+            cv_hatch_days=nothing, cv_hatch_mass_mg=nothing)
     end
     sorted = sort(hatched; by=x -> x[2].hatch_time)
-    # std needs >=2 points to be meaningful -- nothing (blank in the CSV) otherwise.
-    std_hatch_days = length(hatched) >= 2 ? std([ustrip(u"d", r.hatch_time) for (_, r) in hatched]) : nothing
-    std_hatch_mass_mg = length(hatched) >= 2 ? std([ustrip(u"mg", r.final_state.egg_mass) for (_, r) in hatched]) : nothing
+    n_hatched = length(sorted)
+    # nearest-rank percentile: the member whose hatch_time sits at that rank,
+    # so the reported mass stays paired with the same member as its date --
+    # not an independently-interpolated order statistic (which could pick a
+    # different member's mass than the one at that date rank).
+    p25_idx = clamp(ceil(Int, 0.25 * n_hatched), 1, n_hatched)
+    p75_idx = clamp(ceil(Int, 0.75 * n_hatched), 1, n_hatched)
+    # CV (%) needs >=2 points to be meaningful -- nothing (blank in the CSV)
+    # otherwise. Scale-free unlike raw std -- "8% CV" reads the same whether
+    # hatching takes 40 days or 90.
+    cv_hatch_days = if n_hatched >= 2
+        day_vals = [ustrip(u"d", r.hatch_time) for (_, r) in hatched]
+        100 * std(day_vals) / mean(day_vals)
+    else
+        nothing
+    end
+    cv_hatch_mass_mg = if n_hatched >= 2
+        mass_vals = [ustrip(u"mg", r.final_state.egg_mass) for (_, r) in hatched]
+        100 * std(mass_vals) / mean(mass_vals)
+    else
+        nothing
+    end
     (; status=:forecast, counts,
-        earliest=sorted[1], median=sorted[cld(length(sorted), 2)], latest=sorted[end],
-        std_hatch_days, std_hatch_mass_mg)
+        p25=sorted[p25_idx], median=sorted[cld(n_hatched, 2)], p75=sorted[p75_idx],
+        cv_hatch_days, cv_hatch_mass_mg)
 end
 
 hatch_date_of(member_result, issue_date) =
@@ -96,23 +115,23 @@ point_summaries = [summarize_point(historical_egg_results[i],
 stats_path = joinpath(egg_dir, "splice_stats_$(run_tag).csv")
 open(stats_path, "w") do io
     println(io, "lon,lat,status,n_members,n_hatched,n_died_cold,n_died_heat,n_died_desiccation,n_timeout," *
-                 "earliest_hatch_date,earliest_hatch_mass_mg,median_hatch_date,median_hatch_mass_mg," *
-                 "latest_hatch_date,latest_hatch_mass_mg,std_hatch_days,std_hatch_mass_mg")
+                 "p25_hatch_date,p25_hatch_mass_mg,median_hatch_date,median_hatch_mass_mg," *
+                 "p75_hatch_date,p75_hatch_mass_mg,cv_hatch_days_pct,cv_hatch_mass_pct")
     for i in 1:n
         s = point_summaries[i]
-        n_run = s.earliest === nothing && s.status != :no_hatch ? 0 : length(members)
+        n_run = s.p25 === nothing && s.status != :no_hatch ? 0 : length(members)
         c(sym) = get(s.counts, sym, 0)
-        fields = if s.earliest === nothing
+        fields = if s.p25 === nothing
             ("", "", "", "", "", "")
         else
-            (string(hatch_date_of(s.earliest, issue_date)), string(round(mass_mg_of(s.earliest); digits=2)),
+            (string(hatch_date_of(s.p25, issue_date)), string(round(mass_mg_of(s.p25); digits=2)),
              string(hatch_date_of(s.median, issue_date)), string(round(mass_mg_of(s.median); digits=2)),
-             string(hatch_date_of(s.latest, issue_date)), string(round(mass_mg_of(s.latest); digits=2)))
+             string(hatch_date_of(s.p75, issue_date)), string(round(mass_mg_of(s.p75); digits=2)))
         end
-        std_days_str = s.std_hatch_days === nothing ? "" : string(round(s.std_hatch_days; digits=2))
-        std_mass_str = s.std_hatch_mass_mg === nothing ? "" : string(round(s.std_hatch_mass_mg; digits=2))
+        cv_days_str = s.cv_hatch_days === nothing ? "" : string(round(s.cv_hatch_days; digits=2))
+        cv_mass_str = s.cv_hatch_mass_mg === nothing ? "" : string(round(s.cv_hatch_mass_mg; digits=2))
         println(io, join((points[i][1], points[i][2], s.status, n_run, c(:hatched), c(:cold), c(:heat),
-            c(:desiccation), c(:timeout), fields..., std_days_str, std_mass_str), ","))
+            c(:desiccation), c(:timeout), fields..., cv_days_str, cv_mass_str), ","))
     end
 end
 println("Saved $stats_path")
@@ -173,13 +192,13 @@ end
 historical_hatch_date(r) = oviposition_date + Day(round(Int, ustrip(u"d", r.hatch_time)))
 
 median_dates = fill(NaN, length(all_grid_points))
-earliest_dates = fill(NaN, length(all_grid_points))
-latest_dates = fill(NaN, length(all_grid_points))
+p25_dates = fill(NaN, length(all_grid_points))
+p75_dates = fill(NaN, length(all_grid_points))
 median_mass = fill(NaN, length(all_grid_points))
-earliest_mass = fill(NaN, length(all_grid_points))
-latest_mass = fill(NaN, length(all_grid_points))
-std_dates = fill(NaN, length(all_grid_points))
-std_mass = fill(NaN, length(all_grid_points))
+p25_mass = fill(NaN, length(all_grid_points))
+p75_mass = fill(NaN, length(all_grid_points))
+cv_dates = fill(NaN, length(all_grid_points))
+cv_mass = fill(NaN, length(all_grid_points))
 frac_hatched = fill(NaN, length(all_grid_points))
 frac_cold = fill(NaN, length(all_grid_points))
 frac_heat = fill(NaN, length(all_grid_points))
@@ -189,19 +208,19 @@ for i in 1:n
     s = point_summaries[i]
     if s.status == :hatched_historically
         d = Dates.value(historical_hatch_date(historical_egg_results[i]))
-        median_dates[gi] = earliest_dates[gi] = latest_dates[gi] = d
+        median_dates[gi] = p25_dates[gi] = p75_dates[gi] = d
         m = ustrip(u"mg", historical_egg_results[i].final_state.egg_mass)
-        median_mass[gi] = earliest_mass[gi] = latest_mass[gi] = m
-    elseif s.earliest !== nothing
+        median_mass[gi] = p25_mass[gi] = p75_mass[gi] = m
+    elseif s.p25 !== nothing
         median_dates[gi] = Dates.value(hatch_date_of(s.median, issue_date))
-        earliest_dates[gi] = Dates.value(hatch_date_of(s.earliest, issue_date))
-        latest_dates[gi] = Dates.value(hatch_date_of(s.latest, issue_date))
+        p25_dates[gi] = Dates.value(hatch_date_of(s.p25, issue_date))
+        p75_dates[gi] = Dates.value(hatch_date_of(s.p75, issue_date))
         median_mass[gi] = mass_mg_of(s.median)
-        earliest_mass[gi] = mass_mg_of(s.earliest)
-        latest_mass[gi] = mass_mg_of(s.latest)
+        p25_mass[gi] = mass_mg_of(s.p25)
+        p75_mass[gi] = mass_mg_of(s.p75)
     end
-    s.std_hatch_days !== nothing && (std_dates[gi] = s.std_hatch_days)
-    s.std_hatch_mass_mg !== nothing && (std_mass[gi] = s.std_hatch_mass_mg)
+    s.cv_hatch_days !== nothing && (cv_dates[gi] = s.cv_hatch_days)
+    s.cv_hatch_mass_mg !== nothing && (cv_mass[gi] = s.cv_hatch_mass_mg)
     # historically-resolved points are a single outcome (n=1), not an ensemble
     total = s.status == :hatched_historically || startswith(string(s.status), "died_historically") ? 1 : length(members)
     frac_hatched[gi] = get(s.counts, :hatched, 0) / total
@@ -213,7 +232,7 @@ end
 # Colourbars can't show date strings (Plots.jl GR limitation) -- a series
 # legend is built separately (legend_bar below) and shown once, as its own
 # panel, rather than attached to any one subplot here. `lo`/`hi` are shared
-# across median/earliest/latest so the same colour always means the same
+# across median/p25/p75 so the same colour always means the same
 # date in every subplot.
 const HATCH_DATE_GRADIENT = cgrad(:plasma)
 function date_heatmap(title, ordinals, lo, hi)
@@ -303,10 +322,10 @@ end
 
 plot_title = "Lay date $oviposition_date, issue date $issue_date, diapause=$diapause"
 
-# shared across median/earliest/latest so the same colour (band) always
-# means the same date range in every subplot -- otherwise each independently
-# picks its own scale and the panels aren't comparable at a glance.
-shared_hatch_date_lo, shared_hatch_date_hi = extrema(filter(!isnan, vcat(median_dates, earliest_dates, latest_dates)))
+# shared across median/p25/p75 so the same colour (band) always means the
+# same date range in every subplot -- otherwise each independently picks its
+# own scale and the panels aren't comparable at a glance.
+shared_hatch_date_lo, shared_hatch_date_hi = extrema(filter(!isnan, vcat(median_dates, p25_dates, p75_dates)))
 
 # 2x2 map grid + a slim legend-only strip along the bottom (APLC-style)
 # instead of attaching a legend to any one subplot. A fresh @layout is built
@@ -315,7 +334,7 @@ shared_hatch_date_lo, shared_hatch_date_hi = extrema(filter(!isnan, vcat(median_
 # the wrong slot, the rest blank).
 
 date_tick_vals = unique(round.(Int, range(shared_hatch_date_lo, shared_hatch_date_hi;
-    length=min(6, length(unique(round.(Int, filter(!isnan, vcat(median_dates, earliest_dates, latest_dates)))))))))
+    length=min(6, length(unique(round.(Int, filter(!isnan, vcat(median_dates, p25_dates, p75_dates)))))))))
 hatch_date_legend = legend_bar([
     (HATCH_DATE_GRADIENT[(v - shared_hatch_date_lo) / max(shared_hatch_date_hi - shared_hatch_date_lo, 1)], string(Date(Dates.UTD(v))))
     for v in date_tick_vals
@@ -323,9 +342,9 @@ hatch_date_legend = legend_bar([
 
 hatch_date_panel = plot(
     date_heatmap("Median hatch date", median_dates, shared_hatch_date_lo, shared_hatch_date_hi),
-    date_heatmap("Earliest hatch date", earliest_dates, shared_hatch_date_lo, shared_hatch_date_hi),
-    date_heatmap("Latest hatch date", latest_dates, shared_hatch_date_lo, shared_hatch_date_hi),
-    mass_heatmap("Std. dev. of hatch date (days)", std_dates),
+    date_heatmap("25th percentile hatch date", p25_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    date_heatmap("75th percentile hatch date", p75_dates, shared_hatch_date_lo, shared_hatch_date_hi),
+    mass_heatmap("CV of hatch date (%)", cv_dates),
     hatch_date_legend;
     layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
 )
@@ -335,16 +354,16 @@ println("Saved $hatch_date_path")
 
 fixed_band_edges = hatch_band_edges(year(oviposition_date))
 hatch_present_overall = sort(unique(Float64(hatch_band_of(v, fixed_band_edges))
-    for v in filter(!isnan, vcat(median_dates, earliest_dates, latest_dates))))
+    for v in filter(!isnan, vcat(median_dates, p25_dates, p75_dates))))
 hatch_date_banded_legend = legend_bar([
     (HATCH_DATE_PALETTE[Int(code)+1], HATCH_DATE_LABELS[Int(code)+1]) for code in hatch_present_overall
 ])
 
 hatch_date_banded_panel = plot(
     banded_date_heatmap("Median hatch date", median_dates, fixed_band_edges),
-    banded_date_heatmap("Earliest hatch date", earliest_dates, fixed_band_edges),
-    banded_date_heatmap("Latest hatch date", latest_dates, fixed_band_edges),
-    mass_heatmap("Std. dev. of hatch date (days)", std_dates),
+    banded_date_heatmap("25th percentile hatch date", p25_dates, fixed_band_edges),
+    banded_date_heatmap("75th percentile hatch date", p75_dates, fixed_band_edges),
+    mass_heatmap("CV of hatch date (%)", cv_dates),
     hatch_date_banded_legend;
     layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
 )
@@ -352,15 +371,15 @@ hatch_date_banded_path = joinpath(egg_dir, "splice_hatch_dates_banded_$(run_tag)
 savefig(hatch_date_banded_panel, hatch_date_banded_path)
 println("Saved $hatch_date_banded_path")
 
-# shared across median/earliest/latest for the same reason as the hatch-date
-# panels above; std_mass is a different quantity/scale so it keeps its own.
-shared_mass_clims = extrema(filter(!isnan, vcat(median_mass, earliest_mass, latest_mass)))
+# shared across median/p25/p75 for the same reason as the hatch-date panels
+# above; cv_mass is a different quantity/scale so it keeps its own.
+shared_mass_clims = extrema(filter(!isnan, vcat(median_mass, p25_mass, p75_mass)))
 
 mass_panel = plot(
     mass_heatmap("Median egg mass at hatch (mg)", median_mass; clims=shared_mass_clims, colorbar=true),
-    mass_heatmap("Earliest egg mass at hatch (mg)", earliest_mass; clims=shared_mass_clims, colorbar=false),
-    mass_heatmap("Latest egg mass at hatch (mg)", latest_mass; clims=shared_mass_clims, colorbar=false),
-    mass_heatmap("Std. dev. of egg mass at hatch (mg)", std_mass);
+    mass_heatmap("25th percentile egg mass at hatch (mg)", p25_mass; clims=shared_mass_clims, colorbar=false),
+    mass_heatmap("75th percentile egg mass at hatch (mg)", p75_mass; clims=shared_mass_clims, colorbar=false),
+    mass_heatmap("CV of egg mass at hatch (%)", cv_mass);
     layout=(2, 2), size=(1400, 1050), plot_title,
 )
 mass_path = joinpath(egg_dir, "splice_mass_$(run_tag).png")
