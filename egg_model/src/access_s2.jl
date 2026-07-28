@@ -32,6 +32,9 @@ _ensemble_member(::Type{AccessS2{D,M}}) where {D,M} = M
 
 MicroclimateMapper.weather_calendar(::Type{<:AccessS2}) = MicroclimateMapper.Daily()
 MicroclimateMapper.loader(::Type{<:AccessS2}) = AccessS2Loader()
+# ACCESS-S2 has no native wind field -- same CRUCL2 climatology fallback as SILO/AWAP.
+MicroclimateMapper.fallback_source(::Type{<:AccessS2}) = CRUCL2
+MicroclimateMapper.fallback_layers(::Type{<:AccessS2}) = (:wind_speed,)
 
 function MicroclimateMapper.variables(::Type{<:AccessS2})
     (
