@@ -5,22 +5,29 @@
 using PointDataSources, RasterDataSources
 using Dates, Statistics, Plots
 using Zarr, ZarrDatasets, CommonDataModel
+using MicroclimateMapper
 using Plots
 
 silo_email = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
 ENV["CDS_API_KEY"] = get(ENV, "CDS_API_KEY") do
     error("Set CDS_API_KEY as a user environment variable first")
 end
+# put your API key in ~/.julia/config/startup.jl
+# if !haskey(ENV, "CDS_API_KEY")
+#    ENV["CDS_API_KEY"] = "your-api-key-here"
+# end
 
-# Alice Springs — central Australia, hot arid climate.
-lon, lat = 133.8807, -23.6980
+site = geocode("Mildura, Australia")
+site_name = split(site.display_name, ",")[1]
+lon = site.lon
+lat = site.lat
 date_range = (Date(2025, 1, 1), Date(2025, 12, 31))
 
 # ERA5 point access
 pointlayers(ERA5)
 era5_t2m = getpoint(ERA5, :t2m; lon, lat, date=date_range)
 plot(Date.(era5_t2m.times), era5_t2m.values .- 273.15; label = "ERA5 t2m", 
-    title = "ERA5 t2m at Alice Springs (2025)", xlabel = "Date", ylabel = "Temperature (°C)")
+    title = "ERA5 t2m at $site_name", xlabel = "Date", ylabel = "Temperature (°C)")
 
 # BARRA{...,Day} (not the Hour default) and NCEP{SurfaceFlux,2} (its own
 # native cadence is 6-hourly, aggregated to daily below) for like-for-like
@@ -90,8 +97,8 @@ if era5_ok
     push!(tmin_series, ("ERA5", era5_tmin_dates, era5_tmin_k .- 273.15, :dashdot))
 end
 
-p1 = compare_plot("Daily maximum temperature", "°C", tmax_series...)
-p2 = compare_plot("Daily minimum temperature", "°C", tmin_series...)
+p1 = compare_plot("$site_name Daily maximum temperature", "°C", tmax_series...)
+p2 = compare_plot("$site_name Daily minimum temperature", "°C", tmin_series...)
 
 # --- Rainfall ----------------------------------------------------------------
 
@@ -112,7 +119,7 @@ if era5_ok
     push!(rain_series, ("ERA5", era5_rain_dates, era5_tp_sum .* 1000.0, :dashdot))
 end
 
-p3 = compare_plot("Daily rainfall", "mm/day", rain_series...)
+p3 = compare_plot("$site_name Daily rainfall", "mm/day", rain_series...)
 
 # --- Radiation ---------------------------------------------------------------
 
@@ -133,6 +140,6 @@ if era5_ok
     push!(rad_series, ("ERA5", era5_rad_dates, era5_ssrd_sum ./ 1e6, :dashdot))
 end
 
-p4 = compare_plot("Daily shortwave radiation", "MJ/m²/day", rad_series...)
+p4 = compare_plot("$site_name Daily shortwave radiation", "MJ/m²/day", rad_series...)
 
 display(plot(p1, p2, p3, p4; layout = (4, 1), size = (900, 900), link = :x))

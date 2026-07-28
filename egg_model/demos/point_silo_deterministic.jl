@@ -21,6 +21,8 @@ include(joinpath(@__DIR__, "..", "src", "hydric.jl"))
 include(joinpath(@__DIR__, "..", "src", "phases.jl"))
 include(joinpath(@__DIR__, "..", "src", "forcing.jl"))
 
+include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
+
 # all cached/serialized run output goes here, not directly in demos/ -- one
 # gitignore entry (egg_model/demos/output/) instead of per-file patterns.
 output_dir = joinpath(@__DIR__, "output")
@@ -30,10 +32,32 @@ ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
 # ── microclimate: SILO point run, extended with the soil layers the egg model needs ──
 
+site = geocode("Mildura, Australia")
+site_name = split(site.display_name, ",")[1]
+points = [site]
+# whole calendar year only, per current SILO/point-query constraints.
+dates = Date(2010, 1, 1):Day(1):Date(2011, 12, 31)
+#oviposition_dates = [Date(2010, m, 1) for m in 1:1:12]
+oviposition_dates = [Date(2010, 1, 15), Date(2010, 4, 15)]
+
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
-nest_depth = 5.0u"cm"
+diapause = false
+
+if diapause
+    nest_depth = 5.0u"cm"
+    cold_hour_threshold = 30u"d"
+    diapause_hour_threshold = 240.0u"d"
+else
+    nest_depth = 10.0u"cm"
+    cold_hour_threshold = 0.0u"d"
+    diapause_hour_threshold = 0.0u"d"
+end
+
+# get air temperature and rainfall for plot
+#pointlayers(SILO)
+rainfall = getpoint(SILO, :daily_rain; lon=site.lon, lat=site.lat, date = dates, username = "m.kearney@unimelb.edu.au")
 
 # Just what egg_nest_forcing (forcing.jl) actually reads, plus soil_moisture
 # (kept for a possible future moisture threshold, cheap to retain -- see
@@ -45,6 +69,7 @@ output_layers = (
     LayerSpec(:soil_water_potential, :soil),
     LayerSpec(:soil_thermal_conductivity, :soil),
     LayerSpec(:soil_humidity, :soil),
+    LayerSpec(:reference_temperature, :scalar)
 )
 
 model = MicroMapModel(;
@@ -67,11 +92,7 @@ model = MicroMapModel(;
     output_layers,
 )
 
-site = geocode("Bendigo, Australia")
-points = [site]
-# whole calendar year only, per current SILO/point-query constraints.
-dates = Date(2020, 1, 1):Day(1):Date(2021, 12, 31)
-use_cache = true   # cache the SILO point query to avoid repeated downloads
+use_cache = false   # cache the SILO point query to avoid repeated downloads
 
 # Campbell & Norman (1998) Table 9.1 texture-class hydraulic parameters
 # (matches NicheMapR's CampNormTbl9_1) -- air_entry is the table's magnitude
@@ -178,43 +199,36 @@ soil_hydraulics = (;
 
 # ── egg model, real fitted parameters from seasonal_hatch_forecast2.R's egg_pars ──
 
-shape_b = 0.69 / 1.82   # B_arb/A_arb, Steele 1941
-geometry = Ellipsoid(0.0036u"g", 1000.0u"kg/m^3", 1 / shape_b, 1 / shape_b)
+# ── egg model, identical config to point_silo_deterministic.jl ──
+
+geometry = Ellipsoid(initial_egg_mass, egg_density, axis_ratio, axis_ratio)
 arrest = ProportionWindowArrest(;
-    cold_temperature=u"K"(0.0u"°C"), diapause_window=(0.25, 0.30),
-    quiescence_windows=((0.25, 0.30), (0.45, 0.50)),
-    cold_hour_threshold=1000.0u"hr", diapause_hour_threshold=240.0u"hr",
-    desiccation_tolerance=0.6,
+    cold_temperature, diapause_window, quiescence_windows,
+    cold_hour_threshold, diapause_hour_threshold,
+    desiccation_tolerance,
 )
-# fitted to Gregg (1981) egg incubation data, matching Arrhenius_just_eggs.R's
-# arr_pars exactly: T_REF/kdot_ref from data row 6 (28.5°C, 17.4-day egg time),
-# T_A/T_AL/T_AH/T_L/T_H from that script's base-parameter block. kdot_ref is a
-# per-day rate there (Egg_time is in days) -- rate_unit carries that through.
 dm = arrhenius_development_model(;
-    T_A=6641.6175, T_AL=33600.0, T_AH=48000.0, T_L=289.15, T_H=314.65, T_ref=301.65,
-    rate_at_reference=1 / 17.4, rate_unit=1.0u"d^-1",
+    T_A, T_AL, T_AH, T_L, T_H, T_ref, rate_at_reference, rate_unit,
 )
-base_K_e = 2.347802e-9 * u"kg/m^2/s/(J/kg)"
 stage = SteppedHydricStage(;
-    conductance_threshold=0.25, wetness_threshold=0.45,
-    dormant_conductance=0.0u"kg/m^2/s/(J/kg)", active_conductance=base_K_e * 3,
-    dormant_wetness=0.35 / 100, active_wetness=0.35,
+    conductance_threshold, wetness_threshold, dormant_conductance, active_conductance,
+    dormant_wetness, active_wetness,
 )
 pars = EggParameters(;
-    hydraulic_conductance=base_K_e, specific_hydration=0.000304u"m^3/m^3/(J/kg)",
-    conduction_fraction=0.5, skin_wetness=0.35 / 100,
-    initial_egg_mass=0.0036u"g", minimum_egg_mass=0.0026u"g",
+    hydraulic_conductance, specific_hydration, conduction_fraction, skin_wetness,
+    initial_egg_mass, minimum_egg_mass,
 )
-# 49°C upper limit is your real estimate; 0°C lower limit is illustrative.
-# 0.6 water:dry ratio is the real desiccation-death threshold; dry_mass is
-# still an illustrative placeholder.
 survival_model = CombinedSurvival(
     HardTemperatureLimit(; lower_lethal_temperature=u"K"(-5.0u"°C"), upper_lethal_temperature=u"K"(52.0u"°C")),
-    DesiccationLimit(; dry_mass=0.1 * pars.initial_egg_mass, critical_water_ratio=0.6),
+    DesiccationLimit(; dry_mass=0.1 * initial_egg_mass, critical_water_ratio=0.6),
 )
 egg_model = EggModel(;
     development_model=dm, arrest_model=arrest, hydric_model=SteadyDarcyFlux(),
     hydric_stage_model=stage, thermal_model=SoilTemperatureEquals(), survival_model, geometry,
+)
+initial_state = EggState(;
+    egg_mass=pars.initial_egg_mass, egg_water_potential=-709.4682u"J/kg",
+    maximum_mass_achieved=pars.initial_egg_mass, arrest_state=initial_arrest_state(arrest),
 )
 # ── run from a given oviposition date, reusing the same solved microclimate ──
 # (the expensive part -- the SILO/MicroclimateMapper solve above -- happens
@@ -237,7 +251,6 @@ function run_from_oviposition(oviposition_date; save_trajectory=false)
     simulate_egg(egg_model, pars, initial_state, soil_hydraulics, forcing, tspan; save_trajectory)
 end
 
-oviposition_dates = [Date(2020, m, 1) for m in 1:1:12]
 println("Trying oviposition dates: ", oviposition_dates)
 oviposition_results = map(oviposition_dates) do oviposition_date
     r = run_from_oviposition(oviposition_date; save_trajectory=true)
@@ -286,23 +299,31 @@ end
 
 # trajectories for every oviposition date, overlaid on the same panels.
 using Plots
-p1 = plot(; ylabel="development", title="Egg development by lay date", legend=false)#, legend=:outerright)
+p1 = plot(; ylabel="development", title="Egg development by lay date at $site_name" * ", diapause = $diapause", legend=false)#, legend=:outerright)
 p2 = plot(; ylabel="egg mass", legend=false)
-p3 = plot(; ylabel="water\npotential", legend=false)
-p4 = plot(; ylabel="egg\ntemperature", xlabel="date", legend=false)
-for (oviposition_date, r) in zip(oviposition_dates, oviposition_results)
+#p3 = plot(; ylabel="water\npotential", legend=false)
+p3 = plot(; ylabel="egg\ntemperature", xlabel="date", legend=false)
+p4 = plot(; ylabel="rainfall, mm/day", xlabel="date", legend=false)
+ref_temp_times = collect(lookup(output.reference_temperature, Ti))
+rainfall_times = DateTime.(rainfall.times) .+ Hour(12)
+plot!(p3, ref_temp_times, collect(uconvert.(u"°C", collect(output.reference_temperature[point=1]))); color=:lightgrey)
+plot!(p4, rainfall_times, rainfall.values, color=:black)
+trajectory_colors = palette(:default, length(oviposition_results))
+for (i, (oviposition_date, r)) in
+    enumerate(zip(oviposition_dates, oviposition_results))
     traj = r.trajectory
     # traj.t is simulation time in hours since dates[1] -- convert to actual
     # calendar DateTimes so each lay date's trajectory sits at when it really
     # occurred through the year, rather than all overlaid from a shared zero.
     actual_times = DateTime(first(dates)) .+ Dates.Second.(round.(Int, ustrip.(u"s", traj.t)))
     label = string(oviposition_date)
-    plot!(p1, actual_times, traj.development_fraction, ylims = (0, 1); label)
-    plot!(p2, actual_times, collect(uconvert.(u"mg", traj.egg_mass)), ylims = (0.0u"mg", pars.initial_egg_mass * 2.0); label)
-    plot!(p3, actual_times, collect(uconvert.(u"J/kg", traj.egg_water_potential)); label)
-    plot!(p4, actual_times, collect(uconvert.(u"°C", traj.temperature)); label)
+    trajectory_color = trajectory_colors[i]
+    plot!(p1, actual_times, traj.development_fraction, ylims = (0, 1); label, color=trajectory_color)
+    plot!(p2, actual_times, collect(uconvert.(u"mg", traj.egg_mass)), ylims = (0.0u"mg", pars.initial_egg_mass * 2.5); label, color=trajectory_color)
+    #plot!(p3, actual_times, collect(uconvert.(u"J/kg", traj.egg_water_potential)); label)
+    plot!(p3, actual_times, collect(uconvert.(u"°C", traj.temperature)); label, color=trajectory_color)
 end
-combined_plot = plot(p1, p2, p3, p4; layout=(4, 1), size=(1000, 900), link=:x)
+combined_plot = plot(p1, p2, p3, p4; layout=(4, 1), size=(1000, 900), link=:x, xlims=(DateTime(2010, 1, 1), DateTime(2010, 12, 31, 23, 59, 59)))
 savefig(combined_plot, joinpath(@__DIR__, "point_silo_deterministic.png"))
 display(combined_plot)
 

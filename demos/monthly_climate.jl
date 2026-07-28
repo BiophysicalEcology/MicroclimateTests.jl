@@ -6,12 +6,23 @@ using Rasters, RasterDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
+ENV["RASTERDATASOURCES_PATH"] = "z:"#"c:/Spatial_Data/" #"/data/scratch/projects/punim0593/rasters" #
 
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-points = [geocode("Alice Springs, Australia")]
+points = [geocode("Alice Springs, Australia"),
+          geocode("Sydney, Australia"),
+          geocode("Melbourne, Australia"),
+          geocode("Perth, Australia"),
+          geocode("Adelaide, Australia"),
+          geocode("Brisbane, Australia"),
+          geocode("Darwin, Australia"),
+          geocode("Hobart, Australia"),
+          geocode("Canberra, Australia"),
+          geocode("Cairns, Australia"),
+          geocode("Broome, Australia"),
+          geocode("Katherine, Australia"),]
 
 # CRUCL2 is a 1961–1990 climatology — the year is ignored; any year works.
 dates = Date(2000, 1, 1):Day(1):Date(2000, 12, 31)
@@ -25,13 +36,13 @@ model = MicroMapModel(;
         snow_model            = NoSnow(),
     ),
     dem_source              = CRUCL2,
-    weather_source          = CRUCL2, #WorldClim{Climate},
-    soil_moisture_source    = CPCSoil,
+    weather_source          = ERA5, #WorldClim{Climate},
+    #soil_moisture_source    = CPCSoil,
     surface_albedo_source   = 0.15,
     roughness_height_source = 0.004u"m",
     compute_terrain         = false,
 )
-
+import ZarrDatasets
 problem = MicroVectorProblem(;
     model,
     points,

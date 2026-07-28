@@ -135,11 +135,12 @@ available_environments = AvailableEnvironments(
 )
 
 # ── Step 2: Organism ──────────────────────────────────────────────────────
-shape_pars = DesertIguana(70.0u"g", 1000.0u"kg/m^3")
+shape_pars = DesertIguana(0.07u"kg", 1000.0u"kg/m^3")
 body       = Body(shape_pars, Naked())
 
 organism_traits = example_ectotherm_organism_traits(
     activity_period         = Diurnal(),
+    
     target_temperature      = u"K"(38.5u"°C"),
     active_temperature_min  = u"K"(38.0u"°C"),
     active_temperature_max  = u"K"(43.0u"°C"),
@@ -147,15 +148,18 @@ organism_traits = example_ectotherm_organism_traits(
     emerge_temperature_min  = u"K"(15.0u"°C"),
     escape_temperature_min = u"K"(3.0u"°C"),
     escape_temperature_max = u"K"(44.0u"°C"),
+    
     can_climb               = false,
     can_retreat_underground = true,
     can_seek_shade          = true,
     can_solar_orient        = true,
     can_press_to_ground     = true,
     can_change_absorptivity = true,
+    
     burrow_shade_mode       = AdaptiveBurrowShade(), # MinShadeOnly()
     depths                  = depths,
     heights                 = heights,
+    
     depth_foraging          = depths[1],      # surface
     height_foraging         = heights[1],     # ground level
     depth_min               = burrow_depth,   # pins the retreat search to the transient driver's fixed burrow depth
@@ -164,11 +168,14 @@ organism_traits = example_ectotherm_organism_traits(
     height_max              = climb_height,
     shade_min               = minimum_shade,
     shade_max               = maximum_shade,
+    
     absorptivity_min        = 0.6,
     absorptivity_max        = 0.8,
     absorptivity_step       = 0.01,
+    
     can_pant                = false,
     pant_max                = 1.0,
+    
     heat_exchange = example_ectotherm_heat_exchange_traits(;
         shape_pars,
         conduction_pars_external = example_ectotherm_conduction_pars_external(
@@ -381,7 +388,7 @@ display(plot(p_shade, p_pos; layout = (2, 1), size = (900, 600), left_margin = 6
 # assumes Tb reaches operative temperature instantly each hourly step.
 # =============================================================================
 
-# `simulate_onelump`/`simulate_diurnal_behavior` take `organism` directly, sourcing
+# `simulate_onelump`/`simulate_transient_behavior` take `organism` directly, sourcing
 # physics from its traits — same organism `thermoregulate()` uses above.
 
 # One day's columns → a continuous-time forcing at the given height node (default 1, ground
@@ -452,7 +459,7 @@ transient_thermo = Vector{Any}(undef, ndays)   # thermoregulating (shuttles sun 
         times, core_temperature_init, organism, env_pars, sun_forcing;
         posture = Intermediate(),
     )
-    transient_thermo[m] = simulate_diurnal_behavior(
+    transient_thermo[m] = simulate_transient_behavior(
         times, core_temperature_init, organism, env_pars, sun_forcing, shade_forcing, limits;
         climb_forcing, underground_forcing = underground_result, metabolic_multipliers,
         cool_resume_margin = 2.0u"K", cool_resume_offset = 1.0u"K",
@@ -461,7 +468,7 @@ transient_thermo = Vector{Any}(undef, ndays)   # thermoregulating (shuttles sun 
     t_target_h = ustrip(u"hr", times[end])
     n_points = length(transient_thermo[m].t)
     if t_end_h < t_target_h - 0.1
-        @warn "month $m ($(months[mod1(m,12)])): simulate_diurnal_behavior stopped at $(round(t_end_h; digits=2)) h (of $t_target_h h) after $n_points points — likely hit max_bouts"
+        @warn "month $m ($(months[mod1(m,12)])): simulate_transient_behavior stopped at $(round(t_end_h; digits=2)) h (of $t_target_h h) after $n_points points — likely hit max_bouts"
     end
     n_climb  = count(p -> p isa ClimbPhase,  transient_thermo[m].phase)
     n_burrow = count(p -> p isa BurrowPhase, transient_thermo[m].phase)
@@ -534,7 +541,7 @@ end
 
 # `simulate_onelump` saves only at `times` (hourly) — evaluate its dense ODE
 # interpolant on a fine grid to see the sub-hourly dynamics it actually
-# resolves. `simulate_diurnal_behavior` has no such restriction; its `.t`
+# resolves. `simulate_transient_behavior` has no such restriction; its `.t`
 # already carries every accepted adaptive solver step.
 fine_hours   = range(0.0, 24.0; length = 288)
 fine_times_s = fine_hours .* 3600.0
@@ -1032,7 +1039,7 @@ display(plot(active_fraction;
 
 # =============================================================================
 # Grid simulation WITH transient (thermal-mass-aware) thermoregulation — the
-# same `simulate_diurnal_behavior` model used at the point level above,
+# same `simulate_transient_behavior` model used at the point level above,
 # applied per pixel across the raster. By far the most expensive step in this
 # file: each pixel runs a full adaptive-step ODE solve (several bouts, each
 # its own `solve()` call) per representative day, vs. one cheap discrete
@@ -1075,7 +1082,7 @@ function solve_transient_grid!(grid_transient_result, grid_low_output, grid_high
                 underground_result  = underground_forcing(high_env, day_range, burrow_depth_node)
                 core_temperature_init = high_env.soil_temperature[day_range[1], burrow_depth_node]
 
-                sol = simulate_diurnal_behavior(
+                sol = simulate_transient_behavior(
                     times, core_temperature_init, organism, env_pars, sun_forcing, shade_forcing, limits;
                     climb_forcing, underground_forcing = underground_result, metabolic_multipliers,
                 )
