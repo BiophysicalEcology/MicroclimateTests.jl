@@ -15,8 +15,10 @@ egg_temperature(::SoilTemperatureEquals, egg_model, state, pars, environment) =
 # (driving both evaporation and liquid uptake) scales with it as the egg
 # swells or shrinks.
 function egg_organism(egg_model::EggModel, state::EggState, pars::EggParameters)
+    # can dip below minimum_egg_mass mid-step (severe desiccation) -- same
+    # floor as hydric_rate's, avoids a negative volume/characteristic_dim.
     geometry = Ellipsoid(
-        state.egg_mass, egg_model.geometry.density,
+        max(state.egg_mass, pars.minimum_egg_mass), egg_model.geometry.density,
         egg_model.geometry.axis_ratio_b, egg_model.geometry.axis_ratio_c,
     )
     body = Body(geometry, Naked())
