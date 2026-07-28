@@ -141,7 +141,7 @@ body       = Body(shape_pars, Naked())
 organism_traits = example_ectotherm_organism_traits(
     activity_period         = Diurnal(),
     
-    target_temperature      = u"K"(38.5u"°C"),
+    target_temperature      = u"K"(39.0u"°C"),
     active_temperature_min  = u"K"(38.0u"°C"),
     active_temperature_max  = u"K"(43.0u"°C"),
     basking_temperature_min = u"K"(37.8u"°C"),
