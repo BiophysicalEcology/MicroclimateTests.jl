@@ -439,7 +439,7 @@ transient_max = maximum(maximum(ustrip.(u"°C", r.core_temperature)) for r in tr
 println("\n── Transient active/resting summary ──")
 println("  Mean fraction of time active: $(round(100 * mean(active_fractions); digits=1))%")
 println("  Core temperature range (transient): $(round(transient_min; digits=1)) to $(round(transient_max; digits=1)) °C")
-println("  Core temperature range (steady-state): $(round(minimum(T_core_C); digits=1)) to $(round(maximum(T_core_C); digits=1)) °C")
+println("  Core temperature range (steady-state): $(round(typeof(T_core_C[1]), minimum(T_core_C); digits=1)) to $(round(typeof(T_core_C[1]), maximum(T_core_C); digits=1)) °C")
 
 # ── Fig. 5 – Core temperature by month: steady-state vs transient overlay ──
 panels_transient = map(1:ndays) do m
