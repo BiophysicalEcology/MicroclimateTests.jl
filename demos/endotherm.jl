@@ -205,12 +205,12 @@ let skin_temperature = skin_temperature, insulation_temperature = insulation_tem
 end
 
 # ── Extract outputs ───────────────────────────────────────────────────────
-T_air_C      = ustrip.(u"°C", T_air_series[1:nsteps])
-T_core_C     = [ustrip(u"°C",   endo_results[i].thermoregulation.core_temperature) for i in 1:nsteps]
-metabolic_heat_flow_W = [ustrip(u"W", endo_results[i].energy_flows.metabolic_heat_flow) for i in 1:nsteps]
-m_evap_gh    = [ustrip(u"g/hr", endo_results[i].mass_flows.m_evap)                 for i in 1:nsteps]
-m_resp_gh    = [ustrip(u"g/hr", endo_results[i].mass_flows.respiration_mass_flow)  for i in 1:nsteps]
-m_sweat_gh   = [ustrip(u"g/hr", endo_results[i].mass_flows.m_sweat)                for i in 1:nsteps]
+T_air_C      = uconvert.(u"°C", T_air_series[1:nsteps])
+T_core_C     = [uconvert(u"°C",   endo_results[i].thermoregulation.core_temperature) for i in 1:nsteps]
+metabolic_heat_flow_W = [endo_results[i].energy_flows.metabolic_heat_flow for i in 1:nsteps]
+m_evap_gh    = [endo_results[i].mass_flows.m_evap                 for i in 1:nsteps]
+m_resp_gh    = [endo_results[i].mass_flows.respiration_mass_flow  for i in 1:nsteps]
+m_sweat_gh   = [endo_results[i].mass_flows.m_sweat                for i in 1:nsteps]
 axis_ratio_b = [endo_results[i].thermoregulation.axis_ratio_b                      for i in 1:nsteps]
 skin_wetness = [endo_results[i].thermoregulation.skin_wetness                      for i in 1:nsteps]
 pant         = [endo_results[i].thermoregulation.pant                              for i in 1:nsteps]
@@ -227,19 +227,19 @@ month_wetness   = [skin_wetness[r]  for r in month_ranges]
 month_pant      = [pant[r]          for r in month_ranges]
 
 println("\n── Annual metabolic summary ──")
-println("  Mean metabolic_heat_flow: $(round(mean(metabolic_heat_flow_W); digits=2)) W")
-println("  Max  metabolic_heat_flow: $(round(maximum(metabolic_heat_flow_W); digits=2)) W")
-println("  Min  metabolic_heat_flow: $(round(minimum(metabolic_heat_flow_W); digits=2)) W")
+println("  Mean metabolic_heat_flow: $(round(typeof(metabolic_heat_flow_W[1]), mean(metabolic_heat_flow_W); digits=2))")
+println("  Max  metabolic_heat_flow: $(round(typeof(metabolic_heat_flow_W[1]), maximum(metabolic_heat_flow_W); digits=2))")
+println("  Min  metabolic_heat_flow: $(round(typeof(metabolic_heat_flow_W[1]), minimum(metabolic_heat_flow_W); digits=2))")
 println("\n── Annual water loss summary ──")
-println("  Mean total evap: $(round(mean(m_evap_gh); digits=3)) g/hr")
-println("  Mean resp loss:  $(round(mean(m_resp_gh); digits=3)) g/hr")
-println("  Mean cutaneous:  $(round(mean(m_sweat_gh); digits=3)) g/hr")
+println("  Mean total evap: $(round(typeof(m_evap_gh[1]), mean(m_evap_gh); digits=3))")
+println("  Mean resp loss:  $(round(typeof(m_evap_gh[1]), mean(m_resp_gh); digits=3))")
+println("  Mean cutaneous:  $(round(typeof(m_evap_gh[1]), mean(m_sweat_gh); digits=3))")
 
 # ── Fig. 1 – Core temperature by month (4×3 grid) ────────────────────────
 panels_Tc = map(1:ndays) do m
     p = plot(hours, month_Tc[m];
         lw = 2, color = :red, label = "",
-        title = months[mod1(m, 12)], ylabel = "°C", titlefontsize = 9)
+        title = months[mod1(m, 12)], titlefontsize = 9)
     plot!(p, hours, month_Ta[m];
         lw = 1, color = :steelblue, linestyle = :dash, label = "")
     p
@@ -254,7 +254,7 @@ display(plot(panels_Tc...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
 panels_mhf_ss = map(1:ndays) do m
     plot(hours, month_metabolic_heat_flow[m];
         lw = 2, color = :firebrick, label = "",
-        title = months[mod1(m, 12)], ylabel = "W", titlefontsize = 9)
+        title = months[mod1(m, 12)], titlefontsize = 9)
 end
 display(plot(panels_mhf_ss...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900),
     xlabel = "hour", left_margin = 4Plots.mm,
@@ -264,7 +264,7 @@ display(plot(panels_mhf_ss...; layout = (ceil(Int, ndays/3), 3), size = (1200, 9
 panels_evap = map(1:ndays) do m
     p = plot(hours, month_evap[m];
         lw = 2, color = :teal, label = "total",
-        title = months[mod1(m, 12)], ylabel = "g/hr", titlefontsize = 9,
+        title = months[mod1(m, 12)], titlefontsize = 9,
         legend = m == 1 ? :topright : false)
     plot!(p, hours, month_resp[m];  lw = 1, color = :orange, linestyle = :dash, label = "respiratory")
     plot!(p, hours, month_sweat[m]; lw = 1, color = :purple, linestyle = :dot,  label = "cutaneous")
@@ -298,8 +298,8 @@ display(plot(panels_pant...; layout = (ceil(Int, ndays/3), 3), size = (1200, 900
 tc_matrix = zeros(Float64, 24, ndays)
 mhf_matrix = zeros(Float64, 24, ndays)
 for m in 1:ndays
-    tc_matrix[:, m]  = month_Tc[m]
-    mhf_matrix[:, m] = month_metabolic_heat_flow[m]
+    tc_matrix[:, m]  = ustrip.(u"°C", month_Tc[m])
+    mhf_matrix[:, m] = ustrip.(u"W", month_metabolic_heat_flow[m])
 end
 
 p_tc = heatmap(1:ndays, hours, tc_matrix;
@@ -317,7 +317,7 @@ display(plot(p_tc, p_mhf; layout = (2, 1), size = (900, 600), left_margin = 6Plo
 # ── Fig. 3 – Annual heatmap of total water loss ───────────────────────────
 evap_matrix = zeros(Float64, 24, ndays)
 for m in 1:ndays
-    evap_matrix[:, m] = month_evap[m]
+    evap_matrix[:, m] = ustrip.(u"g/hr", month_evap[m])
 end
 
 p_evap = heatmap(1:ndays, hours, evap_matrix;
