@@ -10,7 +10,7 @@ egg_density             = 1000.0u"kg/m^3"
 
 # hydric traits
 base_K_e                = 2.3e-9 * u"kg/m^2/s/(J/kg)"
-hydraulic_conductance   = 2.3e-9 * u"kg/m^2/s/(J/kg)"
+hydraulic_conductance   = hydraulic_conductance
 specific_hydration      = 1.3e-3 * u"m^3/m^3/(J/kg)"
 conduction_fraction     = 0.5
 skin_wetness            = 0.0035

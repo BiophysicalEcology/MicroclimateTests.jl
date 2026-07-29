@@ -33,6 +33,7 @@ mkpath(egg_dir)
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
+bulk_density = 1.6u"Mg/m^3"
 
 n_ensembles = parse(Int, get(ENV, "LOCUST_N_ENSEMBLES", "25"))   # how many of the up-to-99 ACCESS-S2 members to run
 1 <= n_ensembles <= 99 || error("LOCUST_N_ENSEMBLES=$n_ensembles out of bounds 1:99 -- ACCESS-S2 only has 99 members")
@@ -150,7 +151,7 @@ function soil_profile_from_texture(texture::NamedTuple, depths;
         ),
     )
 end
-soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[soil_source], depths)
+soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[soil_source], depths; bulk_density)
 soil_hydraulics = (;
     air_entry_potential    = soil_profile.hydraulics.air_entry_water_potential[nest_node],
     saturated_conductivity = soil_profile.hydraulics.saturated_hydraulic_conductivity[nest_node],
@@ -158,7 +159,7 @@ soil_hydraulics = (;
 )
 environment_pars = example_environment_pars()
 
-historical_dates = oviposition_date:Day(1):issue_date
+historical_dates = Date(2025, 1, 1):Day(1):issue_date
 members = 1:n_ensembles
 n = length(points)
 

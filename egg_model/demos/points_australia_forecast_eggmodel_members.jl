@@ -44,8 +44,8 @@ pars = EggParameters(;
     initial_egg_mass, minimum_egg_mass,
 )
 survival_model = CombinedSurvival(
-    HardTemperatureLimit(; lower_lethal_temperature=u"K"(-5.0u"°C"), upper_lethal_temperature=u"K"(52.0u"°C")),
-    DesiccationLimit(; dry_mass=0.1 * initial_egg_mass, critical_water_ratio=0.6),
+    HardTemperatureLimit(; lower_lethal_temperature, upper_lethal_temperature),
+    DesiccationLimit(; dry_mass, critical_water_ratio),
 )
 egg_model = EggModel(;
     development_model=dm, arrest_model=arrest, hydric_model=SteadyDarcyFlux(),

@@ -29,27 +29,29 @@ mkpath(output_dir)
 
 # ── microclimate: SILO point run, extended with the soil layers the egg model needs ──
 
-site = geocode("Mildura, Vic, Australia", buffer = 0.04)
+site = geocode("Arkaroola, SA, Australia", buffer = 0.00001)
 site_name = split(site.display_name, ",")[1]
 points = [site]
+use_microclimate_cache = false
 
 diapause = true
 
-soil_type = :sandy_loam
-bulk_density = 1.3u"Mg/m^3"
+soil_type = :sandy_loam #
+bulk_density = 1.6u"Mg/m^3"
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
 dates = Date(2025, 1, 1):Day(1):Date(2027, 01, 31)
 oviposition_dates = [Date(2026, 4, 25)]
+dates = Date(2025, 1, 1):Day(1):Date(2027, 01, 31)
 
 # ACCESS-S2 data
 issue_date = Date(2026, 7, 1)   # ACCESS-S2 issue date -- "now"
 forecast_horizon_days = 214
 forecast_dates = issue_date:Day(1):(issue_date + Day(forecast_horizon_days - 1))
 historical_dates = dates[1]:Day(1):issue_date
-members = collect(1:5)   # ACCESS-S2 ensemble members to simulate and plot
+members = collect(50:50)   # ACCESS-S2 ensemble members to simulate and plot
 
 save_trajectory = true
 
@@ -104,8 +106,6 @@ end
 # Stored under a dedicated subdirectory with a `ctpoint_` prefix so these
 # never collide with other demo scripts' outputs or the HPC batch pipeline's
 # own cache files.
-
-use_microclimate_cache = true
 
 microclimate_cache_dir = joinpath(output_dir, "microclimate_cache")
 mkpath(microclimate_cache_dir)
