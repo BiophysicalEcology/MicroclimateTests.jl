@@ -67,6 +67,17 @@ _survival_mass_thresholds(::NoSurvivalLimit) = ()
 _survival_mass_thresholds(::HardTemperatureLimit) = ()
 _survival_mass_thresholds(m::DesiccationLimit) = (ustrip(u"kg", m.dry_mass * (1 + m.critical_water_ratio)),)
 _survival_mass_thresholds(m::CombinedSurvival) = _flatten_tuples(map(_survival_mass_thresholds, m.models))
+_survival_mass_thresholds(::StagedDesiccationLimit) = ()
+
+# StagedDesiccationLimit's threshold depends on development_fraction (u[1]),
+# so it needs a full condition closure, not a bare mass number.
+_survival_dynamic_conditions(::NoSurvivalLimit, egg_model, pars) = ()
+_survival_dynamic_conditions(::HardTemperatureLimit, egg_model, pars) = ()
+_survival_dynamic_conditions(::DesiccationLimit, egg_model, pars) = ()
+_survival_dynamic_conditions(m::StagedDesiccationLimit, egg_model, pars) =
+    ((u, t, integrator) -> u[2] - ustrip(u"kg", _staged_desiccation_threshold(m, u[1])),)
+_survival_dynamic_conditions(m::CombinedSurvival, egg_model, pars) =
+    _flatten_tuples(map(sub -> _survival_dynamic_conditions(sub, egg_model, pars), m.models))
 
 # HardTemperatureLimit bound(s) as (u,t,integrator)->egg_temperature-relative
 # closures, also root-found for the same reason. Always both bounds, even if
@@ -95,6 +106,7 @@ function _temperature_conditions(m::HardTemperatureLimit, egg_model, pars)
 end
 _temperature_conditions(::NoSurvivalLimit, egg_model, pars) = ()
 _temperature_conditions(::DesiccationLimit, egg_model, pars) = ()
+_temperature_conditions(::StagedDesiccationLimit, egg_model, pars) = ()
 _temperature_conditions(m::CombinedSurvival, egg_model, pars) =
     _flatten_tuples(map(sub -> _temperature_conditions(sub, egg_model, pars), m.models))
 
@@ -166,6 +178,7 @@ function _conditions(egg_model, pars)
         # -- the same persistent-root pathology as the mass floor/ceiling.
         (u, t, integrator) -> _hydration_index_u(u, pars) - arrest.desiccation_tolerance,
         survival_conditions...,
+        _survival_dynamic_conditions(egg_model.survival_model, egg_model, pars)...,
         _temperature_conditions(egg_model.survival_model, egg_model, pars)...,
         _hydric_conditions(egg_model.hydric_model)...,
         _hydric_stage_conditions(egg_model.hydric_stage_model)...,

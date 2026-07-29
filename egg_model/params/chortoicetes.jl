@@ -2,9 +2,9 @@
 
 # morphometric traits
 initial_egg_mass        = 3.6u"mg"
-minimum_egg_mass        = 2.6u"mg"
+dry_mass                = 0.5 * initial_egg_mass
+minimum_egg_mass        = dry_mass   # can't lose more than all its water
 maximum_egg_mass        = 2.3 * initial_egg_mass
-dry_mass                = 0.1 * initial_egg_mass
 axis_ratio              = 1.82 / 0.69
 egg_density             = 1000.0u"kg/m^3"
 
@@ -12,8 +12,8 @@ egg_density             = 1000.0u"kg/m^3"
 base_K_e                = 2.3e-9 * u"kg/m^2/s/(J/kg)"
 hydraulic_conductance   = base_K_e
 specific_hydration      = 1.3e-3 * u"m^3/m^3/(J/kg)"
-conduction_fraction     = 0.5
-skin_wetness            = 0.0035
+conduction_fraction     = 0.6
+skin_wetness            = 0.00035
 egg_water_potential     = -709.4682u"J/kg"
 
 # arrest traits
@@ -27,12 +27,18 @@ diapause_hour_threshold = 1240.0u"hr"
 desiccation_tolerance   = 0.6
 critical_water_ratio    = 0.6 # TODO resolve difference with desiccation_tolerance
 
+# StagedDesiccationLimit: death threshold ramps from dry_mass*early_mass_factor
+# (before quiescence_windows[1][1]) to initial_egg_mass*late_mass_factor
+# (after quiescence_windows[1][2]).
+early_mass_factor       = 1.2
+late_mass_factor        = 0.8
+
 conductance_threshold   = 0.25
 wetness_threshold       = 0.45
 dormant_conductance     = 0.0u"kg/m^2/s/(J/kg)"
 active_conductance      = base_K_e * 3
 dormant_wetness         = skin_wetness
-active_wetness          = skin_wetness * 10
+active_wetness          = skin_wetness * 50
 
 # Arrhenius thermal response (TODO check if can/need to add Kelvin)
 T_A                     = 6641.6175

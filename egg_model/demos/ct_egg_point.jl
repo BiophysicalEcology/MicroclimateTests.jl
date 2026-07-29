@@ -28,7 +28,7 @@ output_dir = joinpath(@__DIR__, "output")
 mkpath(output_dir)
 
 plot1 = false
-plot3 = false
+plot3 = true
 
 # ── microclimate: SILO point run, extended with the soil layers the egg model needs ──
 
@@ -242,7 +242,7 @@ soil_hydraulics = (;
 # ── egg model ──
 
 geometry = Ellipsoid(initial_egg_mass, egg_density, axis_ratio, axis_ratio)
-
+Body(geometry, Naked())
 arrest = ProportionWindowArrest(;
     cold_temperature, diapause_window, quiescence_windows,
     cold_hour_threshold, diapause_hour_threshold,
@@ -262,7 +262,11 @@ pars = EggParameters(;
 )
 survival_model = CombinedSurvival(
     HardTemperatureLimit(; lower_lethal_temperature, upper_lethal_temperature),
-    DesiccationLimit(; dry_mass, critical_water_ratio),
+    StagedDesiccationLimit(;
+        dry_mass, early_mass_factor,
+        initial_egg_mass, late_mass_factor,
+        ramp_start=quiescence_windows[1][1], ramp_end=quiescence_windows[1][2],
+    ),
 )
 egg_model = EggModel(;
     development_model=dm, arrest_model=arrest, hydric_model=SteadyDarcyFlux(),
@@ -613,45 +617,45 @@ access = (
 
 # ── Figure 1: SILO versus ACCESS-S2 ─────────────────────────────────────────
 if plot1
-w1 = plot(ylabel="temperature, °C",
-          title="SILO and ACCESS-S2 weather comparison at $site_name")
-w2 = plot(ylabel="rainfall, mm/day")
-w3 = plot(ylabel="radiation, MJ/m²/day")
-w4 = plot(ylabel="vapour pressure", xlabel="date")
+    w1 = plot(ylabel="temperature, °C",
+            title="SILO and ACCESS-S2 weather comparison at $site_name")
+    w2 = plot(ylabel="rainfall, mm/day")
+    w3 = plot(ylabel="radiation, MJ/m²/day")
+    w4 = plot(ylabel="vapour pressure", xlabel="date")
 
-comparisons = (
-    (panel=w1, key=:tmin, hist=:navy,       fcst=:dodgerblue, hlab="SILO minimum", flab="ACCESS-S2 median minimum"),
-    (panel=w1, key=:tmax, hist=:firebrick,  fcst=:orange,     hlab="SILO maximum", flab="ACCESS-S2 median maximum"),
-    (panel=w2, key=:rain, hist=:black,      fcst=:royalblue,  hlab="SILO",         flab="ACCESS-S2 median"),
-    (panel=w3, key=:radn, hist=:saddlebrown,fcst=:darkorange, hlab="SILO",         flab="ACCESS-S2 median"),
-    (panel=w4, key=:vapr, hist=:indigo,     fcst=:orchid,     hlab="SILO",         flab="ACCESS-S2 median"),
-)
+    comparisons = (
+        (panel=w1, key=:tmin, hist=:navy,       fcst=:dodgerblue, hlab="SILO minimum", flab="ACCESS-S2 median minimum"),
+        (panel=w1, key=:tmax, hist=:firebrick,  fcst=:orange,     hlab="SILO maximum", flab="ACCESS-S2 median maximum"),
+        (panel=w2, key=:rain, hist=:black,      fcst=:royalblue,  hlab="SILO",         flab="ACCESS-S2 median"),
+        (panel=w3, key=:radn, hist=:saddlebrown,fcst=:darkorange, hlab="SILO",         flab="ACCESS-S2 median"),
+        (panel=w4, key=:vapr, hist=:indigo,     fcst=:orchid,     hlab="SILO",         flab="ACCESS-S2 median"),
+    )
 
-for c in comparisons
-    add_comparison!(c.panel, silo_times, getfield(silo, c.key), access_times, getfield(access, c.key);
-                     historical_color=c.hist, forecast_color=c.fcst,
-                     historical_label=c.hlab, forecast_label=c.flab)
-end
+    for c in comparisons
+        add_comparison!(c.panel, silo_times, getfield(silo, c.key), access_times, getfield(access, c.key);
+                        historical_color=c.hist, forecast_color=c.fcst,
+                        historical_label=c.hlab, forecast_label=c.flab)
+    end
 
-overlap_start, overlap_end = DateTime(first(access_dates)), DateTime(last(access_dates)) + Day(1)
-comparison_start = max(DateTime(first(silo_dates)), overlap_start - Day(30))
+    overlap_start, overlap_end = DateTime(first(access_dates)), DateTime(last(access_dates)) + Day(1)
+    comparison_start = max(DateTime(first(silo_dates)), overlap_start - Day(30))
 
-for p in (w1, w2, w3, w4)
-    vspan!(p, [overlap_start, overlap_end]; color=:grey, alpha=0.15, label="")
-    vline!(p, [DateTime(issue_date)]; color=:black, linestyle=:dot, label="")
-end
+    for p in (w1, w2, w3, w4)
+        vspan!(p, [overlap_start, overlap_end]; color=:grey, alpha=0.15, label="")
+        vline!(p, [DateTime(issue_date)]; color=:black, linestyle=:dot, label="")
+    end
 
-weather_plot = plot(
-    w1, w2, w3, w4;
-    layout=(4, 1), link=:x, size=(1100, 900),
-    xlims=(comparison_start, overlap_end),
-    left_margin=8Plots.mm, bottom_margin=4Plots.mm,
-)
+    weather_plot = plot(
+        w1, w2, w3, w4;
+        layout=(4, 1), link=:x, size=(1100, 900),
+        xlims=(comparison_start, overlap_end),
+        left_margin=8Plots.mm, bottom_margin=4Plots.mm,
+    )
 
-weather_path = joinpath(@__DIR__, "silo_access_weather_comparison.png")
-savefig(weather_plot, weather_path)
-display(weather_plot)
-println("Saved weather comparison to $weather_path")
+    weather_path = joinpath(@__DIR__, "silo_access_weather_comparison.png")
+    savefig(weather_plot, weather_path)
+    display(weather_plot)
+    println("Saved weather comparison to $weather_path")
 end
 
 # ── Figure 2: egg trajectories and forcing ──────────────────────────────────
@@ -664,41 +668,56 @@ p2 = plot(ylabel="egg mass, mg", legend=false,
 p3 = plot(ylabel="temperature, °C", legend=false)
 p4 = plot(ylabel="rainfall,\nmm/day", xlabel="date", legend=false)
 
+# Kept for Figure 3 (hatch-date histograms), which colours panels by lay
+# date only -- unrelated to the per-trajectory colouring below.
 colors = palette(:default, length(oviposition_dates))
 
 historical_air_temperature = degC(historical_air_values)
 plot!(p3, historical_air_times, historical_air_temperature;
       color=:grey35, linewidth=1.5, label="historical air")
 
-# Historical egg trajectories.
-for (i, (lay_date, result)) in enumerate(zip(oviposition_dates, historical_egg_result))
-    hasproperty(result, :trajectory) || continue
-    ismissing(result.trajectory) && continue
+# Build one entry per *full* trajectory: historical leg + one particular
+# forecast member's continuation (or just the historical leg alone, for lay
+# dates that hatched/died historically or otherwise have no forecast). Each
+# full trajectory gets its own colour, reused for both its historical and
+# forecast segments, so a single lifeline reads as one consistent colour
+# across p1/p2/p3 even though many lifelines share the same historical start.
+trajectory_specs = NamedTuple[]
+for (i, lay_date) in enumerate(oviposition_dates)
+    historical_result = historical_egg_result[i]
+    historical_traj = hasproperty(historical_result, :trajectory) && !ismissing(historical_result.trajectory) ?
+        historical_result.trajectory : nothing
 
-    traj = result.trajectory
-    t = dtimes(first(dates), traj.t)
-    c = colors[i]
-
-    plot!(p1, t, traj.development_fraction; color=c, linewidth=1, label=string(lay_date))
-    plot!(p2, t, mg(traj.egg_mass); color=c, linewidth=1, label=string(lay_date))
-    plot!(p3, t, degC(traj.temperature); color=c, linewidth=1, label=string(lay_date))
+    if haskey(results_by_lay_date, lay_date)
+        for outcome in results_by_lay_date[lay_date].forecast_outcomes
+            (hasproperty(outcome, :trajectory) && !ismissing(outcome.trajectory)) || continue
+            push!(trajectory_specs, (; historical=historical_traj, forecast=outcome.trajectory))
+        end
+    elseif historical_traj !== nothing
+        push!(trajectory_specs, (; historical=historical_traj, forecast=nothing))
+    end
 end
 
-# Forecast egg trajectories (all chosen ensemble members, all lay dates).
-for (i, lay_date) in enumerate(oviposition_dates)
-    haskey(results_by_lay_date, lay_date) || continue
-    c = colors[i]
+n_traj = length(trajectory_specs)
+trajectory_colors = palette(:rainbow, max(n_traj, 1))
 
-    for result in results_by_lay_date[lay_date].forecast_outcomes
-        hasproperty(result, :trajectory) || continue
-        ismissing(result.trajectory) && continue
+for (idx, spec) in enumerate(trajectory_specs)
+    c = trajectory_colors[idx]
 
-        traj = result.trajectory
+    if spec.historical !== nothing
+        traj = spec.historical
+        t = dtimes(first(dates), traj.t)
+        plot!(p1, t, traj.development_fraction; color=c, linewidth=1, alpha=0.6, label="")
+        plot!(p2, t, mg(traj.egg_mass); color=c, linewidth=1, alpha=0.6, label="")
+        plot!(p3, t, degC(traj.temperature); color=c, linewidth=1, alpha=0.6, label="")
+    end
+
+    if spec.forecast !== nothing
+        traj = spec.forecast
         t = dtimes(issue_date, traj.t)
-
-        plot!(p1, t, traj.development_fraction; color=c, linewidth=1, label="")
-        plot!(p2, t, mg(traj.egg_mass); color=c, linewidth=1, label="")
-        plot!(p3, t, degC(traj.temperature); color=c, linewidth=1, label="")
+        plot!(p1, t, traj.development_fraction; color=c, linewidth=1, alpha=0.6, label="")
+        plot!(p2, t, mg(traj.egg_mass); color=c, linewidth=1, alpha=0.6, label="")
+        plot!(p3, t, degC(traj.temperature); color=c, linewidth=1, alpha=0.6, label="")
     end
 end
 
@@ -739,7 +758,7 @@ egg_plot = plot(
     p1, p2, p3, p4;
     layout=(4, 1), size=(1100, 900), link=:x,
     xlims=(plot_start, plot_end),
-    left_margin=8Plots.mm, bottom_margin=4Plots.mm,
+    left_margin=8mm, bottom_margin=4mm,
 )
 
 egg_path = joinpath(@__DIR__, "egg_historical_forecast_trajectories.png")

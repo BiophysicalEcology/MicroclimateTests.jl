@@ -155,6 +155,33 @@ survives(m::DesiccationLimit, state, pars, temperature) =
 cause_of_death(m::DesiccationLimit, state, pars, temperature) =
     survives(m, state, pars, temperature) ? :alive : :desiccation
 
+# desiccation threshold ramps from dry_mass*early_mass_factor (before
+# ramp_start) to initial_egg_mass*late_mass_factor (after ramp_end).
+Base.@kwdef struct StagedDesiccationLimit{DM,IM,F1,F2,R1,R2} <: AbstractSurvivalModel
+    dry_mass::DM
+    early_mass_factor::F1
+    initial_egg_mass::IM
+    late_mass_factor::F2
+    ramp_start::R1
+    ramp_end::R2
+end
+function _staged_desiccation_threshold(m::StagedDesiccationLimit, development_fraction)
+    early = m.dry_mass * m.early_mass_factor
+    late = m.initial_egg_mass * m.late_mass_factor
+    if development_fraction <= m.ramp_start
+        early
+    elseif development_fraction >= m.ramp_end
+        late
+    else
+        frac = (development_fraction - m.ramp_start) / (m.ramp_end - m.ramp_start)
+        early + frac * (late - early)
+    end
+end
+survives(m::StagedDesiccationLimit, state, pars, temperature) =
+    state.egg_mass > _staged_desiccation_threshold(m, state.development_fraction)
+cause_of_death(m::StagedDesiccationLimit, state, pars, temperature) =
+    survives(m, state, pars, temperature) ? :alive : :desiccation
+
 # any number of survival criteria evaluated together -- dies if any one fails.
 struct CombinedSurvival{T<:Tuple} <: AbstractSurvivalModel
     models::T
