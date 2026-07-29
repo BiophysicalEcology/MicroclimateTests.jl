@@ -10,7 +10,7 @@ egg_density             = 1000.0u"kg/m^3"
 
 # hydric traits
 base_K_e                = 2.3e-9 * u"kg/m^2/s/(J/kg)"
-hydraulic_conductance   = hydraulic_conductance
+hydraulic_conductance   = base_K_e
 specific_hydration      = 1.3e-3 * u"m^3/m^3/(J/kg)"
 conduction_fraction     = 0.5
 skin_wetness            = 0.0035
@@ -32,7 +32,7 @@ wetness_threshold       = 0.45
 dormant_conductance     = 0.0u"kg/m^2/s/(J/kg)"
 active_conductance      = base_K_e * 3
 dormant_wetness         = skin_wetness
-active_wetness          = skin_wetness * 100
+active_wetness          = skin_wetness * 10
 
 # Arrhenius thermal response (TODO check if can/need to add Kelvin)
 T_A                     = 6641.6175

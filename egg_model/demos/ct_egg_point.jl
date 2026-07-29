@@ -27,12 +27,15 @@ include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
 output_dir = joinpath(@__DIR__, "output")
 mkpath(output_dir)
 
+plot1 = false
+plot3 = false
+
 # ── microclimate: SILO point run, extended with the soil layers the egg model needs ──
 
-site = geocode("Arkaroola, SA, Australia", buffer = 0.00001)
+site = geocode("Mildura, Vic, Australia", buffer = 0.00001) # Roma, Narromine, Dubbo, Arkaroola, Mildura
 site_name = split(site.display_name, ",")[1]
 points = [site]
-use_microclimate_cache = false
+use_microclimate_cache = true
 
 diapause = true
 
@@ -51,7 +54,7 @@ issue_date = Date(2026, 7, 1)   # ACCESS-S2 issue date -- "now"
 forecast_horizon_days = 214
 forecast_dates = issue_date:Day(1):(issue_date + Day(forecast_horizon_days - 1))
 historical_dates = dates[1]:Day(1):issue_date
-members = collect(50:50)   # ACCESS-S2 ensemble members to simulate and plot
+members = collect(1:99)   # ACCESS-S2 ensemble members to simulate and plot
 
 save_trajectory = true
 
@@ -277,7 +280,7 @@ historical_model = MicroMapModel(;
     ),
     dem_source              = CRUCL2,
     weather_source          = SILO,
-    surface_albedo_source   = 0.15,
+    surface_albedo_source   = 0.25,
     roughness_height_source = 0.004u"m",
     compute_terrain         = false,
     output_layers,
@@ -294,7 +297,7 @@ if use_microclimate_cache && isfile(historical_cache_file)
     now_soil_temperature    = cached.final_soil_temperature
     now_soil_moisture       = cached.final_soil_moisture
 else
-    println("Solving historical (SILO) microclimate: $oviposition_dates to $issue_date...")
+    println("Solving historical (SILO) microclimate: $dates[1] to $issue_date...")
     historical_problem = MicroVectorProblem(;
         model = historical_model, points, dates=historical_dates, soil_profile,
         init = (; soil_moisture = fill(0.2, length(depths))),
@@ -398,7 +401,7 @@ function run_forecast_ensemble(oviposition_date, historical_state, members)
                 ),
                 dem_source              = CRUCL2,
                 weather_source          = AccessS2(issue_date, m),
-                surface_albedo_source   = 0.15,
+                surface_albedo_source   = 0.25,
                 roughness_height_source = 0.004u"m",
                 compute_terrain         = false,
                 output_layers,
@@ -609,7 +612,7 @@ access = (
 )
 
 # ── Figure 1: SILO versus ACCESS-S2 ─────────────────────────────────────────
-
+if plot1
 w1 = plot(ylabel="temperature, °C",
           title="SILO and ACCESS-S2 weather comparison at $site_name")
 w2 = plot(ylabel="rainfall, mm/day")
@@ -649,6 +652,7 @@ weather_path = joinpath(@__DIR__, "silo_access_weather_comparison.png")
 savefig(weather_plot, weather_path)
 display(weather_plot)
 println("Saved weather comparison to $weather_path")
+end
 
 # ── Figure 2: egg trajectories and forcing ──────────────────────────────────
 
@@ -708,12 +712,19 @@ if !isempty(results_by_lay_date)
     end
 end
 
-# Rainfall: SILO before issue date, ACCESS-S2 median from issue date onward.
+# Rainfall: SILO before issue date (bars, as before); every individual
+# ACCESS-S2 member from issue date onward (lines, one distinct colour per
+# member, rather than a single median bar) -- messier, but shows the full
+# spread of ensemble rainfall trajectories instead of collapsing it away.
 historical_rain_indices = findall(silo_dates .< Date(issue_date))
 bar!(p4, silo_times[historical_rain_indices], silo.rain[historical_rain_indices];
      color=:black, linewidth=0, label="SILO")
-bar!(p4, access_times, ensemble_median(access.rain);
-     color=:royalblue, linewidth=0, label="ACCESS-S2 median")
+
+rain_member_colors = palette(:rainbow, length(access.rain))
+for (i, series) in enumerate(access.rain)
+    plot!(p4, access_times, series; color=rain_member_colors[i], linewidth=0.75,
+          alpha=0.6, label="")
+end
 
 for p in (p1, p2, p3, p4)
     vline!(p, [DateTime(issue_date)]; color=:black, linestyle=:dash, linewidth=1.25, label="")
@@ -738,43 +749,68 @@ println("Saved egg plot to $egg_path")
 
 # ── Figure 3: histogram of forecast hatch dates, one panel per lay date ────
 
-lay_dates_with_forecast = [d for d in oviposition_dates if haskey(results_by_lay_date, d)]
+if plot3
+    lay_dates_with_forecast = [d for d in oviposition_dates if haskey(results_by_lay_date, d)]
 
-if isempty(lay_dates_with_forecast)
-    println("No lay dates had a forecast ensemble; skipping hatch-date histogram.")
-else
-    hatch_panels = map(lay_dates_with_forecast) do lay_date
-        forecast = results_by_lay_date[lay_date]
-        c = colors[findfirst(==(lay_date), oviposition_dates)]
-        n_members = length(forecast.forecast_outcomes)
+    if isempty(lay_dates_with_forecast)
+        println("No lay dates had a forecast ensemble; skipping hatch-date histogram.")
+    else
+        hatch_panels = map(lay_dates_with_forecast) do lay_date
+            forecast = results_by_lay_date[lay_date]
+            c = colors[findfirst(==(lay_date), oviposition_dates)]
+            n_members = length(forecast.forecast_outcomes)
 
-        hatch_days = [
-            Dates.value(Date(issue_date) + Day(round(Int, ustrip(u"d", fr.hatch_time))) - issue_date)
-            for fr in forecast.forecast_outcomes if fr.hatched
-        ]
+            hatch_dates_list = [
+                issue_date + Day(round(Int, ustrip(u"d", fr.hatch_time)))
+                for fr in forecast.forecast_outcomes if fr.hatched
+            ]
 
-        p = plot(; title="lay date $lay_date ($(length(hatch_days))/$n_members hatched)",
-                  xlabel="days after issue date ($issue_date)", ylabel="members",
-                  legend=false, titlefontsize=9)
+            p = plot(; title="$site_name, lay date $lay_date ($(length(hatch_dates_list))/$n_members hatched)",
+                    xlabel="hatch date", ylabel="members",
+                    legend=false, titlefontsize=9, top_margin=8mm)
 
-        if isempty(hatch_days)
-            annotate!(p, 0.5, 0.5, text("no members hatched", 9))
-        else
-            histogram!(p, hatch_days; bins=:auto, color=c, linewidth=0)
-            vline!(p, [median(hatch_days)]; color=:black, linestyle=:dash, linewidth=1.5,
-                   label="median")
+            if isempty(hatch_dates_list)
+                annotate!(p, 0.5, 0.5, text("no members hatched", 9))
+            else
+                hatch_ordinals = Dates.value.(hatch_dates_list)
+                lo, hi = extrema(hatch_ordinals)
+                histogram!(p, hatch_ordinals; bins=(lo - 1):1:(hi + 1),
+                        color=c, linewidth=0.25, linecolor=:white)
+
+                q25n, medn, q75n = quantile(hatch_ordinals, (0.25, 0.5, 0.75))
+                q25, med, q75 = round.(Int, (q25n, medn, q75n))
+
+                bar_max = maximum(d -> count(==(d), hatch_ordinals), hatch_ordinals)
+                ylims!(p, 0, bar_max * 1.5)
+                ymax = ylims(p)[2]
+
+                vline!(p, [q25]; color=:black, linestyle=:dot, linewidth=1.25, label="")
+                vline!(p, [med]; color=:black, linestyle=:dash, linewidth=1.5, label="")
+                vline!(p, [q75]; color=:black, linestyle=:dot, linewidth=1.25, label="")
+
+                label_y = ymax * 0.97
+                date_at(v) = Date(Dates.UTD(v))
+                annotate!(p, q25, label_y, text("p25\n$(date_at(q25))", 7, :left))
+                annotate!(p, med, label_y, text("median\n$(date_at(med))", 7, :left))
+                annotate!(p, q75, label_y, text("p75\n$(date_at(q75))", 7, :left))
+
+                tick_step = max(1, round(Int, (hi - lo) / 6))
+                tick_ordinals = collect((lo - 1):tick_step:(hi + 1))
+                xticks!(p, tick_ordinals, string.(date_at.(tick_ordinals)))
+                plot!(p; xrotation=30)
+            end
+            p
         end
-        p
+
+        hatch_plot = plot(hatch_panels...;
+            layout=(length(hatch_panels), 1),
+            size=(800, 320 * length(hatch_panels)),
+            left_margin=6mm, bottom_margin=8mm,
+        )
+
+        hatch_path = joinpath(@__DIR__, "hatch_date_histograms.png")
+        savefig(hatch_plot, hatch_path)
+        display(hatch_plot)
+        println("Saved hatch-date histograms to $hatch_path")
     end
-
-    hatch_plot = plot(hatch_panels...;
-        layout=(length(hatch_panels), 1),
-        size=(800, 300 * length(hatch_panels)),
-        left_margin=6Plots.mm, bottom_margin=4Plots.mm,
-    )
-
-    hatch_path = joinpath(@__DIR__, "hatch_date_histograms.png")
-    savefig(hatch_plot, hatch_path)
-    display(hatch_plot)
-    println("Saved hatch-date histograms to $hatch_path")
 end
