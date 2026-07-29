@@ -239,7 +239,7 @@ function date_heatmap(title, ordinals, lo, hi)
     isempty(filter(!isnan, ordinals)) && return add_basemap!(heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
         title, xlabel="Longitude", ylabel="Latitude"))
     p = heatmap(lon_range, lat_range, to_heatmap_z(ordinals);
-        title, xlabel="Longitude", ylabel="Latitude", color=HATCH_DATE_GRADIENT, clims=(lo, hi), colorbar=false)
+        title, xlabel="Longitude", ylabel="Latitude", color=HATCH_DATE_GRADIENT, clims=(lo, hi), colorbar=false, aspect_ratio = :equal,)
     add_basemap!(p)
 end
 
@@ -301,7 +301,8 @@ function banded_date_heatmap(title, ordinals, band_edges)
     p = heatmap(lon_range, lat_range, to_heatmap_z(codes);
         title, xlabel="Longitude", ylabel="Latitude",
         color=cgrad(HATCH_DATE_PALETTE; categorical=true),
-        clims=(-0.5, N_HATCH_BANDS + 1.5), colorbar=false)
+        clims=(-0.5, N_HATCH_BANDS + 1.5), colorbar=false,
+        aspect_ratio = :equal)
     add_basemap!(p)
 end
 
@@ -311,7 +312,7 @@ end
 function mass_heatmap(title, vals; clims=nothing, colorbar=true)
     kw = clims === nothing ? (;) : (; clims)
     p = heatmap(lon_range, lat_range, to_heatmap_z(vals);
-        title, xlabel="Longitude", ylabel="Latitude", color=cgrad(:viridis), colorbar, kw...)
+        title, xlabel="Longitude", ylabel="Latitude", color=cgrad(:viridis), aspect_ratio = :equal, colorbar, kw...)
     add_basemap!(p)
 end
 function frac_heatmap(title, vals)
@@ -346,7 +347,7 @@ hatch_date_panel = plot(
     date_heatmap("75th percentile hatch date", p75_dates, shared_hatch_date_lo, shared_hatch_date_hi),
     mass_heatmap("CV of hatch date (%)", cv_dates),
     hatch_date_legend;
-    layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
+    layout=(@layout [grid(2, 2); b{0.08h}]), size=(1000, 1150), plot_title,
 )
 hatch_date_path = joinpath(egg_dir, "splice_hatch_dates_$(run_tag).png")
 savefig(hatch_date_panel, hatch_date_path)
@@ -365,7 +366,7 @@ hatch_date_banded_panel = plot(
     banded_date_heatmap("75th percentile hatch date", p75_dates, fixed_band_edges),
     mass_heatmap("CV of hatch date (%)", cv_dates),
     hatch_date_banded_legend;
-    layout=(@layout [grid(2, 2); b{0.12h}]), size=(1400, 1150), plot_title,
+    layout=(@layout [grid(2, 2); b{0.08h}]), size=(1000, 1150), plot_title,
 )
 hatch_date_banded_path = joinpath(egg_dir, "splice_hatch_dates_banded_$(run_tag).png")
 savefig(hatch_date_banded_panel, hatch_date_banded_path)
@@ -380,7 +381,7 @@ mass_panel = plot(
     mass_heatmap("25th percentile egg mass at hatch (mg)", p25_mass; clims=shared_mass_clims, colorbar=false),
     mass_heatmap("75th percentile egg mass at hatch (mg)", p75_mass; clims=shared_mass_clims, colorbar=false),
     mass_heatmap("CV of egg mass at hatch (%)", cv_mass);
-    layout=(2, 2), size=(1400, 1050), plot_title,
+    layout=(2, 2), size=(1000, 1050), plot_title,
 )
 mass_path = joinpath(egg_dir, "splice_mass_$(run_tag).png")
 savefig(mass_panel, mass_path)
@@ -391,7 +392,7 @@ mortality_panel = plot(
     frac_heatmap("Fraction died of heat", frac_heat),
     frac_heatmap("Fraction died of cold", frac_cold),
     frac_heatmap("Fraction died of desiccation", frac_desiccation);
-    layout=(2, 2), size=(1400, 1050), plot_title,
+    layout=(2, 2), size=(1100, 1050), plot_title,
 )
 mortality_path = joinpath(egg_dir, "splice_mortality_$(run_tag).png")
 savefig(mortality_panel, mortality_path)

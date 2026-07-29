@@ -48,24 +48,6 @@ mkpath(output_dir)
 
 ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
-# points = [
-#     geocode("Bendigo, Australia"),
-#     geocode("Mildura, Australia"),
-#     geocode("Hay, NSW, Australia"),
-#     geocode("Ivanhoe, NSW, Australia"),
-#     geocode("Dubbo, NSW, Australia"),
-#     geocode("Bourke, NSW, Australia"),
-#     geocode("St George, Qld, Australia"),
-#     geocode("Nooyeah Downs, Qld, Australia"),
-#     geocode("Quilpie, Qld, Australia"),
-#     geocode("Roma, Qld, Australia"),
-#     geocode("Marree, SA, Australia"),
-#     geocode("Broken Hill, Australia"),
-#     geocode("Hawker, SA, Australia"),
-#     geocode("Yunta, SA, Australia"),
-#     geocode("Birdsville, Qld, Australia"),
-# ]
-
 site = geocode("Bendigo, Australia")
 points = [site]
 
@@ -162,8 +144,6 @@ initial_state = EggState(;
 )
 
 # ── historical leg: SILO, oviposition_date through issue_date ("now") ──
-# Genuinely sub-yearly (Jan-Jun) -- this is exactly what the sub-yearly-run
-# fix (MicroclimateMapper.jl PR #29) unblocked.
 
 issue_date = Date(2026, 7, 1)   # ACCESS-S2 issue date -- "now"
 historical_dates = oviposition_date:Day(1):issue_date

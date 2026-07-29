@@ -21,6 +21,7 @@ include(joinpath(@__DIR__, "..", "src", "hydric.jl"))
 include(joinpath(@__DIR__, "..", "src", "phases.jl"))
 include(joinpath(@__DIR__, "..", "src", "forcing.jl"))
 
+# load parameters
 include(joinpath(@__DIR__, "..", "params", "chortoicetes.jl"))
 
 # all cached/serialized run output goes here, not directly in demos/ -- one
@@ -35,7 +36,7 @@ ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 site = geocode("Mildura, Australia")
 site_name = split(site.display_name, ",")[1]
 points = [site]
-# whole calendar year only, per current SILO/point-query constraints.
+
 dates = Date(2010, 1, 1):Day(1):Date(2011, 12, 31)
 #oviposition_dates = [Date(2010, m, 1) for m in 1:1:12]
 oviposition_dates = [Date(2010, 1, 15), Date(2010, 4, 15)]
