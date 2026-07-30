@@ -344,7 +344,25 @@ function simulate_egg!(cache, initial_state::EggState, soil_hydraulics, forcing,
         )
         t_chunk_start = t
         SciMLBase.reinit!(integrator, u; t0=t, tf=t_end)
-        SciMLBase.solve!(integrator)
+        callback_failed = false
+        try
+            SciMLBase.solve!(integrator)
+        catch e
+            # DiffEqBase's VectorContinuousCallback root-finder can fail to
+            # bisect a root when two of this model's ~20 conditions cross
+            # within the same tiny step, typically right after a reinit! and
+            # before any real forward progress -- same failure mode as the
+            # "chunk made no progress" case below, so recover the same way:
+            # nudge forward and let the next chunk retry.
+            e isa ErrorException && occursin("Callback handling failed", e.msg) || rethrow()
+            callback_failed = true
+        end
+        if callback_failed
+            u = u + dt_grace * egg_rhs(u, p, t)
+            t += dt_grace
+            dt_grace = min(dt_grace * 2, dt_grace_max)
+            continue
+        end
         sol = integrator.sol
         # a chunk failing partway (e.g. dt forced below epsilon) still returns
         # a partial sol.u -- without this check that's silently treated as valid.
