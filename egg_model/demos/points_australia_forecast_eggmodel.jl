@@ -64,7 +64,10 @@ historical_raw = solve_batched(build_historical_model(), historical_label(), poi
     (; soil_moisture=fill(0.2, length(depths))), nest_node)
 
 historical_day_range = 1:size(historical_raw.per_point[1].soil_temperature, 1)
-historical_tspan = (0.0u"hr", length(historical_day_range) * 1.0u"hr")
+# historical_dates starts well before oviposition_date (soil spin-up) --
+# the egg's own clock must start at oviposition_date, not at hour 0.
+start_hr = oviposition_offset(oviposition_date, historical_dates)
+historical_tspan = (start_hr, length(historical_day_range) * 1.0u"hr")
 historical_forcings = [egg_nest_forcing(historical_raw.per_point[i], historical_day_range, 1, environment_pars)
                         for i in 1:n]
 
@@ -248,7 +251,7 @@ function add_basemap!(p)
     p
 end
 
-historical_hatch_date(r) = oviposition_date + Day(round(Int, ustrip(u"d", r.hatch_time)))
+historical_hatch_date(r) = first(historical_dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
 
 median_dates = fill(NaN, length(all_grid_points))
 earliest_dates = fill(NaN, length(all_grid_points))

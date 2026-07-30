@@ -189,7 +189,7 @@ function add_basemap!(p)
     p
 end
 
-historical_hatch_date(r) = oviposition_date + Day(round(Int, ustrip(u"d", r.hatch_time)))
+historical_hatch_date(r) = first(historical_dates) + Day(round(Int, ustrip(u"d", r.hatch_time)))
 
 median_dates = fill(NaN, length(all_grid_points))
 p25_dates = fill(NaN, length(all_grid_points))
