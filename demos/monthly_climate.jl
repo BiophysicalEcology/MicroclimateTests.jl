@@ -6,7 +6,7 @@ using Rasters, RasterDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "z:"#"c:/Spatial_Data/" #"/data/scratch/projects/punim0593/rasters" #
+ENV["RASTERDATASOURCES_PATH"] = "z:\\"#"c:/Spatial_Data/" #"/data/scratch/projects/punim0593/rasters" #
 
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
@@ -36,7 +36,7 @@ model = MicroMapModel(;
         snow_model            = NoSnow(),
     ),
     dem_source              = CRUCL2,
-    weather_source          = ERA5, #WorldClim{Climate},
+    weather_source          = CRUCL2, #WorldClim{Climate},
     #soil_moisture_source    = CPCSoil,
     surface_albedo_source   = 0.15,
     roughness_height_source = 0.004u"m",

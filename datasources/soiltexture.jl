@@ -1,30 +1,47 @@
 using MicroclimateMapper
+using MicroclimateMapper: _reproject_extent
 using Microclimate
 using Microclimate: example_soil_hydraulic_model
-using Rasters, RasterDataSources
+using Rasters, RasterDataSources, Proj
 using Rasters.Extents: Extent
 using Dates, Unitful
+using Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "Z:"
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/" #"Z:\\"
 
 depths = Microclimate.DEFAULT_DEPTHS
 site = geocode("Alice Springs, Australia")
 lon, lat = site.lon, site.lat
-area = Extent(X = (lon - 0.05, lon + 0.05), Y = (lat - 0.05, lat + 0.05))
+extent = Extent(X = (lon - 0.05, lon + 0.05), Y = (lat - 0.05, lat + 0.05))
 
-# rest.isric.org (the point-query REST API) has been paused by ISRIC
-# service-wide as of 2026-07 (no ETA) -- files.isric.org (the VRT-tile raster
-# path used by the `area` form below) is a separate host and unaffected.
-# Falls back to the area-based profile so the rest of this script (and the
-# solve() at the bottom) still runs while the point API is down; this will
-# start exercising the real point-query path again automatically once ISRIC
-# restores it.
-point_result = try
-    build_soil_profile(SoilGrids, (lon, lat); depths)
-catch e
-    @warn "SoilGrids point REST API unavailable -- falling back to the area-based profile: $e"
-    build_soil_profile(SoilGrids, area; depths)
-end
+getraster(SoilGrids, (:clay, :sand, :silt); extent, depth="0-5cm", quantile="mean")           # Vector{String}
+getraster(SLGA, :clay; depth = "0-5cm", component="EV")
+# getraster(SoilGrids, (:clay, :sand); extent, depth="5-15cm", quantile="Q0.05") # NamedTuple of Vectors
+# getraster(SoilGrids, :clay; extent, depth=["0-5cm", "5-15cm"])                # Vector of Vectors
+# getraster(SoilGrids; extent, depth="0-5cm")                                   # all layers as NamedTuple
+
+tiles = getraster(SoilGrids, (:sand); extent, depth="0-5cm")
+clay_soilgrids_full = mosaic(first, Raster.(tiles; lazy=true))
+projected_extent = _reproject_extent(extent, crs(clay_soilgrids_full))
+point_extent = Extent(X = (lon, lon), Y = (lat, lat))
+projected_point = _reproject_extent(point_extent, crs(clay_soilgrids_full))
+clay_soilgrids = read(crop(clay_soilgrids_full; to = projected_extent, touches = true)) ./ 10 # crop and convert to percent
+p1 = plot(clay_soilgrids)
+scatter!(p1, [projected_point.X[1]], [projected_point.Y[1]];
+    markershape = :xcross, markercolor = :red, markersize = 6, label = "site")
+
+path = getraster(SLGA, :sand; depth="0-5cm", component="EV")   # -> String (one whole-Australia COG), not a Vector
+clay_slga_full = Raster(path; lazy=true)                       # lazy — nothing loaded yet
+clay_slga = read(crop(clay_slga_full; to = extent, touches = true))  # materializes only the cropped window
+p2 = plot(clay_slga)
+scatter!(p2, [lon], [lat];
+    markershape = :xcross, markercolor = :red, markersize = 6, label = "site")
+
+plot(p1, p2)
+
+point_result = build_soil_profile(SoilGrids, (lon, lat); depths)
+point_result = build_soil_profile(SLGA, (lon, lat); depths)
+
 sp_soilgrids_point = point_result.soil_profile
 campbell_b = point_result.campbell_b
 air_entry_potential = point_result.air_entry_potential
@@ -32,15 +49,15 @@ saturated_conductivity = point_result.saturated_conductivity
 field_capacity = point_result.field_capacity
 wilting_point = point_result.wilting_point
 
-sp_soilgrids_area = build_soil_profile(SoilGrids, area; depths).soil_profile
-sp_slga = build_soil_profile(SLGA, area; depths).soil_profile
+sp_soilgrids_extent = build_soil_profile(SoilGrids, extent; depths).soil_profile
+sp_slga = build_soil_profile(SLGA, extent; depths).soil_profile
 
 for model in (CosbyUnivariate(), CosbyMultivariate(), Campbell1985())
-    sp = build_soil_profile(SoilGrids, area; depths, pedotransfer_model = model).soil_profile
+    sp = build_soil_profile(SoilGrids, extent; depths, pedotransfer_model = model).soil_profile
     @info "$(nameof(typeof(model))): b=$(round.(sp.hydraulics.campbell_b_parameter; digits = 2))"
 end
 
-for (label, sp) in ((:soilgrids_point, sp_soilgrids_point), (:soilgrids_area, sp_soilgrids_area), (:slga, sp_slga))
+for (label, sp) in ((:soilgrids_point, sp_soilgrids_point), (:soilgrids_extent, sp_soilgrids_extent), (:slga, sp_slga))
     h = sp.hydraulics
     @assert all(2 .<= h.campbell_b_parameter .<= 16) "$label: campbell_b out of range"
     @assert all(0u"J/kg" .< h.air_entry_water_potential .< 20u"J/kg") "$label: air_entry_potential out of range"

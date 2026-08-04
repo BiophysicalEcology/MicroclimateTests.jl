@@ -5,7 +5,7 @@ using Rasters, RasterDataSources, PointDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "Z:"
+ENV["RASTERDATASOURCES_PATH"] = "Z:\\"
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
            20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0] .* u"cm"
