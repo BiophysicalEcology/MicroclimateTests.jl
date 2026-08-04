@@ -5,14 +5,14 @@
 # those are exactly the things you change per run/debug session. Everything
 # here is the stuff that should stay identical across both scripts.
 
-ENV["RASTERDATASOURCES_PATH"] = "Z:"
+ENV["RASTERDATASOURCES_PATH"] = "Z:\\"
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  MODEL ALGORITHM CHOICES — change the model setup here, in one place     ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 infiltration_algorithm_choice  = MatricPotentialAlgorithm()   # swap to MatricFluxPotentialAlgorithm() etc. to compare
-convergence_choice             = FixedSoilTemperatureIterations(10)
+convergence_choice             = FixedIterationConvergence(10)
 rainfall_schedule_choice       = DailyRainfall()
 soil_moisture_strategy_choice  = DynamicSoilMoisture()
 dem_source_choice              = SRTM

@@ -23,7 +23,7 @@ include("utils.jl")
 include("pipeline.jl")
 
 # ── Pick the site to debug here ───────────────────────────────────────────────
-site_num = 306
+site_num = 2003
 
 sim_start = Date(2013, 1, 1)
 sim_end   = Date(2013, 12, 31)
