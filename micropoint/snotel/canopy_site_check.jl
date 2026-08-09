@@ -51,7 +51,7 @@ canopy_model = MultilayerCanopy(;
     # modest, still-plausible low canopy without that numerical fragility.
     canopy_height, plant_area_index = 1.0,
     leaf_temperature_solver = RootFindLeafTemperature(),
-    convergence = SoilTemperatureConvergenceTolerance(; tolerance = 0.01u"K", max_iterations_per_day = 30),
+    convergence = IterationToleranceConvergence(; tolerance = 0.01u"K", max_iterations_per_day = 30),
 )
 
 soil_properties_model = CampbelldeVriesSoilProperties(;

@@ -55,7 +55,7 @@ interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacit
 # relaxation is skipped automatically for Raupach (it runs its own adaptive
 # Aitken acceleration internally; a second fixed relaxation on top would
 # double-damp it -- see _relax_air_profile! in energy_balance.jl).
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
 # :legacy (NoCanopy + shade/wind/horizon approximation) isolates whether a
 # warm bias comes from the canopy model itself vs the soil/forcing side --
 # ozflux_below_canopy_comparison.jl skips micropoint and the canopy-specific
@@ -137,7 +137,7 @@ const SITE_FORCING_VARS = Dict(
 # Guessed, no emprirical data.
 const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
     "CapeTribulation" => 6.0,
-    "Calperum"        => 0.5,
+    "Calperum"        => 0.3,
     "Whroo"           => 0.7,
     "Wallaby"         => 5.0,   # fire in 2009
     "GWW"             => 0.5,   # semi-arid eucalypt woodland, canopy_height=18m per file metadata
@@ -223,7 +223,7 @@ leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_nam
 const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
     "CapeTribulation"   => 0.13,  # dark, wet closed-canopy rainforest litter
-    "Calperum"          => 0.30,  # pale sandy mallee soil, sparse cover
+    "Calperum"          => 0.20,  # pale sandy mallee soil, sparse cover
     "Whroo"             => 0.10,  # box/ironbark woodland, leaf litter + some bare soil
     "Wallaby"           => 0.12,  # dense wet sclerophyll regrowth
     "GWW"               => 0.25,  # semi-arid eucalypt woodland, red sandy soil
@@ -267,9 +267,30 @@ const SITE_ORGANIC_CAP = Dict(
 )
 organic_cap(site_name) = get(SITE_ORGANIC_CAP, site_name, false)
 
-# ── Soil source: real per-site SLGA fetch, or a fixed literature texture ────
-# class (Campbell & Norman 1998, Table 9.1) instead. SLGA's low porosity can
-# destabilize micropoint's solver (see ozflux_below_canopy/README.md).
+# ── Soil source: real per-site SLGA fetch, a depth-flattened version of the
+# same SLGA fetch, or a fixed literature texture class (Campbell & Norman
+# 1998, Table 9.1) instead. Three choices:
+#   :slga         -- real per-depth SLGA profile (default). Full resolution
+#                     for Microclimate.jl; micropoint always gets this
+#                     flattened anyway (single-slab solver -- see
+#                     micropoint/ozflux/write_ozflux_micropoint_inputs.jl),
+#                     so a :slga run is NOT like-for-like between the two
+#                     models -- Microclimate.jl sees real depth variation,
+#                     micropoint sees that same profile's depth-weighted mean.
+#   :slga_uniform -- the same real SLGA fetch, collapsed to one depth-weighted
+#                     mean slab (flatten_soil_profile, utils.jl) BEFORE either
+#                     model runs -- both then see the exact same flat numbers,
+#                     for a genuine like-for-like comparison. Also avoids
+#                     RunModelFull's indefinite hang on a full per-depth SLGA
+#                     profile (bisected to Smax; see
+#                     micropoint/ozflux/README.md) -- not that it matters
+#                     here, since micropoint never saw the layered version.
+#   a CAMPBELL_NORMAN_TEXTURES key -- fixed literature texture, ignores SLGA
+#                     entirely. SLGA's real porosity can be low enough (some
+#                     sites' Smax down around 0.15-0.3 vs the "Clay loam"
+#                     placeholder's 0.46) to destabilize micropoint's solver
+#                     regardless of :slga vs :slga_uniform -- this sidesteps
+#                     that at the root when it's a problem.
 # Per-site override; :slga is the default.
 const CAMPBELL_NORMAN_TEXTURES = (
     sand             = (air_entry=0.7u"J/kg", b=1.7, Ksat=5.8e-3u"kg*s/m^3"),
@@ -297,11 +318,29 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 )
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
-    #"Whroo" => :clay_loam,
+    "CapeTribulation" => :clay_loam,
     #"Calperum" => :sandy_loam,
-    "Wallaby" => :sandy_clay,
+    #"Wallaby" => :sandy_clay,
 )  # e.g. "Whroo" => :sandy_loam
 soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
+
+# ── UTC offset (micropoint/ozflux forcing only -- comparisons/ozflux itself
+# stays in local time throughout). OzFlux records local STANDARD time
+# year-round (no DST jump); minutes, since ACST sits at a half hour (mainland
+# zones: AEST=+600, ACST=+570, AWST=+480). Whroo verified directly against
+# the raw 30-min index around a real DST transition date; the rest come from
+# each file's own time_zone attribute (Wallaby has none -- inferred AEST
+# from its Victorian lat/lon). ───────────────────────────────────────────────
+const SITE_UTC_OFFSET_MINUTES = Dict(
+    "CapeTribulation"   => 600,  # Australia/Brisbane
+    "Calperum"          => 570,  # Australia/Adelaide
+    "Whroo"             => 600,  # Australia/Melbourne
+    "Wallaby"           => 600,  # no time_zone attribute; Victorian site
+    "GWW"               => 480,  # Australia/Perth
+    "Longreach"         => 600,  # Australia/Brisbane
+    "TiTreeEast"        => 570,  # Australia/Darwin
+    "AliceSpringsMulga" => 570,  # Australia/Darwin
+)
 
 # ── Per-site multi-height forcing/validation variables ──────────────────────
 # No shared naming convention across sites for height-resolved sensors (see

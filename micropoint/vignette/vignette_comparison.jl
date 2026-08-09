@@ -131,15 +131,8 @@ canopy_model = MultilayerCanopy(;
         leaf_length = 0.12u"m", leaf_width = 0.05u"m",
         leaf_emissivity = 0.97, leaf_angle_distribution_parameter = 1.6,
     ),
-    # stomatal_model left at default PrescribedStomatalConductance() (day/night
-    # gating only) -- micropoint's Eller-et-al. photosynthesis-coupled model
-    # has no Microclimate.jl equivalent, see README.md.
-    #
-    # RootFindLeafTemperature: exact bounded solve, not a linearized step --
-    # rules out overshoot/linearization artifacts so any remaining leaf-temp
-    # bias points to a genuine conservation bug rather than a convergence one.
-    leaf_temperature_solver = RootFindLeafTemperature(),
-    convergence = SoilTemperatureConvergenceTolerance(; tolerance = 0.01u"K", max_iterations_per_day = 30),
+    convergence_model = PicardCanopyConvergence(;
+    convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200), relaxation=0.7),
 )
 
 environment_daily = DailyTimeseries(;
@@ -168,7 +161,7 @@ const SIGMA_SB = 5.670374419e-8u"W/m^2/K^4"
 cloud_em = params.groundem
 vapour_pressure = [wet_air_properties(ref_temp_K[i], ref_humidity[i], ref_pres_Pa[i]; vapour_pressure_equation = GoffGratch()).vapour_pressure
                     for i in 1:nhours]
-atmospheric_lw = [atmospheric_radiation(CampbellNormanAtmosphericRadiation(), vapour_pressure[i], ref_temp_K[i]) for i in 1:nhours]
+atmospheric_lw = [Microclimate.atmospheric_radiation(CampbellNormanAtmosphericRadiation(), vapour_pressure[i], ref_temp_K[i]) for i in 1:nhours]
 cloud_lw = SIGMA_SB .* cloud_em .* (ref_temp_K .- 2.0u"K") .^ 4
 measured_lw = climdata.lwdown .* 1.0u"W/m^2"
 cloud_cover_derived = clamp.(ustrip.(NoUnits, (measured_lw .- atmospheric_lw) ./ (cloud_lw .- atmospheric_lw)), 0.0, 1.0)

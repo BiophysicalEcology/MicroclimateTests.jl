@@ -1,12 +1,12 @@
-# below_canopy_comparison.jl — compares Microclimate.jl's low-level canopy
+# module_comparison.jl — compares Microclimate.jl's low-level canopy
 # sub-model functions against the real R functions the below-canopy
 # vignette (github.com/ilyamaclean/microclimlearn) uses: twostream,
 # longwavebelow, windprofile_below, SolveEnergyBalance, temp_below/
-# relhum_below. Run run_below_canopy_r.R first to produce outputs/.
+# relhum_below. Run run_micropoint.R first to produce outputs/.
 #
 # Run with:
 #   cd c:/git/BiophysicalEcologyEnv
-#   julia --project=. c:/git/MicroclimateTests.jl/micropoint/below_canopy/below_canopy_comparison.jl
+#   julia --project=. c:/git/MicroclimateTests.jl/micropoint/module_comparison/module_comparison.jl
 
 using Microclimate, Unitful, Statistics, Printf, CSV, DataFrames, Plots
 
@@ -39,8 +39,8 @@ direct1 = (inp1.swdown - inp1.difrad) * 1.0u"W/m^2"
 diffuse1 = inp1.difrad * 1.0u"W/m^2"
 
 sw_model = TwoStreamRadiation(; leaf_reflectance=vegp.lref, leaf_transmittance=vegp.ltra)
-sw_buf = allocate_shortwave(sw_model, canopy_height1, plant_area_index1, n1, vegp.x)
-canopy_shortwave!(sw_buf, sw_model, plant_area_index1;
+sw_buf = Microclimate.allocate_shortwave(sw_model, canopy_height1, plant_area_index1, n1, vegp.x)
+Microclimate.canopy_shortwave!(sw_buf, sw_model, plant_area_index1;
     zenith_angle=zenith_angle1, direct_horizontal_irradiance=direct1, diffuse_horizontal_irradiance=diffuse1,
     ground_reflectance=groundp.gref)
 
@@ -86,29 +86,22 @@ leaf_temperature2 = u"K".(reverse(d2.tleaf) .* u"°C")
 ground_temperature2 = u"K"(15.0u"°C")
 
 lw_model = LayeredLongwaveExchange()
-lw_buf = allocate_longwave(lw_model, plant_area_index2, n2)
+lw_buf = Microclimate.allocate_longwave(lw_model, plant_area_index2, n2)
 site2 = Site(; latitude=0.0u"°", longitude=0.0u"°", elevation=0.0u"m", slope=0.0u"°", aspect=0.0u"°",
     horizon_angles=fill(0.0u"°", 24), sky_view_fraction=1.0, albedo=0.15, roughness_height=0.01u"m",
     atmospheric_pressure=101325.0u"Pa")
 env2 = (; atmospheric_pressure=101325.0u"Pa", reference_humidity=0.7, reference_temperature=288.15u"K",
     cloud_emissivity=1.0, cloud_cover=0.5, shade=0.0, surface_emissivity=0.97, longwave_radiation=300.0u"W/m^2")
-canopy_longwave!(lw_buf, lw_model, 0.97;
+Microclimate.canopy_longwave!(lw_buf, lw_model, 0.97;
     leaf_temperature=leaf_temperature2, ground_temperature=ground_temperature2, ground_emissivity=0.97,
     site=site2, environment_instant=env2)
 
 jl_Rlwdown = reverse(ustrip.(u"W/m^2", lw_buf.boundary_downward_longwave[1:n2]))
 jl_Rlwup   = reverse(ustrip.(u"W/m^2", lw_buf.boundary_upward_longwave[1:n2]))
-# R's RlwLabs is net absorption per unit LEAF area (both faces); absorbed_longwave
-# is gross per unit GROUND area, and the layer emits from both faces into the
-# two-pass cascade (see canopy_longwave!) -- so the leaf's own two-sided
-# emission (2*sigma*T^4) is what nets it down, then the same leaf-area factor
-# converts ground-area to leaf-area.
-layer_transmission2 = lw_buf.layer_transmission
-leaf_area2 = 2.0 .* (1.0 .- layer_transmission2)
-leaf_em_out2 = 2.0 .* 0.97 .* 5.670374419e-8 .* ustrip.(u"K", leaf_temperature2) .^ 4
-jl_RlwLabs = reverse((ustrip.(u"W/m^2", lw_buf.absorbed_longwave) .- leaf_em_out2) ./ leaf_area2)
+# R's RlwLabs = 0.5*vegem*(Rlwdown+Rlwup) (micropoint's longwavemodelCpp), gross not net.
+jl_RlwLabs = 0.5 .* 0.97 .* (jl_Rlwdown .+ jl_Rlwup)
 
-for (label, jl, r) in [("Rlwdown", jl_Rlwdown, d2.Rlwdown), ("Rlwup", jl_Rlwup, d2.Rlwup), ("RlwLabs (net)", jl_RlwLabs, d2.RlwLabs)]
+for (label, jl, r) in [("Rlwdown", jl_Rlwdown, d2.Rlwdown), ("Rlwup", jl_Rlwup, d2.Rlwup), ("RlwLabs", jl_RlwLabs, d2.RlwLabs)]
     println("  " * rpad(label, 14) * fmt(compute_stats(r, jl)))
 end
 
@@ -157,7 +150,7 @@ println("\n" * "="^72); println("4: leaf temperature (R's Rabs/gs/wind fed direc
 d4 = DataFrame(CSV.File(joinpath(outdir, "04_leaftemperature.csv")))
 n4 = nrow(d4)
 vegp4_len, vegp4_wid = 0.15u"m", 0.07u"m"  # createplant_inputs("BDT")
-body4 = leaf_body(vegp4_len, vegp4_wid)
+body4 = leaf_body(vegp4_len, vegp4_wid, 1.6)
 
 air_temperature4 = fill(u"K"(25.0u"°C"), n4)
 relative_humidity4 = fill(0.80, n4)
@@ -171,7 +164,7 @@ for i in 1:n4
     stomatal_conductance_i = LeafEvaporationParameters(;
         abaxial_vapour_conductance=d4.gs[i] * 1.0u"mol/m^2/s", adaxial_vapour_conductance=0.0u"mol/m^2/s",
         cuticular_conductance=0.0u"mol/m^2/s")
-    solved = leaf_temperature(RootFindLeafTemperature(), absorbed_radiation_i, air_temperature4[i],
+    solved = Microclimate.leaf_temperature(RootFindLeafTemperature(), absorbed_radiation_i, air_temperature4[i],
         relative_humidity4[i], wind_speed_i, atmospheric_pressure4, 0.97, stomatal_conductance_i,
         leaf_water_potential4, body4; leaf_area=1.0u"m^2", leaf_temperature_guess=air_temperature4[i])
     jl_tleaf4[i] = ustrip(u"°C", solved)
@@ -199,7 +192,8 @@ n5 = nrow(d5)
 canopy_height5 = 20.0u"m"  # createplant_inputs("BDT")$h
 heights5_below = collect(1:n5) .* (20.0 / n5) .* u"m"
 heights5 = vcat(heights5_below, [22.0u"m"])
-plant_area_index5 = reverse(fill(4.0 / n5, n5))  # uniform PAI, matching total pai=4 -- R's own skewed PAIgeometry shape isn't reproduced here
+d5_paii = DataFrame(CSV.File(joinpath(outdir, "05_paii.csv")))
+plant_area_index5 = reverse(d5_paii.paii)  # R bottom-to-top -> Julia top-to-bottom
 
 boundary_layer_model5 = MoninObukhov()
 model5 = MultilayerCanopy(;
@@ -207,7 +201,9 @@ model5 = MultilayerCanopy(;
     shortwave_model=TwoStreamRadiation(; leaf_reflectance=0.4, leaf_transmittance=0.2),
     leaf_parameters=LeafParameters(; leaf_length=0.15u"m", leaf_width=0.07u"m", leaf_emissivity=0.97, leaf_angle_distribution_parameter=1.6),
     leaf_temperature_solver=RootFindLeafTemperature(),
-    convergence=SoilTemperatureConvergenceTolerance(; tolerance=0.01u"K", max_iterations_per_day=30),
+    air_profile_model=RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)),  # R's temp_below/relhum_below are Raupach LNF, not K-theory
+    convergence_model=PicardCanopyConvergence(;
+        convergence=IterationToleranceConvergence(; tolerance=0.01u"K", max_iterations_per_day=30)),
 )
 buffers5 = Microclimate.allocate_canopy(model5, heights5, boundary_layer_model5)
 
@@ -226,8 +222,8 @@ inputs5 = Microclimate.CanopyEnergyBalanceInputs(model5;
     ground_reflectance=0.15, ground_temperature=u"K"(22.0u"°C"), ground_emissivity=0.97,
     ground_relative_humidity=0.87, canopy_source_temperature=u"K"(25.684u"°C"),
 )
-result5 = canopy_energy_balance!(buffers5, model5, boundary_layer_model5, inputs5)
-println("Julia Picard iterations: ", result5.iterations, "  (R Aitken iterations: see run_below_canopy_r.R output)")
+result5 = Microclimate.canopy_energy_balance!(buffers5, model5, boundary_layer_model5, inputs5)
+println("Julia Picard iterations: ", result5.iterations, "  (R Aitken iterations: see run_micropoint.R output)")
 
 jl_tleaf5 = reverse(ustrip.(u"°C", buffers5.leaf.leaf_temperature))
 jl_tair5 = reverse(ustrip.(u"°C", buffers5.air_profile.air_temperature))

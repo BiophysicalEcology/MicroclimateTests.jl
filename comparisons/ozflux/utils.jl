@@ -128,6 +128,54 @@ function soil_profile_from_texture(texture::NamedTuple, depths;
     )
 end
 
+# Layer thickness per node (m), from midpoint boundaries between neighbouring
+# depths, clipped to [0, totaldepth_m] at the ends -- used to depth-weight an
+# uneven depths grid (SIM_DEPTHS_M packs many nodes near the surface) rather
+# than let shallow nodes dominate an unweighted per-node mean.
+function _depth_weights(depths_m, totaldepth_m)
+    n = length(depths_m)
+    edges = n == 1 ? [0.0, totaldepth_m] :
+        [0.0; [(depths_m[i] + depths_m[i + 1]) / 2 for i in 1:(n - 1)]; totaldepth_m]
+    return diff(edges)
+end
+
+_wmean(vals::AbstractVector{<:Quantity}, weights) =
+    (sum(weights .* ustrip.(unit(first(vals)), vals)) / sum(weights)) * unit(first(vals))
+_wmean(vals::AbstractVector{<:Real}, weights) = sum(weights .* vals) / sum(weights)
+_wgeomean(vals::AbstractVector{<:Quantity}, weights) =
+    exp(sum(weights .* log.(ustrip.(unit(first(vals)), vals))) / sum(weights)) * unit(first(vals))
+
+# Depth-weighted mean of `soil_profile` over 0..totaldepth, returned as a new
+# SoilProfile with every field replaced by its own uniform mean but on the
+# SAME depths grid (same array length) -- a drop-in replacement wherever the
+# depth-varying original was used (Microclimate.jl's solver or micropoint's
+# single-slab input alike), for a genuine like-for-like comparison instead of
+# each model implicitly averaging it differently. Saturated_hydraulic_
+# conductivity uses a weighted geometric mean (spans orders of magnitude
+# across a real profile); everything else is weighted-arithmetic.
+# root_density is left depth-varying -- a rooting profile, not a soil
+# property, still meaningful under an otherwise-uniform soil.
+function flatten_soil_profile(soil_profile, depths; totaldepth=2.0u"m")
+    depths_m = ustrip.(u"m", depths)
+    td = ustrip(u"m", totaldepth)
+    nodes = findall(<=(td), depths_m)
+    weights = _depth_weights(depths_m[nodes], td)
+    n = length(depths)
+    fillrep(x) = fill(x, n)
+    return SoilProfile(;
+        bulk_density = fillrep(_wmean(soil_profile.bulk_density[nodes], weights)),
+        mineral_density = fillrep(_wmean(soil_profile.mineral_density[nodes], weights)),
+        mineral_conductivity = fillrep(_wmean(soil_profile.mineral_conductivity[nodes], weights)),
+        mineral_heat_capacity = fillrep(_wmean(soil_profile.mineral_heat_capacity[nodes], weights)),
+        hydraulics = CampbellHydraulicProfile(;
+            air_entry_water_potential = fillrep(_wmean(soil_profile.hydraulics.air_entry_water_potential[nodes], weights)),
+            saturated_hydraulic_conductivity = fillrep(_wgeomean(soil_profile.hydraulics.saturated_hydraulic_conductivity[nodes], weights)),
+            campbell_b_parameter = fillrep(_wmean(soil_profile.hydraulics.campbell_b_parameter[nodes], weights)),
+            root_density = soil_profile.hydraulics.root_density,
+        ),
+    )
+end
+
 # ── OzFlux NetCDF reading ─────────────────────────────────────────────────────
 
 # Scans `data_dir` for `<Site>_<Year>_L3.nc`, returns Dict{String,Vector{Int}}

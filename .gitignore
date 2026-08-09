@@ -16,8 +16,8 @@ benchmarks/**/*.csv
 ClimaLand/outputs/
 micropoint/outputs/
 micropoint/vignette/outputs/
-micropoint/below_canopy/outputs/
-micropoint/ozflux_below_canopy/outputs/
+micropoint/module_comparison/outputs/
+micropoint/ozflux/outputs/
 data/
 .claude/settings.json
 egg_model/demos/output/

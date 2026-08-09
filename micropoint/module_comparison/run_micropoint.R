@@ -98,6 +98,7 @@ write.csv(data.frame(z = z4, Rabs = Rabs4, rHa = rHa4, gs = gs4, rS = rS4, uz = 
 n5 <- 100
 vegp5 <- createplant_inputs("BDT")
 paii5 <- PAIgeometry(PAI = vegp5$pai, skew = 7, spread = 70, n = n5)
+write.csv(data.frame(paii = paii5), file.path(outdir, "05_paii.csv"), row.names = FALSE)
 Ca5 <- Cafromyear(2017)
 
 can5 <- solve_wholecanopy(weather, vegp5, groundp, hr = hr, lat = lat, long = long,
