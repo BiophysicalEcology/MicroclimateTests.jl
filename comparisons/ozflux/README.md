@@ -90,11 +90,13 @@ truly observed sub-daily dynamics.
 `canopy_mode = :legacy` (`prepare_site`/`run_site`/`run_site_gapfilled`) runs
 `NoCanopy()` with a PAI-derived shade fraction (Beer-Lambert,
 `legacy_extinction_coefficient`), a wind-speed knockdown
-(`legacy_wind_multiplier`), and a large horizon angle
+(`legacy_wind_multiplier`), a large horizon angle
 (`legacy_horizon_angle`, so direct beam only reaches the ground near
-solar noon) — approximating a forest site the way it would have been done
-before `MultilayerCanopy` existed. Run alongside `canopy_mode = :full` to see
-what the full canopy model actually buys over that approximation.
+solar noon), and a ground-surface roughness height (`legacy_roughness_height`,
+replacing the 0.004m bare-ground default `:full` uses) — approximating a
+forest site the way it would have been done before `MultilayerCanopy` existed.
+Run alongside `canopy_mode = :full` to see what the full canopy model
+actually buys over that approximation.
 `:legacy` has no below-canopy resolution and no canopy-summed Fh/Fe/Fsu/Flu/Fn
 (`report.jl` skips those comparisons and falls back to the ground-level MOST
 estimate for Fh only); it isn't wired up for the SILO forcing path.

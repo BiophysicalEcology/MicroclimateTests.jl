@@ -17,6 +17,7 @@ ClimaLand/outputs/
 micropoint/outputs/
 micropoint/vignette/outputs/
 micropoint/below_canopy/outputs/
+micropoint/ozflux_below_canopy/outputs/
 data/
 .claude/settings.json
 egg_model/demos/output/

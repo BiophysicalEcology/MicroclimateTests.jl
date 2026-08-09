@@ -32,15 +32,36 @@ soil_area_buffer_deg = 0.05
 # ║  MODEL ALGORITHM CHOICES — change the model setup here, in one place     ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
-soil_hydraulic_model_choice  = Microclimate.example_soil_hydraulic_model()
 soil_properties_model_choice = Microclimate.example_soil_properties_model()
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
-canopy_convergence_choice    = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=100)  # MultilayerCanopy's Picard loop
-canopy_relaxation_choice     = 0.1
+# MultilayerCanopy's hourly leaf/air-temperature solve.
+canopy_convergence_model_choice = PicardCanopyConvergence(;
+    convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200), relaxation=0.7)
+# Per-hour convergence between the canopy solve and the soil-heat ODE.
+# FixedIterationConvergence(1) (default) is a single pass per hour --
+# canopy sees the previous hour's soil temperature, matching the model's
+# prior behavior exactly. Raise this (e.g. FixedIterationConvergence(3) or
+# IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=5))
+# to jointly converge canopy and soil-heat within the hour instead.
+canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200) #FixedIterationConvergence(1)
 rainfall_schedule_choice     = HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
+# KTheoryAirProfile's local gradient-diffusion closure is a known-bad fit
+# below/within canopy (no counter-gradient transport, ignores near-field
+# source proximity) -- Raupach 1989's Lagrangian near/far-field model exists
+# specifically for this regime. canopy_convergence_model_choice's outer
+# relaxation is skipped automatically for Raupach (it runs its own adaptive
+# Aitken acceleration internally; a second fixed relaxation on top would
+# double-damp it -- see _relax_air_profile! in energy_balance.jl).
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
+# :legacy (NoCanopy + shade/wind/horizon approximation) isolates whether a
+# warm bias comes from the canopy model itself vs the soil/forcing side --
+# ozflux_below_canopy_comparison.jl skips micropoint and the canopy-specific
+# sections entirely when this is :legacy (no output.canopy to compare, and
+# micropoint's own run is inherently vegetated).
+canopy_mode_choice = :full  # or :legacy
 
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
 # NoCanopy + a PAI-derived shade fraction + a wind-speed knockdown + a large
@@ -50,52 +71,26 @@ interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacit
 # Per-site, not generic -- canopy openness varies enormously across these
 # sites (Calperum's sparse mallee vs Cape Tribulation's closed rainforest),
 # so a single wind_multiplier/horizon_angle would misrepresent one or the
-# other. Falls back to DEFAULT_LEGACY_PARAMS for any site without an entry.
-const DEFAULT_LEGACY_PARAMS = (extinction_coefficient=0.5, wind_multiplier=0.5, horizon_angle=80.0u"°")
+# other. roughness_height stands in for the legacy model's Site.roughness_height
+# (full mode always uses the bare-ground default of 0.004m instead -- see
+# pipeline.jl -- since MultilayerCanopy's own air-profile model carries the
+# canopy's aerodynamic roughness). Falls back to DEFAULT_LEGACY_PARAMS for any
+# site without an entry.
+const DEFAULT_LEGACY_PARAMS = (extinction_coefficient=0.5, wind_multiplier=0.5, horizon_angle=80.0u"°", roughness_height=0.004u"m")
 const SITE_LEGACY_PARAMS = Dict(
-    "CapeTribulation" => (extinction_coefficient=0.5, wind_multiplier=0.3, horizon_angle=85.0u"°"),  # closed tropical rainforest canopy
-    "Calperum"        => (extinction_coefficient=0.5, wind_multiplier=0.7, horizon_angle=15.0u"°"),  # sparse, open mallee woodland
-    "Whroo"           => (extinction_coefficient=0.5, wind_multiplier=0.5, horizon_angle=65.0u"°"),  # dry sclerophyll woodland, intermediate
-    "Wallaby"         => (extinction_coefficient=0.5, wind_multiplier=0.4, horizon_angle=70.0u"°"),  # regrowth ash forest, denser than woodland
-    "GWW"             => (extinction_coefficient=0.5, wind_multiplier=0.6, horizon_angle=25.0u"°"),  # open eucalypt woodland
-    "Longreach"       => (extinction_coefficient=0.5, wind_multiplier=0.9, horizon_angle=5.0u"°"),   # grassland, effectively no canopy shelter
-    "TiTreeEast"        => (extinction_coefficient=0.5, wind_multiplier=0.8, horizon_angle=10.0u"°"),  # sparse mulga/spinifex woodland
-    "AliceSpringsMulga" => (extinction_coefficient=0.5, wind_multiplier=0.8, horizon_angle=10.0u"°"),
+    "CapeTribulation" => (extinction_coefficient=0.5, wind_multiplier=0.3, horizon_angle=85.0u"°", roughness_height=0.004u"m"),  # closed tropical rainforest canopy
+    "Calperum"        => (extinction_coefficient=0.0, wind_multiplier=0.85, horizon_angle=10.0u"°", roughness_height=0.004u"m"),  # sparse, open mallee woodland
+    "Whroo"           => (extinction_coefficient=0.5, wind_multiplier=0.5, horizon_angle=65.0u"°", roughness_height=0.004u"m"),  # dry sclerophyll woodland, intermediate
+    "Wallaby"         => (extinction_coefficient=0.5, wind_multiplier=0.4, horizon_angle=70.0u"°", roughness_height=0.004u"m"),  # regrowth ash forest, denser than woodland
+    "GWW"             => (extinction_coefficient=0.5, wind_multiplier=0.6, horizon_angle=25.0u"°", roughness_height=0.004u"m"),  # open eucalypt woodland
+    "Longreach"       => (extinction_coefficient=0.0, wind_multiplier=1.0, horizon_angle=0.0u"°", roughness_height=0.004u"m"),   # grassland, effectively no canopy shelter
+    "TiTreeEast"        => (extinction_coefficient=0.5, wind_multiplier=0.7, horizon_angle=10.0u"°", roughness_height=0.1u"m"),  # sparse mulga/spinifex woodland
+    "AliceSpringsMulga" => (extinction_coefficient=0.5, wind_multiplier=0.8, horizon_angle=10.0u"°", roughness_height=0.004u"m"),
 )
 legacy_params(site_name) = get(SITE_LEGACY_PARAMS, site_name, DEFAULT_LEGACY_PARAMS)
 
-# Base simulation depth nodes (m): NicheMapR's classic 10-node scheme (cm)
-# plus an arithmetic midpoint between each pair -- same 19-node default as
-# oznet's NMR_DEP19_CM. pipeline.jl's _build_depths adds each site's own
-# observed Ts/Sws sensor depths on top of this (see _build_heights for the
-# same idea applied to heights), so simulated nodes land exactly on
-# comparison depths instead of only approximately.
-const NMR_DEP_CM = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]
-const SIM_DEPTHS_M = let d = NMR_DEP_CM
-    vcat([d[1]], reduce(vcat, [[(d[i] + d[i+1]) / 2, d[i+1]] for i in 1:(length(d) - 1)])) ./ 100.0
-end
-
-# Canopy height nodes: FIXED absolute spacing (not scaled by canopy_height,
-# unlike SIM_DEPTHS_M's fraction-of-depth-range approach) -- graded like a
-# soil profile up to 2m (fine right at the ground, where the wind/
-# temperature log-law gradient is steepest, coarsening quickly since the
-# profile flattens fast), then uniform coarse steps from 2m to canopy_height.
-# Fixed/absolute rather than fraction-of-canopy-height because the real
-# sensor heights being compared against (1/2/4/8/16m) are themselves fixed
-# absolute values -- a fraction-based grid gives worse near-ground
-# resolution at exactly the tall-canopy sites (Whroo, Wallaby) with the best
-# sensor data. First node is 0.05m, not 0.01m: site.roughness_height=0.02m,
-# and atmospheric_surface_profile!'s bare-ground default requires every
-# evaluation height to exceed that (see _build_heights).
-const CANOPY_NEAR_GROUND_M = [0.025, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.75, 1.00, 1.50, 2.00]
-const CANOPY_COARSE_STEP_M = 1.5
-
-# Reference/user heights for MicroModel.heights -- must bracket every
-# forcing/comparison height actually used. 20m covers Cape Tribulation's
-# 45m tower and Calperum's 20m tower via the model's own reference-height
-# extrapolation; per-site heights arrays are built in pipeline.jl instead
-# when multi-height profile comparison needs specific intermediate heights.
-const DEFAULT_HEIGHTS_M = [0.01, 2.0]
+# Depth/height grid constants (NMR_DEP_CM, SIM_DEPTHS_M, CANOPY_NEAR_GROUND_M,
+# CANOPY_COARSE_STEP_M): see utils.jl.
 
 # ── Reference height for forcing (Ta/RH/Ws) ──────────────────────────────────
 # Microclimate.jl always treats forcing as valid AT last(heights) (see
@@ -141,14 +136,14 @@ const SITE_FORCING_VARS = Dict(
 # ── Per-site canopy leaf area index ──────────────────────────────────────────
 # Guessed, no emprirical data.
 const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
-    "CapeTribulation" => 7.0,
-    "Calperum"        => 0.35,
+    "CapeTribulation" => 6.0,
+    "Calperum"        => 0.5,
     "Whroo"           => 0.7,
-    "Wallaby"         => 6.0,
-    "GWW"             => 1.0,   # semi-arid eucalypt woodland, canopy_height=18m per file metadata
-    "Longreach"       => 1.5,   # grassland, canopy_height=0.5m per file metadata
+    "Wallaby"         => 5.0,   # fire in 2009
+    "GWW"             => 0.5,   # semi-arid eucalypt woodland, canopy_height=18m per file metadata
+    "Longreach"       => 0.5,   # grassland, canopy_height=0.5m per file metadata
     "TiTreeEast"        => 0.5,  # sparse mulga/spinifex woodland, canopy_height=6.5m per file metadata
-    "AliceSpringsMulga" => 0.5,  # same study/template as TiTreeEast -- sparse mulga woodland, canopy_height=6.5m
+    "AliceSpringsMulga" => 1.0,  # same study/template as TiTreeEast -- sparse mulga woodland, canopy_height=6.5m
 )
 
 # ── Per-site vertical PAI density shape (pipeline.jl's PAI_SHAPES/
@@ -165,10 +160,10 @@ const SITE_PAI_SHAPE = Dict(
     "CapeTribulation" => :top_heavy,
     "Calperum"        => :bottom_heavy,
     "Whroo"           => :bottom_heavy,
-    "Wallaby"         => :bottom_heavy,
-    "GWW"             => :bottom_heavy,  # open eucalypt woodland, same reasoning as Whroo/Wallaby
+    "Wallaby"         => :uniform,
+    "GWW"             => :uniform,  
     "Longreach"       => :uniform,       # grassland -- no crown structure
-    "TiTreeEast"        => :bottom_heavy,  # sparse mulga woodland, simple shrub/small-tree structure
+    "TiTreeEast"        => :uniform,  # sparse mulga woodland, simple shrub/small-tree structure
     "AliceSpringsMulga" => :bottom_heavy,
 )
 
@@ -178,15 +173,15 @@ const SITE_LEAF_REFLECTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
     "Calperum"        => 0.25,
     "Whroo"           => 0.15,
-    "Wallaby"         => 0.25,
-    "GWW"             => 0.25,
+    "Wallaby"         => 0.15,
+    "GWW"             => 0.30,
     "Longreach"       => 0.25,
     "TiTreeEast"        => 0.25,
     "AliceSpringsMulga" => 0.20,
 )
 const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
-    "Calperum"        => 0.10,
+    "Calperum"        => 0.15,
     "Whroo"           => 0.25,
     "Wallaby"         => 0.25,
     "GWW"             => 0.10,
@@ -195,21 +190,118 @@ const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
     "AliceSpringsMulga" => 0.10,
 )
 
+# ── Per-site leaf structural/physiological traits (Microclimate.jl's
+# LeafParameters, fed into MultilayerCanopy) -- leaf_length/leaf_width feed
+# HeatExchange.jl's boundary-layer convection, leaf_angle_distribution_parameter
+# is Campbell's ellipsoidal `x` (1.0 spherical, 0.0 vertical, Inf horizontal).
+# No site-specific literature values in hand yet, so every site starts at
+# LeafParameters()'s own defaults -- free/tunable per site from here. Falls
+# back to DEFAULT_LEAF_PARAMETERS for any site without an entry.
+const DEFAULT_LEAF_PARAMETERS = (
+    leaf_length=0.05u"m", leaf_width=0.02u"m", leaf_emissivity=0.97,
+    leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,
+)
+const SITE_LEAF_PARAMETERS = Dict(
+    "CapeTribulation"   => DEFAULT_LEAF_PARAMETERS,
+    "Calperum"          => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
+                            leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,),
+    "Whroo"             => DEFAULT_LEAF_PARAMETERS,
+    "Wallaby"           => DEFAULT_LEAF_PARAMETERS,
+    "GWW"               => DEFAULT_LEAF_PARAMETERS,
+    "Longreach"         => DEFAULT_LEAF_PARAMETERS,
+    "TiTreeEast"        => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
+                            leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,),
+    "AliceSpringsMulga" => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
+                            leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,),
+)
+leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_name, DEFAULT_LEAF_PARAMETERS)...)
+
 # Per-site surface albedo -- ground cover/soil colour varies a lot across
 # these sites (Calperum's pale sandy mallee soil vs Cape Tribulation's dark
 # wet rainforest litter). Falls back to DEFAULT_ALBEDO for any site without
 # an entry.
 const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
-    "CapeTribulation" => 0.13,  # dark, wet closed-canopy rainforest litter
-    "Calperum"        => 0.15,  # pale sandy mallee soil, sparse cover
-    "Whroo"           => 0.10,  # box/ironbark woodland, leaf litter + some bare soil
-    "Wallaby"         => 0.12,  # dense wet sclerophyll regrowth
-    "GWW"             => 0.15,  # semi-arid eucalypt woodland, pale sandy soil
-    "Longreach"       => 0.20,  # dry grassland, pale soil/cured grass
-    "TiTreeEast"        => 0.20,  # central Australian red sand, sparse mulga/spinifex
-    "AliceSpringsMulga" => 0.20,
+    "CapeTribulation"   => 0.13,  # dark, wet closed-canopy rainforest litter
+    "Calperum"          => 0.30,  # pale sandy mallee soil, sparse cover
+    "Whroo"             => 0.10,  # box/ironbark woodland, leaf litter + some bare soil
+    "Wallaby"           => 0.12,  # dense wet sclerophyll regrowth
+    "GWW"               => 0.25,  # semi-arid eucalypt woodland, red sandy soil
+    "Longreach"         => 0.25,  # dry grassland, pale soil/cured grass
+    "TiTreeEast"        => 0.15,  # central Australian red sand, sparse mulga/spinifex
+    "AliceSpringsMulga" => 0.15,
 )
+
+# Per-site critical soil (root) water potential at which stomata close --
+# drought tolerance varies by species/vegetation type across these sites, but
+# no site-specific literature values are in hand yet, so every site starts at
+# the same free/tunable default as example_soil_hydraulic_model's own default
+# (see Microclimate.jl/src/soil_hydraulics/campbell.jl). Falls back to
+# DEFAULT_STOMATAL_CLOSURE_POTENTIAL for any site without an entry.
+const DEFAULT_STOMATAL_CLOSURE_POTENTIAL = -1500.0u"J/kg"
+const SITE_STOMATAL_CLOSURE_POTENTIAL = Dict{String,typeof(DEFAULT_STOMATAL_CLOSURE_POTENTIAL)}(
+    "CapeTribulation"   => -1500.0u"J/kg",
+    "Calperum"          => -1500.0u"J/kg",
+    "Whroo"             => -1500.0u"J/kg",
+    "Wallaby"           => -1500.0u"J/kg",
+    "GWW"               => -1500.0u"J/kg",
+    "Longreach"         => -1500.0u"J/kg",
+    "TiTreeEast"        => -1500.0u"J/kg",
+    "AliceSpringsMulga" => -1500.0u"J/kg",
+)
+stomatal_closure_potential(site_name) = get(SITE_STOMATAL_CLOSURE_POTENTIAL, site_name, DEFAULT_STOMATAL_CLOSURE_POTENTIAL)
+soil_hydraulic_model(site_name) = Microclimate.example_soil_hydraulic_model(;
+    stomatal_closure_potential = stomatal_closure_potential(site_name))
+
+# Organic litter-layer soil override -- not universal (grassland/sparse
+# mallee sites lack a real litter layer), off by default.
+const SITE_ORGANIC_CAP = Dict(
+    "CapeTribulation"   => true,
+    "Calperum"          => false,
+    "Whroo"             => false,
+    "Wallaby"           => true,
+    "GWW"               => false,
+    "Longreach"         => false,
+    "TiTreeEast"        => false,
+    "AliceSpringsMulga" => false,
+)
+organic_cap(site_name) = get(SITE_ORGANIC_CAP, site_name, false)
+
+# ── Soil source: real per-site SLGA fetch, or a fixed literature texture ────
+# class (Campbell & Norman 1998, Table 9.1) instead. SLGA's low porosity can
+# destabilize micropoint's solver (see ozflux_below_canopy/README.md).
+# Per-site override; :slga is the default.
+const CAMPBELL_NORMAN_TEXTURES = (
+    sand             = (air_entry=0.7u"J/kg", b=1.7, Ksat=5.8e-3u"kg*s/m^3"),
+    loamy_sand       = (air_entry=0.9u"J/kg", b=2.1, Ksat=1.7e-3u"kg*s/m^3"),
+    sandy_loam       = (air_entry=1.5u"J/kg", b=3.1, Ksat=7.2e-4u"kg*s/m^3"),
+    loam             = (air_entry=1.1u"J/kg", b=4.5, Ksat=3.7e-4u"kg*s/m^3"),
+    silt_loam        = (air_entry=2.1u"J/kg", b=4.7, Ksat=1.9e-4u"kg*s/m^3"),
+    sandy_clay_loam  = (air_entry=2.8u"J/kg", b=4.0, Ksat=1.2e-3u"kg*s/m^3"),
+    clay_loam        = (air_entry=2.6u"J/kg", b=5.2, Ksat=6.4e-5u"kg*s/m^3"),
+    silty_clay_loam  = (air_entry=3.3u"J/kg", b=6.6, Ksat=4.2e-5u"kg*s/m^3"),
+    sandy_clay       = (air_entry=2.9u"J/kg", b=6.0, Ksat=3.3e-5u"kg*s/m^3"),
+    silty_clay       = (air_entry=3.4u"J/kg", b=7.9, Ksat=2.5e-5u"kg*s/m^3"),
+    clay             = (air_entry=3.7u"J/kg", b=7.6, Ksat=1.7e-5u"kg*s/m^3"),
+)
+
+# micropoint's own createsoilc(soiltype=...) strings, one per texture above --
+# used so the micropoint export can ask createsoilc for a fully
+# self-consistent table (Vq/Vm/Vo/Smin/n included, not just Smax/b/psi_e/Ksat)
+# instead of mixing a placeholder texture's structure with our own overrides.
+const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
+    :sand => "Sand", :loamy_sand => "Loamy sand", :sandy_loam => "Sandy loam",
+    :loam => "Loam", :silt_loam => "Silt loam", :sandy_clay_loam => "Sandy clay loam",
+    :clay_loam => "Clay loam", :silty_clay_loam => "Silty clay loam",
+    :sandy_clay => "Sandy clay", :silty_clay => "Silty clay", :clay => "Clay",
+)
+
+const SITE_SOIL_SOURCE = Dict{String,Symbol}(
+    #"Whroo" => :clay_loam,
+    #"Calperum" => :sandy_loam,
+    "Wallaby" => :sandy_clay,
+)  # e.g. "Whroo" => :sandy_loam
+soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
 
 # ── Per-site multi-height forcing/validation variables ──────────────────────
 # No shared naming convention across sites for height-resolved sensors (see

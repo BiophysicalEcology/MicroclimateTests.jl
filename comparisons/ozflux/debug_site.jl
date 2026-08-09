@@ -8,14 +8,15 @@
 #
 # All model setup and per-site logic lives in pipeline.jl/report.jl (shared
 # with comparison.jl) and config.jl (shared model parameters — change
-# leaf_convection_model_choice, soil_hydraulic_model_choice, etc. there).
+# leaf_convection_model_choice, soil_hydraulic_model, etc. there).
 
 using Microclimate, MicroclimateMapper, Unitful, FluidProperties
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
 using Rasters, ArchGDAL, NCDatasets, RasterDataSources, PointDataSources
 using Rasters.Extents: Extent
 using GeoInterface: Wrappers as GIW
-using Serialization
+using Serialization, Measures
+
 
 include("config.jl")
 include("utils.jl")
@@ -23,8 +24,8 @@ include("pipeline.jl")
 include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
-site_name = "GWW"  # "CapeTribulation", "Calperum", "Whroo", "Wallaby", "GWW", "Longreach", "TiTreeEast", "AliceSpringsMulga"
-years = [2020]
+site_name = "Calperum"  # "CapeTribulation", "Calperum" (:legacy), "Whroo", "Wallaby", "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
+years = [2025]
 max_days = nothing  # set e.g. 30 for a fast iteration loop
 forcing_source = :gapfilled  # :tower, :silo (gridded forcing), or :gapfilled (tower + SILO-filled gaps)
 canopy_mode = :full  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation) -- :legacy only wired up for :tower/:gapfilled, not :silo
@@ -36,7 +37,7 @@ result = forcing_source == :silo ? run_site_silo(site_name, years; max_days) :
 plot_start = nothing
 plot_end   = nothing
 plot_start = DateTime(years[1], 1, 1, 0)
-plot_end   = DateTime(years[1], 12, 31, 23)
+plot_end   = DateTime(years[1], 12, 30, 23)
 plot_forcing = false  # false: skip the Ta/RH/Ws/Fsd/Fld/Precip forcing-sanity plots
 plot_variable = nothing  # nothing plots every variable; or a short key: "Fsu","Flu","Fn","Fh","Fe","Fg","Ts","Sws", or a height-series name like "Ta_HMP_2m" -- stats are still computed/printed for all either way
 
@@ -45,8 +46,6 @@ stats = report_site_results(result, result.output; plot_start, plot_end, display
 #display(stats)
 
 # ── Vertical canopy profiles (obs vs model) for a chosen date/hour range ──────
-# Most meaningful at Whroo/Wallaby (real sub-canopy sensors); set profile_times
-# to any range of hours you want one profile panel per hour for.
-profile_times = DateTime(years[1], 1, 18, 4):Hour(1):DateTime(years[1], 1, 18, 15)
+profile_times = DateTime(years[1], 11, 15, 1):Hour(1):DateTime(years[1], 11, 15, 16)
 plot_canopy_profiles_all(result, result.output, profile_times)
 

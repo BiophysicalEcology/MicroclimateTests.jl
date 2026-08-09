@@ -182,60 +182,8 @@ function fill_gaps(v::AbstractVector{<:Union{T,Missing}}) where T
     return out
 end
 
-# Canopy points: CANOPY_NEAR_GROUND_M (config.jl, fixed absolute, graded) up
-# to 2m, then uniform CANOPY_COARSE_STEP_M steps from there to canopy_height
-# (n_canopy_layers auto-derives from however many heights fall <=
-# canopy_height). canopy_height itself is always included as the top layer.
-# Plus reference_height (the height the forcing Ta/RH/Ws is actually valid
-# at -- NOT always tower_height, see resolve_site) and any above-canopy extra
-# heights, inserted as exact points -- reference_height MUST land exactly on
-# a grid point since Microclimate.jl always sets reference_height=last(heights)
-# internally (see monin_obukhov.jl/simulation.jl), so this has to be the top
-# one. Below-canopy sensor heights (e.g. Whroo/Calperum's multi-height
-# sensors) are deliberately NOT injected as extra points here -- a smooth,
-# monotonic grid shape is safe for wind_attenuation_profile (its shape
-# depends only on layer count/PAI, not exact positions), but bunching a few
-# sensor heights in asymmetrically is not (distorts the bottom-tenth log-law
-# special case right where comparisons are made). report.jl's
-# _profile_series interpolates between this grid's layers instead of
-# requiring an exact match.
-function _build_heights(canopy_height, reference_height, extra_heights_m=Float64[])
-    canopy_m = ustrip(u"m", canopy_height)
-    near_ground = filter(<=(canopy_m), CANOPY_NEAR_GROUND_M)
-    coarse_top = isempty(near_ground) ? 0.0 : near_ground[end]
-    coarse_pts = coarse_top < canopy_m ? collect((coarse_top + CANOPY_COARSE_STEP_M):CANOPY_COARSE_STEP_M:canopy_m) : Float64[]
-    canopy_pts = unique(vcat(near_ground, coarse_pts, canopy_m))
-    above_pts = filter(>(canopy_m), unique(vcat(extra_heights_m, ustrip(u"m", reference_height))))
-    return sort(vcat(canopy_pts, above_pts)) .* u"m"
-end
-
-# Vertical PAI density shapes (unnormalized, per-metre) -- layer_heights is
-# top-to-bottom, matching plant_area_index_from_density's own convention.
-# Only relative shape matters; plant_area_index_profile rescales to target_pai.
-_pai_shape_top_heavy(layer_heights, canopy_height) = @. exp(3.0 * (layer_heights / canopy_height)) / u"m"
-_pai_shape_bottom_heavy(layer_heights, canopy_height) = @. exp(-3.0 * (layer_heights / canopy_height)) / u"m"
-_pai_shape_mid_crown(layer_heights, canopy_height) =
-    @. exp(-0.5 * ((layer_heights - 0.7 * canopy_height) / (0.25 * canopy_height))^2) / u"m"
-_pai_shape_uniform(layer_heights, canopy_height) = fill(1.0 / u"m", length(layer_heights))
-
-const PAI_SHAPES = Dict(
-    :top_heavy => _pai_shape_top_heavy, :bottom_heavy => _pai_shape_bottom_heavy,
-    :mid_crown => _pai_shape_mid_crown, :uniform => _pai_shape_uniform,
-)
-
-# Per-layer PAI vector for MultilayerCanopy's plant_area_index, from a named
-# shape (SITE_PAI_SHAPE) rescaled so the profile sums to target_pai.
-function plant_area_index_profile(shape_kind, heights, canopy_height, target_pai)
-    n_layers = count(h -> h <= canopy_height, heights)
-    (; layer_heights) = Microclimate.canopy_layer_heights(heights, canopy_height, n_layers)
-    density = PAI_SHAPES[shape_kind](layer_heights, canopy_height)
-    raw = plant_area_index_from_density(density, heights, canopy_height)
-    return raw .* (target_pai / sum(raw))
-end
-
-# SIM_DEPTHS_M (19-node default) plus every observed Ts/Sws sensor depth at
-# this site, inserted as exact points -- same idea as _build_heights.
-_build_depths(base_depths_m, extra_depths_m) = sort(unique(vcat(base_depths_m, extra_depths_m))) .* u"m"
+# _build_heights/_build_depths/plant_area_index_profile: see utils.jl
+# (generic grid + PAI construction, not site-specific).
 
 # Depth-m values from _hourly_depth_series's (depth_m, values) pairs, for
 # both Ts and Sws -- the set of depths _build_depths should land nodes on.
@@ -256,13 +204,25 @@ const _SOIL_CACHE = Dict{Tuple{String,Vector{Float64}},Any}()
 function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attrib)
     cache_key = (site_name, ustrip.(u"m", depths))
     haskey(_SOIL_CACHE, cache_key) && return _SOIL_CACHE[cache_key]
+    source = soil_source(site_name)
+    if source !== :slga
+        soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[source], depths)
+        if organic_cap(site_name)
+            soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
+            soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
+        end
+        _SOIL_CACHE[cache_key] = soil_profile
+        return soil_profile
+    end
     b = soil_area_buffer_deg
     lon_dd, lat_dd = ustrip(u"°", longitude), ustrip(u"°", latitude)
     area = Extent(X = (lon_dd - b, lon_dd + b), Y = (lat_dd - b, lat_dd + b))
     soil_result = build_soil_profile(SLGA, area; depths, pedotransfer_model = pedotransfer_model_choice)
     soil_profile = soil_result.soil_profile
-    #soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
-    #soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
+    if organic_cap(site_name)
+        soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
+        soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
+    end
     if haskey(global_attrib, "BulkDensity")
         # Metadata value is a real point measurement (assumed near-surface) vs
         # SLGA's 90 m-grid mean -- rescale the whole profile by their ratio at
@@ -272,11 +232,13 @@ function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attr
         # (texture, not bulk density, dominates those) -- bulk density itself
         # (thermal capacity/conductivity) is the only thing this corrects.
         meta_bd = parse(Float64, string(global_attrib["BulkDensity"])) * u"kg/m^3"
-        slga_bd = soil_profile.bulk_density[5]
-        scale = meta_bd / slga_bd
-        @printf("  BulkDensity: metadata=%.0f kg/m^3  SLGA(surface)=%.0f kg/m^3  (scaling profile by %.2fx)\n",
-            ustrip(u"kg/m^3", meta_bd), ustrip(u"kg/m^3", slga_bd), scale)
-        soil_profile.bulk_density .*= scale
+        if meta_bd > 500.0u"kg/m^3" # at least one site has erroneous value
+            slga_bd = soil_profile.bulk_density[5]
+            scale = meta_bd / slga_bd
+            @printf("  BulkDensity: metadata=%.0f kg/m^3  SLGA(surface)=%.0f kg/m^3  (scaling profile by %.2fx)\n",
+                ustrip(u"kg/m^3", meta_bd), ustrip(u"kg/m^3", slga_bd), scale)
+            soil_profile.bulk_density .*= scale
+        end
     end
     _SOIL_CACHE[cache_key] = soil_profile
     return soil_profile
@@ -393,10 +355,11 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
     )
 
     horizon = canopy_mode == :legacy ? fill(lp.horizon_angle, 24) : fill(0.0u"°", 24)
+    roughness_height = canopy_mode == :legacy ? lp.roughness_height : 0.004u"m"
     site = Site(;
         latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
         horizon_angles = horizon, sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height = 0.02u"m",
+        albedo = site_albedo(site_name), roughness_height,
         atmospheric_pressure = mean(pressure),
     )
 
@@ -411,22 +374,26 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
         NoCanopy()
     else
         pai_shape = get(SITE_PAI_SHAPE, site_name, :uniform)
-        plant_area_index = plant_area_index_profile(pai_shape, heights, canopy_height, leaf_area_index)
+        canopy_heights = heights[heights .<= canopy_height]
+        plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
             leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
-            convergence = canopy_convergence_choice, relaxation = canopy_relaxation_choice)
+            leaf_parameters = leaf_parameters(site_name),
+            stomatal_model = MoistureResponsiveStomatalConductance(),
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice)
     end
 
     config = MicroConfig(;
         convergence = convergence_choice,
         rainfall_schedule = rainfall_schedule_choice,
         soil_moisture_strategy = soil_moisture_strategy_choice,
+        canopy_soil_convergence = canopy_soil_convergence_choice,
     )
     model = MicroModel(;
         hours = 0:1:23, depths, heights,
         soil_properties_model = soil_properties_model_choice,
-        soil_hydraulic_model = soil_hydraulic_model_choice,
+        soil_hydraulic_model = soil_hydraulic_model(site_name),
         canopy_model, config,
     )
 
@@ -527,10 +494,10 @@ function fetch_silo_forcing(site_name, latitude, longitude, sim_start::Date, sim
     if !haskey(_SILO_CACHE, wc_key)
         println("  Fetching SILO forcing ($sim_start to $sim_end, wind reference height $(ref_m) m)...")
         micro_model = MicroModel(; hours = collect(0.0:1:23.0), depths, heights = [0.01, ref_m] .* u"m",
-            soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model_choice,
+            soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
             snow_model = NoSnow())
         mapper_model = MicroMapModel(; micro_model, dem_source = dem_source_choice, weather_source = weather_source_choice,
-            surface_albedo_source = site_albedo(site_name), roughness_height_source = 0.02u"m", compute_terrain = compute_terrain_choice)
+            surface_albedo_source = site_albedo(site_name), roughness_height_source = 0.004u"m", compute_terrain = compute_terrain_choice)
         point = GIW.Point((ustrip(u"°", longitude), ustrip(u"°", latitude)))
         # Placeholder soil_profile/init -- only sizes the fetch, doesn't inform
         # it (weather forcing doesn't depend on soil properties).
@@ -599,7 +566,7 @@ function prepare_site_silo(site_name, years; max_days=nothing)
     site = Site(;
         latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
         horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height = 0.02u"m",
+        albedo = site_albedo(site_name), roughness_height = 0.004u"m",
         atmospheric_pressure = fetched.site.atmospheric_pressure,
     )
     println("  Fetching SLGA soil texture...")
@@ -607,17 +574,21 @@ function prepare_site_silo(site_name, years; max_days=nothing)
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     pai_shape = get(SITE_PAI_SHAPE, site_name, :uniform)
-    plant_area_index = plant_area_index_profile(pai_shape, heights, canopy_height, leaf_area_index)
+    plant_area_index1 = plant_area_index_profile(pai_shape, heights, canopy_height, leaf_area_index)
+    plant_area_index = collect(fill(0.001, length(plant_area_index1)))
     canopy_model = MultilayerCanopy(; canopy_height, plant_area_index,
         shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
         leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
-        convergence = canopy_convergence_choice, relaxation = canopy_relaxation_choice)
+        leaf_parameters = leaf_parameters(site_name),
+        stomatal_model = MoistureResponsiveStomatalConductance(),
+        convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice)
 
     config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = DailyRainfall(),  # SILO rainfall is a daily total, not per-timestep
-        soil_moisture_strategy = soil_moisture_strategy_choice)
+        soil_moisture_strategy = soil_moisture_strategy_choice, canopy_soil_convergence = canopy_soil_convergence_choice)
     model = MicroModel(; hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model_choice,
-        canopy_model, config)
+        soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
+        #canopy_model,
+        config)
 
     inputs = MicroInputs(;
         site, soil_profile,
@@ -687,7 +658,7 @@ function run_site_gapfilled(site_name, years; max_days=nothing, canopy_mode=:ful
     println("  Solving MicroProblem ($(prep.n) hours)...")
     solve_time = @elapsed output = Microclimate.solve(prep.problem)
     println("  Solved in $(round(solve_time, digits=1)) s")
-    return (; prep..., output)
+    return (; prep..., output, solve_time)
 end
 
 function run_site(site_name, years; max_days=nothing, canopy_mode=:full)

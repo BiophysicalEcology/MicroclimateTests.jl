@@ -23,6 +23,111 @@ fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
     @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  (n=%d)", s.r, s.rmse, s.bias, s.n)
 
+# ── Canopy/soil grid + profile construction (generic, not site-specific) ────
+
+# Soil depths (m): NicheMapR's 10-node scheme (cm) plus a midpoint between
+# each pair -- same 19-node default as Microclimate.DEFAULT_DEPTHS.
+const NMR_DEP_CM = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]
+const SIM_DEPTHS_M = let d = NMR_DEP_CM
+    vcat([d[1]], reduce(vcat, [[(d[i] + d[i+1]) / 2, d[i+1]] for i in 1:(length(d) - 1)])) ./ 100.0
+end
+
+# base_depths_m plus extra site-specific points (e.g. observed sensor depths).
+_build_depths(base_depths_m, extra_depths_m) = sort(unique(vcat(base_depths_m, extra_depths_m))) .* u"m"
+
+# Canopy height grid: fixed absolute spacing, graded near the ground (steepest
+# log-law gradient) up to 2m, then uniform coarse steps to canopy_height.
+const CANOPY_NEAR_GROUND_M = [1.00, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.00]#[0.025, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.75, 1.00, 1.50, 2.00]
+const CANOPY_COARSE_STEP_M = 1.5
+const MIN_CANOPY_LAYERS = 10  # wind_attenuation_profile requires at least this many
+const N_ABOVE_CANOPY_POINTS = 6  # graded points from canopy_height up to reference_height
+
+# Pads `pts` to `min_n` points by bisecting the largest gap (anchored at 0).
+function _pad_to_min_count(pts, min_n)
+    pts = sort(unique(pts))
+    while length(pts) < min_n
+        anchored = vcat(0.0, pts)
+        gaps = diff(anchored)
+        i = argmax(gaps)
+        push!(pts, (anchored[i] + anchored[i + 1]) / 2)
+        sort!(pts); unique!(pts)
+    end
+    return pts
+end
+
+# Full height grid: graded canopy points up to canopy_height, then
+# N_ABOVE_CANOPY_POINTS graded up to reference_height (plus any extras and
+# reference_height itself, inserted exactly -- reference_height must land on
+# a grid point since Microclimate.jl treats last(heights) as reference height).
+function _build_heights(canopy_height, reference_height, extra_heights_m=Float64[])
+    canopy_m = ustrip(u"m", canopy_height)
+    reference_m = ustrip(u"m", reference_height)
+    near_ground = filter(<=(canopy_m), CANOPY_NEAR_GROUND_M)
+    coarse_top = isempty(near_ground) ? 0.0 : near_ground[end]
+    coarse_pts = coarse_top < canopy_m ? collect((coarse_top + CANOPY_COARSE_STEP_M):CANOPY_COARSE_STEP_M:canopy_m) : Float64[]
+    canopy_pts = unique(vcat(near_ground, coarse_pts, canopy_m))
+    length(canopy_pts) < MIN_CANOPY_LAYERS && (canopy_pts = _pad_to_min_count(canopy_pts, MIN_CANOPY_LAYERS))
+    graded_above = canopy_m < reference_m ?
+        collect(range(canopy_m, reference_m; length=N_ABOVE_CANOPY_POINTS + 1)[2:end]) : Float64[]
+    above_pts = filter(>(canopy_m), unique(vcat(extra_heights_m, graded_above, reference_m)))
+    return sort(vcat(canopy_pts, above_pts)) .* u"m"
+end
+
+# Vertical PAI density shapes (unnormalized, per-metre); plant_area_index_profile rescales to target_pai.
+_pai_shape_top_heavy(layer_heights, canopy_height) = @. exp(3.0 * (layer_heights / canopy_height)) / u"m"
+_pai_shape_bottom_heavy(layer_heights, canopy_height) = @. exp(-3.0 * (layer_heights / canopy_height)) / u"m"
+_pai_shape_mid_crown(layer_heights, canopy_height) =
+    @. exp(-0.5 * ((layer_heights - 0.7 * canopy_height) / (0.25 * canopy_height))^2) / u"m"
+_pai_shape_uniform(layer_heights, canopy_height) = fill(1.0 / u"m", length(layer_heights))
+const PAI_SHAPES = Dict(
+    :top_heavy => _pai_shape_top_heavy, :bottom_heavy => _pai_shape_bottom_heavy,
+    :mid_crown => _pai_shape_mid_crown, :uniform => _pai_shape_uniform,
+)
+
+# Per-layer PAI vector for MultilayerCanopy's plant_area_index, from a named shape rescaled to sum to target_pai.
+function plant_area_index_profile(shape_kind, heights, canopy_height, target_pai)
+    n_layers = count(h -> h <= canopy_height, heights)
+    (; layer_heights) = Microclimate.canopy_layer_heights(heights, canopy_height, n_layers)
+    density = PAI_SHAPES[shape_kind](layer_heights, canopy_height)
+    raw = plant_area_index_from_density(density, heights, canopy_height)
+    return raw .* (target_pai / sum(raw))
+end
+
+# example_campbell_hydraulic_profile()'s root_density is fixed to DEFAULT_DEPTHS's
+# 19 nodes -- interpolate onto arbitrary `depths` instead of reusing it directly.
+function _root_density_for_depths(depths)
+    ref = Microclimate.example_campbell_hydraulic_profile()
+    ref_depths_m = ustrip.(u"m", Microclimate.DEFAULT_DEPTHS)
+    ref_root = ustrip.(u"m/m^3", ref.root_density)
+    target_m = ustrip.(u"m", depths)
+    n = length(ref_depths_m)
+    interp1(x) = x <= ref_depths_m[1] ? ref_root[1] :
+                 x >= ref_depths_m[n] ? ref_root[n] :
+                 let i = clamp(searchsortedlast(ref_depths_m, x), 1, n - 1)
+                     t = (x - ref_depths_m[i]) / (ref_depths_m[i+1] - ref_depths_m[i])
+                     ref_root[i] + t * (ref_root[i+1] - ref_root[i])
+                 end
+    return interp1.(target_m) .* u"m/m^3"
+end
+
+# air_entry_water_potential stored positive (matches SLGA's sign convention).
+function soil_profile_from_texture(texture::NamedTuple, depths;
+    bulk_density=1.3u"Mg/m^3", mineral_density=2.560u"Mg/m^3",
+    mineral_conductivity=1.25u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
+    root_density=_root_density_for_depths(depths),
+)
+    n = length(depths)
+    SoilProfile(;
+        bulk_density=fill(bulk_density, n), mineral_density=fill(mineral_density, n),
+        mineral_conductivity=fill(mineral_conductivity, n), mineral_heat_capacity=fill(mineral_heat_capacity, n),
+        hydraulics=CampbellHydraulicProfile(;
+            air_entry_water_potential=fill(texture.air_entry, n),
+            saturated_hydraulic_conductivity=fill(texture.Ksat, n),
+            campbell_b_parameter=fill(texture.b, n), root_density,
+        ),
+    )
+end
+
 # ── OzFlux NetCDF reading ─────────────────────────────────────────────────────
 
 # Scans `data_dir` for `<Site>_<Year>_L3.nc`, returns Dict{String,Vector{Int}}
@@ -181,6 +286,16 @@ function read_ozflux_nc(path; height_series=Tuple{Float64,String}[])
         qc = _read_var(ds, v * "_QCFlag")
         qc === nothing || (df[!, v * "_QCFlag"] = qc)
     end
+
+    # minimum wind speed capped at 0.1 m/s (sensor limit)
+    wind_cols = filter(names(df)) do col
+        (col == "Ws" || startswith(col, "Ws_")) &&
+            !endswith(col, "_QCFlag") # reject QCFlag columns
+    end
+
+    for col in wind_cols
+        df[!, col] = map(x -> ismissing(x) ? missing : max(x, 0.1), df[!, col])
+    end 
 
     # Absolute humidity, cased inconsistently across sites (Ah vs AH) --
     # normalized to "Ah" (g/m^3). Used in pipeline.jl as an RH cross-check

@@ -209,7 +209,7 @@ end
 
 # Top-of-canopy leaf temperature vs the local (same-layer) air temperature --
 # direct diagnostic for how far leaves run from air, independent of any tower
-# obs. Useful when tuning canopy_relaxation_choice/canopy_convergence_choice:
+# obs. Useful when tuning canopy_convergence_model_choice:
 # a converged equilibrium that's still far from air temperature is a real
 # physics/parameter issue, not a convergence one. NoCanopy (canopy_mode=
 # :legacy) has no leaf temperature at all -- skipped there.
@@ -339,8 +339,15 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         isempty(ts_panels) && return nothing
         ncols = min(4, length(ts_panels))
         nrows = cld(length(ts_panels), ncols)
-        p_ts = plot(ts_panels...; layout=(nrows, ncols), size=(320 * ncols, 240 * nrows), plot_title="$kind timeseries")
-        p_sc = plot(sc_panels...; layout=(nrows, ncols), size=(320 * ncols, 260 * nrows), plot_title="$kind scatter")
+        # Minimum sizes prevent a single-panel figure becoming only 320 × 240 px.
+        ts_size = (max(900, 420 * ncols), max(500, 300 * nrows),)
+        scatter_size = (max(700, 360 * ncols), max(600, 360 * nrows),)
+        common_kwargs = (; layout=(nrows, ncols), dpi=150, margin=4mm, left_margin=7mm, 
+                            right_margin=4mm, top_margin=8mm, bottom_margin=10mm,  
+                            plot_titlefontsize=14,tickfontsize=8, guidefontsize=10, titlefontsize=10,
+                         )
+        p_ts = plot(ts_panels...; common_kwargs..., size=ts_size, plot_title="$kind timeseries", xrotation=30,)
+        p_sc = plot(sc_panels...; common_kwargs..., size=scatter_size, plot_title="$kind scatter")
         display_plots && (display(p_ts); display(p_sc))
         if save_outputs
             mkpath(site_dir(kind))
@@ -360,17 +367,20 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     for (name, units) in (("Ta","°C"), ("RH","%"), ("Ws","m/s"), ("Fsd","W/m^2"), ("Fld","W/m^2"), ("Precip","mm"))
         make_plots && plot_forcing && (plot_variable === nothing || plot_variable == name) || continue
         p = nothing
+        ps = isnothing(plot_start) ? t_model[1] : plot_start
+        pe = isnothing(plot_end) ? t_model[end] : plot_end
+        m = findall(t -> ps <= t <= pe, t_model)        
         if forcing_used !== nothing && haskey(forcing_used, Symbol(name))
             used = getproperty(forcing_used, Symbol(name))
             filled = getproperty(filled_mask, Symbol(name))
             obs_only = [f ? NaN : v for (v, f) in zip(used, filled)]
             filled_only = [f ? v : NaN for (v, f) in zip(used, filled)]
-            p = plot(t_model, obs_only; label="obs", color=:black, lw=1, title="$name ($site_name)", ylabel=units)
-            plot!(p, t_model, filled_only; label="filled", color=:orange, lw=1)
+            p = plot(t_model[m], obs_only[m]; label="obs", color=:black, lw=1, title="$name ($site_name)", ylabel=units)
+            plot!(p, t_model[m], filled_only[m]; label="filled", color=:orange, lw=1)
         else
             vals = _col(hourly, t_model, name)
             vals === nothing && continue
-            p = plot(t_model, Float64.(coalesce.(vals, NaN)); label=nothing, title="$name ($site_name)", ylabel=units, color=:black, lw=1)
+            p = plot(t_model[m], Float64.(coalesce.(vals[m], NaN)); label=nothing, title="$name ($site_name)", ylabel=units, color=:black, lw=1)
         end
         display_plots && display(p)
         if save_outputs
@@ -400,20 +410,22 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
 
     # ── Fh, Fe, Fg. Sign convention (leaf sensible/latent surface->atmosphere
     # positive, Fg downward positive) confirmed against the tower convention
-    # directly -- no negation needed. canopy_sensible_heat_flux only sums the
-    # leaf layers -- canopy_energy_balance! uses ground_temperature purely for
-    # longwave exchange with the canopy, never computing the bare ground's own
-    # convective loss to the atmosphere. That's computed separately, via the
-    # same free-atmosphere MOST routine :legacy relies on entirely
-    # (profile.convective_heat_flux, atmosphere->surface positive, hence the
-    # sign flip) -- added back in here too, since a tower's Fh footprint
-    # integrates canopy AND exposed ground together, and for a sparse canopy
-    # (low PAI) the ground term dominates, not the leaves. There's no
-    # equivalent ground-level Fe output to add for latent heat (bare-soil
-    # evaporation isn't exposed as a separate flux here). ────────────────────
+    # directly -- no negation needed. :legacy has one bare surface, so
+    # profile.convective_heat_flux (atmosphere->surface positive, hence the
+    # sign flip) genuinely is its Fh. MultilayerCanopy doesn't model an
+    # exposed/gap ground fraction -- the whole ground surface exchanges with
+    # the atmosphere *through* the canopy air column (ground_heat_conductance,
+    # already reflected in canopy_sensible_heat_flux and the soil solve), not
+    # via a separate direct pathway. profile.convective_heat_flux for this
+    # canopy_mode is profile_surface_temperature's top-leaf-temperature MOST
+    # profile (shapes the above-canopy air/wind profile continuously down to
+    # canopy top) -- a second, independent, leaf-driven flux estimate, not a
+    # ground term; subtracting it from canopy_sensible_heat_flux cancels two
+    # correlated leaf-driven quantities instead of adding a real ground
+    # contribution, so it's dropped here. ──────────────────────────────────
     fh = canopy_mode == :legacy ?
         -ustrip.(u"W/m^2", output.profile.convective_heat_flux) :
-        ustrip.(u"W/m^2", output.canopy.canopy_sensible_heat_flux) .- ustrip.(u"W/m^2", output.profile.convective_heat_flux)
+        ustrip.(u"W/m^2", output.canopy.canopy_sensible_heat_flux)
     fe = ustrip.(u"W/m^2", output.canopy.canopy_latent_heat_flux)
     fg = ustrip.(u"W/m^2", output.ground_heat_flux)
     flux_vars = canopy_mode == :legacy ?
