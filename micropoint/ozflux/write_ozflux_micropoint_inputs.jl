@@ -1,10 +1,10 @@
 # write_ozflux_micropoint_inputs.jl — writes climdata.csv/params.csv/
-# canopy_params.csv/canopy_layers.csv from a solved comparisons/ozflux
-# result, for run_micropoint_ozflux_vegetated.R to read.
+# canopy_params.csv/canopy_layers.csv/soil_profile.csv from a solved
+# comparisons/ozflux result, for run_micropoint_ozflux_vegetated.R to read.
 #
 # Requires comparisons/ozflux/{config,utils,pipeline}.jl already included
 # (for site_albedo/SITE_ALBEDO, emissivity, PAI_SHAPES, SITE_PAI_SHAPE,
-# SITE_UTC_OFFSET_MINUTES, flatten_soil_profile).
+# SITE_UTC_OFFSET_MINUTES).
 
 # micropoint needs an evenly-spaced 0..canopy_height layer grid -- this
 # evaluates the same density shape function pipeline.jl uses (PAI_SHAPES/
@@ -57,32 +57,32 @@ function write_ozflux_micropoint_inputs(result, outdir)
     )
     CSV.write(joinpath(outdir, "climdata.csv"), climdata)
 
-    # micropoint takes one flat slab -- flatten_soil_profile (comparisons/
-    # ozflux/utils.jl) depth-weight-averages whatever profile the Julia run
-    # actually used (a no-op if soil_source was already :slga_uniform, a real
-    # collapse if it was the full per-depth :slga -- either way this is the
-    # SAME flattening Microclimate.jl itself applies for :slga_uniform, so a
-    # :slga_uniform run gives both models the exact same numbers). Feeding
-    # micropoint the full per-depth SLGA profile directly (not flattened at
-    # all) previously made RunModelFull hang indefinitely (bisected to Smax;
-    # see README).
-    #
+    # Real per-depth Campbell soil parameters, one row per Julia depth node
+    # up to totaldepth=2m -- R interpolates onto its own layer depths
+    # (geometricCpp). Flat soil_source (:slga_uniform/texture class) just
+    # produces identical rows, so the interpolation is a no-op there.
+    soil_profile = result.problem.inputs.soil_profile
+    depths_m = ustrip.(u"m", result.depths)
+    totaldepth = 2.0
+    nodes = findall(<=(totaldepth), depths_m)
+    smax_profile = 1.0 .- ustrip.(u"Mg/m^3", soil_profile.bulk_density[nodes]) ./ ustrip.(u"Mg/m^3", soil_profile.mineral_density[nodes])
+    b_profile = soil_profile.hydraulics.campbell_b_parameter[nodes]
+    psi_e_profile = abs.(ustrip.(u"J/kg", soil_profile.hydraulics.air_entry_water_potential[nodes])) ./ ustrip(u"m/s^2", Unitful.gn)
+    ksat_profile = ustrip.(soil_profile.hydraulics.saturated_hydraulic_conductivity[nodes])
+    rho_profile = ustrip.(u"kg/m^3", soil_profile.bulk_density[nodes])
+    CSV.write(joinpath(outdir, "soil_profile.csv"), DataFrame(
+        depth_m = depths_m[nodes], smax = smax_profile, b = b_profile,
+        psi_e = psi_e_profile, ksat = ksat_profile, rho_kgm3 = rho_profile,
+    ))
+
     # soil_source==:slga/:slga_uniform: createsoilc(soiltype="Clay loam") is
-    # only a structural placeholder (Vq/Vm/Vo/Smin/n), overridden below with
-    # the real SLGA-derived Smax/b/psi_e/Ksat/rho. soil_source==texture
-    # class: that mix-and-match caused a total NaN cascade (Vq/Vm/Vo from
-    # "Clay loam" paired with e.g. sandy loam's Smax/b/psi_e/Ksat) -- so
-    # instead `soiltype` names the real texture and `soil_override=false`
-    # tells R to trust createsoilc(soiltype=<that texture>)'s own fully
-    # self-consistent table verbatim (still flat/non-layered; organic_cap can
-    # still apply).
+    # only a structural placeholder (Vq/Vm/Vo/Smin/n), overridden in R with
+    # the real SLGA-derived profile above. soil_source==texture class:
+    # `soiltype` names the real texture and `soil_override=false` tells R to
+    # trust createsoilc(soiltype=<that texture>)'s own self-consistent table
+    # verbatim instead (mixing a placeholder's structure with a different
+    # texture's Smax/b/psi_e/Ksat causes a NaN cascade).
     source = soil_source(resolved.site_name)
-    flat = flatten_soil_profile(result.problem.inputs.soil_profile, result.depths)
-    smax = 1.0 - ustrip(u"Mg/m^3", flat.bulk_density[1]) / ustrip(u"Mg/m^3", flat.mineral_density[1])
-    b = flat.hydraulics.campbell_b_parameter[1]
-    psi_e = abs(ustrip(u"J/kg", flat.hydraulics.air_entry_water_potential[1])) / ustrip(u"m/s^2", Unitful.gn)
-    ksat = ustrip(flat.hydraulics.saturated_hydraulic_conductivity[1])
-    rho_kgm3 = ustrip(u"kg/m^3", flat.bulk_density[1])
     is_slga = source === :slga || source === :slga_uniform
     soiltype = is_slga ? "Clay loam" : CAMPBELL_NORMAN_MICROPOINT_NAME[source]
     soil_override = is_slga
@@ -100,7 +100,6 @@ function write_ozflux_micropoint_inputs(result, outdir)
         nlayers = [15], totaldepth = [2.0],
         organic_cap = [organic_cap(resolved.site_name)],
         soiltype = [soiltype], soil_override = [soil_override],
-        smax = [smax], b = [b], psi_e = [psi_e], ksat = [ksat], rho_kgm3 = [rho_kgm3],
     )
     CSV.write(joinpath(outdir, "params.csv"), params)
     canopy_params = DataFrame(
@@ -118,6 +117,6 @@ function write_ozflux_micropoint_inputs(result, outdir)
     z_m, paii = micropoint_canopy_layers(resolved.site_name, canopy_model.canopy_height, pai)
     CSV.write(joinpath(outdir, "canopy_layers.csv"), DataFrame(z_m = z_m, paii = paii))
 
-    println("Wrote climdata.csv ($(nrow(climdata)) rows), params.csv, canopy_params.csv, canopy_layers.csv to $outdir")
+    println("Wrote climdata.csv ($(nrow(climdata)) rows), params.csv, canopy_params.csv, canopy_layers.csv, soil_profile.csv to $outdir")
     return outdir
 end

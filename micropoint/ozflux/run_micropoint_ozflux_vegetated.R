@@ -1,12 +1,13 @@
 # run_micropoint_ozflux_vegetated.R — runs micropoint's own vegetated
-# RunModelFull on OzFlux tower forcing (climdata.csv/params.csv,
-# already written by write_ozflux_micropoint_inputs.jl from the same
-# comparisons/ozflux `result` Microclimate.jl solved) plus canopy_params.csv
-# (that run's own MultilayerCanopy spec) and canopy_layers.csv (micropoint's
-# own evenly-spaced PAI grid, shaped to match Julia's PAI profile). Adapted
-# from micropoint/run_micropoint_vegetated.R (same vegp mapping) and
-# micropoint/run_micropoint.R (organic-top-layer soil override), but reads
-# zref/PAI shape from files instead of hardcoding.
+# RunModelFull on OzFlux tower forcing (climdata.csv/params.csv/
+# soil_profile.csv, already written by write_ozflux_micropoint_inputs.jl
+# from the same comparisons/ozflux `result` Microclimate.jl solved) plus
+# canopy_params.csv (that run's own MultilayerCanopy spec) and
+# canopy_layers.csv (micropoint's own evenly-spaced PAI grid, shaped to
+# match Julia's PAI profile). Adapted from micropoint/run_micropoint_
+# vegetated.R (same vegp mapping) and micropoint/run_micropoint.R
+# (organic-top-layer soil override), but reads zref/PAI shape from files
+# instead of hardcoding.
 #
 # Usage: Rscript run_micropoint_ozflux_vegetated.R <outdir>
 
@@ -34,19 +35,30 @@ lowsun <- solar_pre$zen >= 89
 climdata$swdown[lowsun] <- 0
 climdata$difrad[lowsun] <- 0
 
+# micropoint's own internal layer depths (geometricCpp -- same spacing
+# createsoilc uses internally).
+r_depth_m <- getFromNamespace("geometricCpp", "micropoint")(p$nlayers, p$totaldepth)
+
 # ── Soil: createsoilc(soiltype=p$soiltype) -- "Clay loam" placeholder for
-# soil_source=:slga (overridden below with real SLGA Smax/b/psi_e/Ksat/rho),
-# or the real texture name otherwise, trusted verbatim (soil_override=false)
-# so Vq/Vm/Vo/Smin/n stay self-consistent with Smax/b/psi_e/Ksat instead of
-# mixing a placeholder's structure with a different texture's numbers (that
-# mix caused a total NaN cascade). Flat/non-layered either way.
+# soil_source=:slga (overridden below with soil_profile.csv's real SLGA
+# Smax/b/psi_e/Ksat/rho), or the real texture name otherwise, trusted
+# verbatim (soil_override=false) so Vq/Vm/Vo/Smin/n stay self-consistent
+# with Smax/b/psi_e/Ksat instead of mixing a placeholder's structure with a
+# different texture's numbers (that mix caused a total NaN cascade).
 soilc <- createsoilc(soiltype = p$soiltype, nlayers = p$nlayers, totalDepth = p$totaldepth)
 if (tolower(as.character(p$soil_override)) == "true") {
-  soilc$Smax  <- p$smax
-  soilc$b     <- p$b
-  soilc$psi_e <- p$psi_e
-  soilc$Ksat  <- p$ksat
-  soilc$rho   <- p$rho_kgm3
+  # soil_profile.csv is Julia's own depth grid -- interpolate onto r_depth_m
+  # so every vector handed to RunModelFull is the correct nlayers length
+  # regardless of how the two depth grids differ (a length-1 or mismatched
+  # vector here is undefined behavior in RunModelFull's per-layer indexing,
+  # not a real numerical failure).
+  soil_profile <- read.csv(file.path(outdir, "soil_profile.csv"))
+  interp <- function(col) approx(soil_profile$depth_m, soil_profile[[col]], r_depth_m, rule = 2)$y
+  soilc$Smax  <- interp("smax")
+  soilc$b     <- interp("b")
+  soilc$psi_e <- interp("psi_e")
+  soilc$Ksat  <- interp("ksat")
+  soilc$rho   <- interp("rho_kgm3")
 }
 soilc$gref  <- p$gref
 soilc$groundem <- p$groundem
@@ -151,11 +163,9 @@ for (nm in names(mout)) {
 write.csv(data.frame(elapsed_s = elapsed_s, n_layers = n, n_hours = nrow(climdata)),
           file.path(outdir, "veg_timing.csv"), row.names = FALSE)
 
-# tsoil/theta column depths -- micropoint's own geometric node spacing
-# (geometricCpp, the same internal spacing createsoilc uses), not a
+# tsoil/theta column depths -- r_depth_m (computed above), not a
 # hand-derived approximation. Written out so Julia can match columns to
 # real depths instead of guessing the spacing.
-r_depth_m <- getFromNamespace("geometricCpp", "micropoint")(p$nlayers, p$totaldepth)
 write.csv(data.frame(depth_m = r_depth_m), file.path(outdir, "soil_depths.csv"), row.names = FALSE)
 
 cat(sprintf("Wrote %d vegetated output matrices + veg_timing.csv + soil_depths.csv to %s\n", length(mout), outdir))

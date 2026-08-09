@@ -55,7 +55,7 @@ interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacit
 # relaxation is skipped automatically for Raupach (it runs its own adaptive
 # Aitken acceleration internally; a second fixed relaxation on top would
 # double-damp it -- see _relax_air_profile! in energy_balance.jl).
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
 # :legacy (NoCanopy + shade/wind/horizon approximation) isolates whether a
 # warm bias comes from the canopy model itself vs the soil/forcing side --
 # ozflux_below_canopy_comparison.jl skips micropoint and the canopy-specific
@@ -319,8 +319,13 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
     "CapeTribulation" => :clay_loam,
-    #"Calperum" => :sandy_loam,
-    #"Wallaby" => :sandy_clay,
+    "Calperum" => :loam,
+    "Wallaby" => :clay_loam,
+    "Whroo" => :clay_loam,
+    "GWW" => :clay_loam,
+    "Longreach" => :clay_loam,
+    "TiTreeEast" => :clay_loam,
+    "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
 soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
 

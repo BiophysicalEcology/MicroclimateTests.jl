@@ -145,19 +145,23 @@ _wmean(vals::AbstractVector{<:Real}, weights) = sum(weights .* vals) / sum(weigh
 _wgeomean(vals::AbstractVector{<:Quantity}, weights) =
     exp(sum(weights .* log.(ustrip.(unit(first(vals)), vals))) / sum(weights)) * unit(first(vals))
 
-# Depth-weighted mean of `soil_profile` over 0..totaldepth, returned as a new
-# SoilProfile with every field replaced by its own uniform mean but on the
-# SAME depths grid (same array length) -- a drop-in replacement wherever the
-# depth-varying original was used (Microclimate.jl's solver or micropoint's
-# single-slab input alike), for a genuine like-for-like comparison instead of
-# each model implicitly averaging it differently. Saturated_hydraulic_
-# conductivity uses a weighted geometric mean (spans orders of magnitude
-# across a real profile); everything else is weighted-arithmetic.
+# Depth-weighted mean of `soil_profile` over 0..active_depth, returned as a
+# new SoilProfile with every field replaced by its own uniform mean but on
+# the SAME depths grid (same array length) -- a drop-in replacement wherever
+# the depth-varying original was used (Microclimate.jl's solver or
+# micropoint's single-slab input alike), for a genuine like-for-like
+# comparison. active_depth defaults to 0.3m -- the near-surface layer that
+# dominates diurnal heat/moisture exchange -- not micropoint's own
+# totalDepth=2m column parameter (just where its deep boundary condition
+# sits). Averaging over the full column instead pulls in deeper, denser,
+# more compacted subsoil and understates near-surface porosity. Saturated_
+# hydraulic_conductivity uses a weighted geometric mean (spans orders of
+# magnitude across a real profile); everything else is weighted-arithmetic.
 # root_density is left depth-varying -- a rooting profile, not a soil
 # property, still meaningful under an otherwise-uniform soil.
-function flatten_soil_profile(soil_profile, depths; totaldepth=2.0u"m")
+function flatten_soil_profile(soil_profile, depths; active_depth=0.3u"m")
     depths_m = ustrip.(u"m", depths)
-    td = ustrip(u"m", totaldepth)
+    td = ustrip(u"m", active_depth)
     nodes = findall(<=(td), depths_m)
     weights = _depth_weights(depths_m[nodes], td)
     n = length(depths)
