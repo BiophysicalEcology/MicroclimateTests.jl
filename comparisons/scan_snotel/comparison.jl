@@ -7,7 +7,7 @@
 # nmr_out_dir.
 #
 # All model setup and per-site logic lives in pipeline.jl (shared with
-# debug_site.jl) and config.jl (shared model/soil/snow parameters — change
+# single_site.jl) and config.jl (shared model/soil/snow parameters — change
 # `infiltration_algorithm_choice`, `weather_source_choice`, etc. there to
 # compare variants).
 #

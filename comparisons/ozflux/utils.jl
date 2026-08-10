@@ -1,5 +1,5 @@
 # utils.jl — generic analysis helpers (shared with oznet/) plus the OzFlux
-# NetCDF reader/aggregator, shared by comparison.jl / debug_site.jl.
+# NetCDF reader/aggregator, shared by comparison.jl / single_site.jl.
 
 # ── Reused verbatim from oznet/utils.jl ──────────────────────────────────────
 

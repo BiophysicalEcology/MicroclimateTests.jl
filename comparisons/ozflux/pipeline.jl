@@ -1,5 +1,5 @@
 # pipeline.jl — shared model setup + per-site-year pipeline for comparison.jl
-# (multi-site/multi-year) and debug_site.jl (single site-year, flat, no
+# (multi-site/multi-year) and single_site.jl (single site-year, flat, no
 # try/catch -- for stepping through in the REPL/debugger).
 #
 # Forcing comes straight from each site's own tower file (30-min, aggregated

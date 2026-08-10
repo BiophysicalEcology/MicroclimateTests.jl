@@ -12,7 +12,7 @@
 # loaded as a secondary comparison if present in nmr_out_dir.
 #
 # All model setup and per-site logic lives in pipeline.jl (shared with
-# debug_site.jl) and config.jl (shared model/soil-source/weather-source
+# single_site.jl) and config.jl (shared model/soil-source/weather-source
 # parameters — change `weather_source_choice`, `pedotransfer_model_choice`,
 # etc. there to compare variants).
 #

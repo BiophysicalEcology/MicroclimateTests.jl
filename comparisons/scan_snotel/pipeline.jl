@@ -1,5 +1,5 @@
 # pipeline.jl — shared model setup + per-site pipeline for comparison.jl
-# (multi-site, phase-batched) and debug_site.jl (single-site, flat, no
+# (multi-site, phase-batched) and single_site.jl (single-site, flat, no
 # try/catch — for stepping through in the REPL/debugger).
 #
 # Pipeline phases, each usable standalone or via `run_site` (sequential,
@@ -802,7 +802,7 @@ end
 
 # ── Report results for one prepared site: NMR read, stats, save, plots ──────
 # `make_plots`/`display_plots` let the multi-site batch skip/suppress plotting
-# when not saving to disk; debug_site.jl always wants both.
+# when not saving to disk; single_site.jl always wants both.
 function report_site_results(prep, micro_out, julia_solve_time;
                               plot_start = nothing, plot_end = nothing,
                               make_plots = true, display_plots = true)
@@ -1131,10 +1131,10 @@ function report_site_results(prep, micro_out, julia_solve_time;
 end
 
 # ── Single-site run: sequential composition of the phases above ─────────────
-# Used by debug_site.jl. Real problems (bad data, solver failure, etc.) raise
+# Used by single_site.jl. Real problems (bad data, solver failure, etc.) raise
 # normally; the caller decides whether to catch them (comparison.jl wraps
 # this per-site in try/catch) or let them propagate with a full stack trace
-# (debug_site.jl calls this with nothing in between).
+# (single_site.jl calls this with nothing in between).
 function run_site(site_num, meta_all, weather_cache, micro_model, soil_profile, mapper_model;
                    sim_start, sim_end, auto_date_range, max_sim_years,
                    plot_start = nothing, plot_end = nothing,

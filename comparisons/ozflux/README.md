@@ -28,7 +28,7 @@ forcing (see "SILO forcing" below).
   (`report_site_results`).
 - `comparison.jl` — entry point: batch over a site x year(s) x forcing-mode x
   canopy-mode grid, writes stats/plots, prints a cross-site summary.
-- `debug_site.jl` — entry point: one site-year, no try/catch, for stepping
+- `single_site.jl` — entry point: one site-year, no try/catch, for stepping
   through in the debugger.
 
 ## Data
@@ -120,7 +120,7 @@ forcing/canopy mode.
 ### Vertical profile snapshots
 
 `report.jl`'s `plot_canopy_profiles_all(result, result.output, profile_times)`
-(called from `debug_site.jl`) plots height-vs-value profiles (Ta and Ws, one
+(called from `single_site.jl`) plots height-vs-value profiles (Ta and Ws, one
 panel per hour in `profile_times`) instead of a fixed-height time series: the
 model's full profile as a line (canopy-resolved below `canopy_height`,
 free-atmosphere MOST above), tower obs at each `SITE_HEIGHT_SERIES` sensor
@@ -149,5 +149,5 @@ Wallaby (1); saved under `outputs_dir/profiles_vertical/`.
 
 ```
 julia comparison.jl     # batch run, see SITE_YEARS/FORCING_MODES/CANOPY_MODES in comparison.jl
-julia debug_site.jl     # single site-year, full stack trace on failure
+julia single_site.jl     # single site-year, full stack trace on failure
 ```

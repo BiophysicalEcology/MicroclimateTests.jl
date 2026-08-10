@@ -1,4 +1,4 @@
-# config.jl — shared configuration for comparison.jl and debug_site.jl
+# config.jl — shared configuration for comparison.jl and single_site.jl
 #
 # Site selection and the simulation date window stay in each entry-point
 # script (that's what you change per run/debug session). Everything here is
@@ -101,6 +101,6 @@ profile_heights   = [0.01u"m", 2.0u"m"]   # [user height, reference height] -- m
 soil_area_buffer_deg = 0.05
 
 # Cap simulation length -- matches the 4-year (2007-2010) window used in the
-# original study. auto_date_range in comparison.jl/debug_site.jl anchors this
+# original study. auto_date_range in comparison.jl/single_site.jl anchors this
 # to each site's own OzNet observation coverage instead of a fixed window.
 max_sim_years = 4

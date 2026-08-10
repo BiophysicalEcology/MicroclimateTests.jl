@@ -188,7 +188,7 @@ function plot_canopy_profiles(prep, output, profile_times; field, units, convert
 end
 
 # Ta + Ws + RH profile grids for every hour in `profile_times` -- call this
-# directly from debug_site.jl. Most meaningful at sites with real sub-canopy
+# directly from single_site.jl. Most meaningful at sites with real sub-canopy
 # sensors (Whroo, Wallaby); harmless (just model-only panels, no obs points)
 # at sites without SITE_HEIGHT_SERIES entries -- true for every site for RH
 # specifically, since no site has a height-resolved RH/AH series wired into

@@ -1,4 +1,4 @@
-# config.jl — shared configuration for comparison.jl and debug_site.jl
+# config.jl — shared configuration for comparison.jl and single_site.jl
 #
 # Site selection (site_num/sites/auto_sites) and the simulation date window
 # (sim_start/sim_end/auto_date_range) stay in each entry-point script, since

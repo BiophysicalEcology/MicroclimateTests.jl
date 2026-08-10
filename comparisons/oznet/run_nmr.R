@@ -1,6 +1,6 @@
 # run_nmr.R
 #
-# Called by comparison.jl / debug_site.jl (via pipeline.jl) as:
+# Called by comparison.jl / single_site.jl (via pipeline.jl) as:
 #   Rscript run_nmr.R <outdir>
 #
 # Reads five CSV files written by Julia (pipeline.jl's write_nmr_inputs):
@@ -35,7 +35,7 @@
 
 library(NicheMapR)
 
-# outdir can be pre-set (e.g. by debug_site.R, for interactive stepping in
+# outdir can be pre-set (e.g. by single_site.R, for interactive stepping in
 # RStudio) instead of passed on the command line.
 if (!exists("outdir")) {
   args   <- commandArgs(trailingOnly = TRUE)

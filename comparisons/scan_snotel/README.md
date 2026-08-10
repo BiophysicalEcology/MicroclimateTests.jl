@@ -13,7 +13,7 @@ CHELSA isn't included).
 - `utils.jl` — generic stats/interpolation/de-spiking helpers.
 - `pipeline.jl` — the actual mechanics (fetch forcing, prepare a site, run Julia, run NicheMapR, report results). No site list or date range here — that's in the entry points.
 - `comparison.jl` — entry point: runs a batch of sites, writes stats/plots, prints a cross-site summary.
-- `debug_site.jl` — entry point: runs one site with no try/catch, for stepping through in the debugger.
+- `single_site.jl` — entry point: runs one site with no try/catch, for stepping through in the debugger.
 - `run_nmr.R` — reads the CSVs `pipeline.jl` writes and calls `NicheMapR::microclimate()` directly.
 
 ## Data (not committed)
@@ -40,5 +40,5 @@ freely to force a re-fetch/re-run (see the `reuse_*`/`cache_*` toggles in
 
 ```
 julia comparison.jl     # batch run, see site_subset/auto_date_range in comparison.jl
-julia debug_site.jl     # single site, full stack trace on failure
+julia single_site.jl     # single site, full stack trace on failure
 ```

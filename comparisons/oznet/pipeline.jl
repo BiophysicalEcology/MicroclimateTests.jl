@@ -1,5 +1,5 @@
 # pipeline.jl — shared model setup + per-site pipeline for comparison.jl
-# (multi-site) and debug_site.jl (single-site, flat, no try/catch — for
+# (multi-site) and single_site.jl (single-site, flat, no try/catch — for
 # stepping through in the REPL/debugger).
 #
 # `depths` is fixed across sites (NMR_DEP19_CM, shared with NicheMapR's own

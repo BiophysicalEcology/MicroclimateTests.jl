@@ -1,6 +1,6 @@
 # run_nmr.R
 #
-# Called by comparison.jl / debug_site.jl (via pipeline.jl) as:
+# Called by comparison.jl / single_site.jl (via pipeline.jl) as:
 #   Rscript run_nmr.R <outdir>
 #
 # Reads four CSV files written by Julia:

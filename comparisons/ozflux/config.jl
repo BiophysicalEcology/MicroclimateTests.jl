@@ -1,4 +1,4 @@
-# config.jl — shared configuration for comparison.jl and debug_site.jl
+# config.jl — shared configuration for comparison.jl and single_site.jl
 #
 # Primary forcing is each site's own tower file (30-min, aggregated to
 # hourly). A SILO gridded-forcing run is also available per site-year

@@ -3,7 +3,7 @@
 # Batch entry point: runs the canopy model against every requested
 # (site, years) combination, writes stats+plots per site-year (report.jl),
 # and prints a cross-site summary. All model setup and per-site logic lives
-# in pipeline.jl/report.jl (shared with debug_site.jl) and config.jl.
+# in pipeline.jl/report.jl (shared with single_site.jl) and config.jl.
 #
 # Usage:
 #   julia comparison.jl              ← runs SITE_YEARS defined below

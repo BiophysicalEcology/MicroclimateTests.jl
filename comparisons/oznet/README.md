@@ -24,8 +24,8 @@ BARRA are fetched via true OPeNDAP point queries
 - `utils.jl` — generic stats/interpolation helpers, plus `read_oznet_obs` (the OzNet file-format parser).
 - `pipeline.jl` — the actual mechanics (fetch forcing, fetch SLGA soil texture, prepare a site, run Julia, run NicheMapR, report results).
 - `comparison.jl` — entry point: runs a batch of sites, writes stats/plots, prints a cross-site summary.
-- `debug_site.jl` — entry point: runs one site with no try/catch, for stepping through in the debugger.
-- `debug_site.R` — same idea on the R side: sets `outdir` and sources `run_nmr.R` directly in an interactive R session, bypassing the output-swallowing you get from `run_nmr_batch!`'s concurrent `Rscript` subprocesses.
+- `single_site.jl` — entry point: runs one site with no try/catch, for stepping through in the debugger.
+- `single_site.R` — same idea on the R side: sets `outdir` and sources `run_nmr.R` directly in an interactive R session, bypassing the output-swallowing you get from `run_nmr_batch!`'s concurrent `Rscript` subprocesses.
 - `run_nmr.R` — reads the CSVs `pipeline.jl` writes and calls `NicheMapR::microclimate()` directly.
 
 ## How this differs from scan_snotel/
@@ -87,7 +87,7 @@ to force a re-fetch/re-run (see the `reuse_*`/`cache_*` toggles in
 
 ```
 julia comparison.jl     # batch run, see site_subset/auto_date_range in comparison.jl
-julia debug_site.jl     # single site, full stack trace on failure
+julia single_site.jl     # single site, full stack trace on failure
 ```
 
 ## References

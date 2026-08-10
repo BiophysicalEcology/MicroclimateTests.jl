@@ -1,10 +1,10 @@
-# debug_site.jl
+# single_site.jl
 #
 # Flat, single-site debugging entry point — calls `run_site` directly with
 # no try/catch, so errors propagate normally with a full stack trace pointing
 # at the real failure line. Step through top-to-bottom (Ctrl+Enter /
 # Shift+Enter per block in the VS Code Julia extension), or
-# `include("debug_site.jl")` from the REPL to run it all at once.
+# `include("single_site.jl")` from the REPL to run it all at once.
 #
 # All model setup and per-site logic lives in pipeline.jl (shared with
 # comparison.jl) and config.jl (shared model/soil-source/weather-source

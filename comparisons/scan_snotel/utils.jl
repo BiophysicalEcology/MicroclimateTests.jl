@@ -1,4 +1,4 @@
-# utils.jl — generic analysis helpers for comparison.jl / debug_site.jl
+# utils.jl — generic analysis helpers for comparison.jl / single_site.jl
 
 # Raw per-day series for one input of a bound DielForcing (e.g. min series).
 function _minmax_series(env, name::Symbol, want::Symbol)

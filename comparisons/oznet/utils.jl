@@ -1,5 +1,5 @@
 # utils.jl — generic analysis helpers + the OzNet observation-file parser,
-# shared by comparison.jl / debug_site.jl.
+# shared by comparison.jl / single_site.jl.
 
 # Raw per-day series for one input of a bound DielForcing (e.g. min series).
 function _minmax_series(env, name::Symbol, want::Symbol)
