@@ -85,8 +85,10 @@ plant_area_index2 = reverse(d2.paii)
 leaf_temperature2 = u"K".(reverse(d2.tleaf) .* u"°C")
 ground_temperature2 = u"K"(15.0u"°C")
 
-lw_model = LayeredLongwaveExchange()
-lw_buf = Microclimate.allocate_longwave(lw_model, plant_area_index2, n2)
+#lw_model = LayeredLongwaveExchange()
+lw_model = AllPairsLongwaveExchange() # micropoint version
+#lw_model = LayeredRadiosityExchange()
+lw_buf = Microclimate.allocate_longwave(lw_model, plant_area_index2, n2, sw_buf.canopy_projection_ratio)
 site2 = Site(; latitude=0.0u"°", longitude=0.0u"°", elevation=0.0u"m", slope=0.0u"°", aspect=0.0u"°",
     horizon_angles=fill(0.0u"°", 24), sky_view_fraction=1.0, albedo=0.15, roughness_height=0.01u"m",
     atmospheric_pressure=101325.0u"Pa")
@@ -199,7 +201,7 @@ boundary_layer_model5 = MoninObukhov()
 model5 = MultilayerCanopy(;
     canopy_height=canopy_height5, plant_area_index=plant_area_index5,
     shortwave_model=TwoStreamRadiation(; leaf_reflectance=0.4, leaf_transmittance=0.2),
-    leaf_parameters=LeafParameters(; leaf_length=0.15u"m", leaf_width=0.07u"m", leaf_emissivity=0.97, leaf_angle_distribution_parameter=1.6),
+    leaf_parameters=LeafParameters(; leaf_length=0.15u"m", leaf_width=0.07u"m", leaf_emissivity=0.97, canopy_projection_ratio=1.6),
     leaf_temperature_solver=RootFindLeafTemperature(),
     air_profile_model=RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)),  # R's temp_below/relhum_below are Raupach LNF, not K-theory
     convergence_model=PicardCanopyConvergence(;

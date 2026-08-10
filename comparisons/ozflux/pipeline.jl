@@ -395,7 +395,7 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
             leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
-            leaf_parameters = leaf_parameters(site_name),
+            leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
             convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice)
     end
@@ -588,16 +588,6 @@ function prepare_site_silo(site_name, years; max_days=nothing)
     println("  Fetching SLGA soil texture...")
     soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
-
-    pai_shape = get(SITE_PAI_SHAPE, site_name, :uniform)
-    plant_area_index1 = plant_area_index_profile(pai_shape, heights, canopy_height, leaf_area_index)
-    plant_area_index = collect(fill(0.001, length(plant_area_index1)))
-    canopy_model = MultilayerCanopy(; canopy_height, plant_area_index,
-        shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-        leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
-        leaf_parameters = leaf_parameters(site_name),
-        stomatal_model = MoistureResponsiveStomatalConductance(),
-        convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice)
 
     config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = DailyRainfall(),  # SILO rainfall is a daily total, not per-timestep
         soil_moisture_strategy = soil_moisture_strategy_choice, canopy_soil_convergence = canopy_soil_convergence_choice)

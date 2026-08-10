@@ -26,7 +26,7 @@ include(joinpath(@__DIR__, "report.jl"))
 # site_name: any comparisons/ozflux/data site with a SITE_UTC_OFFSET_MINUTES
 # entry (config.jl) -- "CapeTribulation", "Calperum", "Whroo", "Wallaby",
 # "GWW", "Longreach", "TiTreeEast", "AliceSpringsMulga".
-site_name = "Calperum"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulgaa"
+site_name = "Whroo"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulgaa"
 years = [2015]
 outdir = joinpath(@__DIR__, "outputs", "$(site_name)_$(join(years, '-'))")
 save_outputs_3way = true

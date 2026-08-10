@@ -37,30 +37,13 @@ convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
 canopy_convergence_model_choice = PicardCanopyConvergence(;
     convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200), relaxation=0.7)
-# Per-hour convergence between the canopy solve and the soil-heat ODE.
-# FixedIterationConvergence(1) (default) is a single pass per hour --
-# canopy sees the previous hour's soil temperature, matching the model's
-# prior behavior exactly. Raise this (e.g. FixedIterationConvergence(3) or
-# IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=5))
-# to jointly converge canopy and soil-heat within the hour instead.
 canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200) #FixedIterationConvergence(1)
 rainfall_schedule_choice     = HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-# KTheoryAirProfile's local gradient-diffusion closure is a known-bad fit
-# below/within canopy (no counter-gradient transport, ignores near-field
-# source proximity) -- Raupach 1989's Lagrangian near/far-field model exists
-# specifically for this regime. canopy_convergence_model_choice's outer
-# relaxation is skipped automatically for Raupach (it runs its own adaptive
-# Aitken acceleration internally; a second fixed relaxation on top would
-# double-damp it -- see _relax_air_profile! in energy_balance.jl).
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
-# :legacy (NoCanopy + shade/wind/horizon approximation) isolates whether a
-# warm bias comes from the canopy model itself vs the soil/forcing side --
-# ozflux_below_canopy_comparison.jl skips micropoint and the canopy-specific
-# sections entirely when this is :legacy (no output.canopy to compare, and
-# micropoint's own run is inherently vegetated).
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
+longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
 
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
@@ -192,27 +175,27 @@ const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
 
 # ── Per-site leaf structural/physiological traits (Microclimate.jl's
 # LeafParameters, fed into MultilayerCanopy) -- leaf_length/leaf_width feed
-# HeatExchange.jl's boundary-layer convection, leaf_angle_distribution_parameter
+# HeatExchange.jl's boundary-layer convection, canopy_projection_ratio
 # is Campbell's ellipsoidal `x` (1.0 spherical, 0.0 vertical, Inf horizontal).
 # No site-specific literature values in hand yet, so every site starts at
 # LeafParameters()'s own defaults -- free/tunable per site from here. Falls
 # back to DEFAULT_LEAF_PARAMETERS for any site without an entry.
 const DEFAULT_LEAF_PARAMETERS = (
     leaf_length=0.05u"m", leaf_width=0.02u"m", leaf_emissivity=0.97,
-    leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,
+    leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=1.0,
 )
 const SITE_LEAF_PARAMETERS = Dict(
     "CapeTribulation"   => DEFAULT_LEAF_PARAMETERS,
     "Calperum"          => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
-                            leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,),
+                            leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=1.0,),
     "Whroo"             => DEFAULT_LEAF_PARAMETERS,
     "Wallaby"           => DEFAULT_LEAF_PARAMETERS,
     "GWW"               => DEFAULT_LEAF_PARAMETERS,
     "Longreach"         => DEFAULT_LEAF_PARAMETERS,
     "TiTreeEast"        => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
-                            leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,),
+                            leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=1.0,),
     "AliceSpringsMulga" => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
-                            leaf_water_potential=0.0u"J/kg", leaf_angle_distribution_parameter=1.0,),
+                            leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=1.0,),
 )
 leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_name, DEFAULT_LEAF_PARAMETERS)...)
 
@@ -319,7 +302,7 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
     "CapeTribulation" => :clay_loam,
-    "Calperum" => :loam,
+    "Calperum" => :sandy_clay_loam,
     "Wallaby" => :clay_loam,
     "Whroo" => :clay_loam,
     "GWW" => :clay_loam,

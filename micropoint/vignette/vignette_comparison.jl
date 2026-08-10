@@ -129,7 +129,7 @@ canopy_model = MultilayerCanopy(;
     interception_model = LayeredRainInterception(; leaf_water_storage_capacity = 0.2u"kg/m^2"),
     leaf_parameters = LeafParameters(;
         leaf_length = 0.12u"m", leaf_width = 0.05u"m",
-        leaf_emissivity = 0.97, leaf_angle_distribution_parameter = 1.6,
+        leaf_emissivity = 0.97, canopy_projection_ratio = 1.6,
     ),
     convergence_model = PicardCanopyConvergence(;
     convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200), relaxation=0.7),

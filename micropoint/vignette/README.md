@@ -50,7 +50,7 @@ Verified directly (installed micropoint 0.1.0, live runs) — not guessed:
 |---|---|---|
 | `h` (25 m) | `MultilayerCanopy.canopy_height` | |
 | `PAIgeometry(pai,7,70,n=20)` | `plant_area_index` (vector) | **bottom-to-top in R, top-to-bottom in Microclimate.jl** — reversed once at translation time |
-| `x` (1.6) | `LeafParameters.leaf_angle_distribution_parameter` | |
+| `x` (1.6) | `LeafParameters.canopy_projection_ratio` | |
 | `lref`/`ltra` (0.4/0.2) | `TwoStreamRadiation.leaf_reflectance`/`leaf_transmittance` | |
 | `len`/`wid` (0.12/0.05) | `LeafParameters.leaf_length`/`leaf_width` | assumed metres (cm would be an implausibly tiny leaf) |
 | `vegem` (0.97) | `LeafParameters.leaf_emissivity` | |

@@ -141,7 +141,7 @@ CSV.write(joinpath(mp_outdir, "canopy_params.csv"), DataFrame(
     leaf_emissivity = [canopy_model.leaf_parameters.leaf_emissivity],
     leaf_reflectance = [canopy_model.shortwave_model.leaf_reflectance],
     leaf_transmittance = [canopy_model.shortwave_model.leaf_transmittance],
-    leaf_angle_x = [canopy_model.leaf_parameters.leaf_angle_distribution_parameter],
+    leaf_angle_x = [canopy_model.leaf_parameters.canopy_projection_ratio],
 ))
 
 mp_rscript = joinpath(@__DIR__, "run_micropoint.R")
