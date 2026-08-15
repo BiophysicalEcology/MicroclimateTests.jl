@@ -23,6 +23,35 @@ fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
     @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  (n=%d)", s.r, s.rmse, s.bias, s.n)
 
+# Truncates a DailyMinMaxEnvironment's per-day forcing series to the first
+# `ndays` days. Needed by prepare_site_silo's max_days path: fetch_silo_forcing
+# is deliberately fetched full-year (silo_gapfill_donor's rainfall donor needs
+# the whole year regardless of max_days), but the solve itself only iterates
+# `ndays` days -- left untruncated, environment_minmax's forcing arrays stay
+# longer than solar_radiation_out (sized to `days`), a BoundsError in
+# evaluate!/solar_day once the solver reaches day ndays+1.
+# minmax_forcings' derived _mean fields are lazy Broadcasted (not materialized
+# Vectors, so they track later in-place mutation of the min/max arrays --
+# see its own comment) -- materialize before slicing since Broadcasted
+# doesn't support arbitrary indexing. Safe here: any such mutation is
+# internal to fetch_silo_forcing, already done by the time it returns.
+_truncate_days(v::AbstractVector, ndays) = v[1:ndays]
+_truncate_days(v, ndays) = Base.Broadcast.materialize(v)[1:ndays]
+_truncate_forcing(f::DielForcing, ndays) = DielForcing(f.curve, map(v -> _truncate_days(v, ndays), f.values))
+_truncate_forcing(d::Derived, ndays) = d
+truncate_environment_minmax(env::DailyMinMaxEnvironment, ndays) =
+    DailyMinMaxEnvironment(; forcings = map(f -> _truncate_forcing(f, ndays), env.forcings))
+
+# Same max_days issue, one level down: fetch_silo_forcing's environment_hourly
+# (the SILO stub -- only pressure is ever populated, everything else nothing)
+# is also fetched full-year and needs truncating to `n` hours to match the
+# truncated solve. Generic over whichever fields are actually Vectors, so it
+# doesn't assume pressure is the only one.
+function truncate_environment_hourly(h::HourlyTimeseries, n)
+    kwargs = NamedTuple(f => (v = getfield(h, f); v isa AbstractVector ? v[1:n] : v) for f in fieldnames(typeof(h)))
+    return HourlyTimeseries(; kwargs...)
+end
+
 # ── Canopy/soil grid + profile construction (generic, not site-specific) ────
 
 # Soil depths (m): NicheMapR's 10-node scheme (cm) plus a midpoint between
@@ -35,38 +64,51 @@ end
 # base_depths_m plus extra site-specific points (e.g. observed sensor depths).
 _build_depths(base_depths_m, extra_depths_m) = sort(unique(vcat(base_depths_m, extra_depths_m))) .* u"m"
 
-# Canopy height grid: fixed absolute spacing, graded near the ground (steepest
-# log-law gradient) up to 2m, then uniform coarse steps to canopy_height.
-const CANOPY_NEAR_GROUND_M = [1.00, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.00]#[0.025, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.75, 1.00, 1.50, 2.00]
-const CANOPY_COARSE_STEP_M = 1.5
-const MIN_CANOPY_LAYERS = 10  # wind_attenuation_profile requires at least this many
+# Canopy height grid: N_CANOPY_LAYERS evenly-spaced points from 0 to
+# canopy_height -- the same scheme micropoint's own R model uses (see
+# write_ozflux_micropoint_inputs.jl's micropoint_canopy_layers), matched at
+# the same N=50 so the two models' PAI/layer structure is directly
+# comparable. A single special-cased near-ground insertion (kept resolution
+# to ~15 layers otherwise) was tried first but created a genuine artifact:
+# splitting one ~1.87m bottom layer into a normal layer plus one very thin
+# (0.1m) one made that thin layer's *total* PAI look anomalously low even
+# though its density was correctly high -- an unequal-layer-thickness
+# artifact, not a bug in the PAI math. Uniform N=50 spacing avoids it
+# entirely (matches micropoint's own approach) at the cost of more layers.
+const N_CANOPY_LAYERS = 50  # wind_attenuation_profile requires at least 10
 const N_ABOVE_CANOPY_POINTS = 6  # graded points from canopy_height up to reference_height
 
-# Pads `pts` to `min_n` points by bisecting the largest gap (anchored at 0).
-function _pad_to_min_count(pts, min_n)
-    pts = sort(unique(pts))
-    while length(pts) < min_n
-        anchored = vcat(0.0, pts)
-        gaps = diff(anchored)
-        i = argmax(gaps)
-        push!(pts, (anchored[i] + anchored[i + 1]) / 2)
-        sort!(pts); unique!(pts)
+# Full height grid: N_CANOPY_LAYERS evenly-spaced canopy points up to
+# canopy_height, then N_ABOVE_CANOPY_POINTS graded up to reference_height
+# (plus any extras and reference_height itself, inserted exactly --
+# reference_height must land on a grid point since Microclimate.jl treats
+# last(heights) as reference height).
+const NEAR_ZERO_FLOOR_M = 0.01  # mm-scale spacing has crashed micropoint's solver before
+
+# Forward-floors an ascending grid to a minimum step, starting from pts[1]
+# itself (no implicit zero anchor). Self-limiting: only touches points where
+# natural spacing is already below the floor. Skipped entirely (natural,
+# possibly sub-floor spacing kept) when the grid's own span can't fit
+# length(pts)-1 full floor-sized steps -- otherwise the cascade would push
+# the last point past the domain's own top (e.g. a canopy shorter than
+# length(pts)*floor_m); that would break the pts[end] == canopy_height
+# invariant callers rely on, worse than the mm-scale spacing this guards
+# against. Not triggered by any current site (shortest canopy is 0.5m,
+# exactly the no-op boundary at N_CANOPY_LAYERS=50/NEAR_ZERO_FLOOR_M=0.01).
+function _floor_ascending!(pts, floor_m)
+    n = length(pts)
+    (pts[n] - pts[1]) < floor_m * (n - 1) && return pts
+    pts[1] = max(pts[1], floor_m)
+    for k in 2:n
+        pts[k] = max(pts[k], pts[k - 1] + floor_m)
     end
     return pts
 end
 
-# Full height grid: graded canopy points up to canopy_height, then
-# N_ABOVE_CANOPY_POINTS graded up to reference_height (plus any extras and
-# reference_height itself, inserted exactly -- reference_height must land on
-# a grid point since Microclimate.jl treats last(heights) as reference height).
 function _build_heights(canopy_height, reference_height, extra_heights_m=Float64[])
     canopy_m = ustrip(u"m", canopy_height)
     reference_m = ustrip(u"m", reference_height)
-    near_ground = filter(<=(canopy_m), CANOPY_NEAR_GROUND_M)
-    coarse_top = isempty(near_ground) ? 0.0 : near_ground[end]
-    coarse_pts = coarse_top < canopy_m ? collect((coarse_top + CANOPY_COARSE_STEP_M):CANOPY_COARSE_STEP_M:canopy_m) : Float64[]
-    canopy_pts = unique(vcat(near_ground, coarse_pts, canopy_m))
-    length(canopy_pts) < MIN_CANOPY_LAYERS && (canopy_pts = _pad_to_min_count(canopy_pts, MIN_CANOPY_LAYERS))
+    canopy_pts = _floor_ascending!([(i / N_CANOPY_LAYERS) * canopy_m for i in 1:N_CANOPY_LAYERS], NEAR_ZERO_FLOOR_M)
     graded_above = canopy_m < reference_m ?
         collect(range(canopy_m, reference_m; length=N_ABOVE_CANOPY_POINTS + 1)[2:end]) : Float64[]
     above_pts = filter(>(canopy_m), unique(vcat(extra_heights_m, graded_above, reference_m)))
@@ -149,7 +191,7 @@ _wgeomean(vals::AbstractVector{<:Quantity}, weights) =
 # new SoilProfile with every field replaced by its own uniform mean but on
 # the SAME depths grid (same array length) -- a drop-in replacement wherever
 # the depth-varying original was used (Microclimate.jl's solver or
-# micropoint's single-slab input alike), for a genuine like-for-like
+# micropoint's single-slab input alike), for a like-for-like
 # comparison. active_depth defaults to 0.3m -- the near-surface layer that
 # dominates diurnal heat/moisture exchange -- not micropoint's own
 # totalDepth=2m column parameter (just where its deep boundary condition

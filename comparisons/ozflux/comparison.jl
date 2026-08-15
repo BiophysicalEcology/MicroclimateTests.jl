@@ -9,7 +9,7 @@
 #   julia comparison.jl              ← runs SITE_YEARS defined below
 #   include("comparison.jl")         ← from a Julia REPL
 
-using Microclimate, MicroclimateMapper, Unitful, FluidProperties
+using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
 using Rasters, NCDatasets, RasterDataSources, PointDataSources
 using Rasters.Extents: Extent

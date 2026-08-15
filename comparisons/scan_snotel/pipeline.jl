@@ -308,7 +308,7 @@ function prefetch_weather_batch!(weather_cache, meta_all, sites, mapper_model, s
         # nationwide site_subset) into one call blows the DEM read up to a
         # multi-GB, whole-region raster. Binning by a fixed-size lon/lat grid
         # cell keeps each batch's bounding box close to what a single site's
-        # own buffer already needed — only sites that are genuinely close
+        # own buffer already needed — only sites that are close
         # together get batched.
         tiles = Dict{Tuple{Int,Int}, Vector{Tuple{Int,Float64,Float64}}}()
         for e in entries

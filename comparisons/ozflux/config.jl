@@ -36,16 +36,27 @@ soil_properties_model_choice = Microclimate.example_soil_properties_model()
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
 canopy_convergence_model_choice = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200), relaxation=0.7)
-canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200) #FixedIterationConvergence(1)
+    convergence=IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80), relaxation=0.5) # set relaxation high for short canopies
+canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
+canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
 rainfall_schedule_choice     = HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)) #KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))  # or RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact), near_field_subdivisions=20,
+    relaxation=0.7, max_air_temperature_deviation=40.0u"K", aitken_omega_max=0.8, min_ground_resistance=5.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
-
+# Raised from the 0.02 m/s default -- near-calm nights were driving canopy_top_flux_boundary's ±40K clamp.
+boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
+# canopy_wind_model_choice = MixingLengthCanopyWindAttenuation(;
+#                                         shelter_floor = 0.003,
+#                                         shelter_pai_coefficient = 0.1,
+#                                         mixing_length_coefficient = 2.0,
+#                                         mixing_length_pai_coefficient = 0.25,
+#                                         )
+canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
+#canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
 # NoCanopy + a PAI-derived shade fraction + a wind-speed knockdown + a large
 # horizon angle (sun only reaches the ground near-overhead) -- how forest
@@ -61,19 +72,19 @@ canopy_mode_choice = :full  # or :legacy
 # site without an entry.
 const DEFAULT_LEGACY_PARAMS = (extinction_coefficient=0.5, wind_multiplier=0.5, horizon_angle=80.0u"°", roughness_height=0.004u"m")
 const SITE_LEGACY_PARAMS = Dict(
-    "CapeTribulation" => (extinction_coefficient=0.5, wind_multiplier=0.3, horizon_angle=85.0u"°", roughness_height=0.004u"m"),  # closed tropical rainforest canopy
-    "Calperum"        => (extinction_coefficient=0.0, wind_multiplier=0.85, horizon_angle=10.0u"°", roughness_height=0.004u"m"),  # sparse, open mallee woodland
-    "Whroo"           => (extinction_coefficient=0.5, wind_multiplier=0.5, horizon_angle=65.0u"°", roughness_height=0.004u"m"),  # dry sclerophyll woodland, intermediate
-    "Wallaby"         => (extinction_coefficient=0.5, wind_multiplier=0.4, horizon_angle=70.0u"°", roughness_height=0.004u"m"),  # regrowth ash forest, denser than woodland
-    "GWW"             => (extinction_coefficient=0.5, wind_multiplier=0.6, horizon_angle=25.0u"°", roughness_height=0.004u"m"),  # open eucalypt woodland
-    "Longreach"       => (extinction_coefficient=0.0, wind_multiplier=1.0, horizon_angle=0.0u"°", roughness_height=0.004u"m"),   # grassland, effectively no canopy shelter
-    "TiTreeEast"        => (extinction_coefficient=0.5, wind_multiplier=0.7, horizon_angle=10.0u"°", roughness_height=0.1u"m"),  # sparse mulga/spinifex woodland
-    "AliceSpringsMulga" => (extinction_coefficient=0.5, wind_multiplier=0.8, horizon_angle=10.0u"°", roughness_height=0.004u"m"),
+    "CapeTribulation" => (extinction_coefficient=0.5, wind_multiplier=0.3, horizon_angle=85.0u"°", roughness_height=0.01u"m"),  # closed tropical rainforest canopy
+    "Calperum"        => (extinction_coefficient=0.0, wind_multiplier=0.85, horizon_angle=10.0u"°", roughness_height=0.01u"m"),  # sparse, open mallee woodland
+    "Whroo"           => (extinction_coefficient=1.0, wind_multiplier=0.5, horizon_angle=80.0u"°", roughness_height=0.01u"m"),  # dry sclerophyll woodland, intermediate
+    "Wallaby"         => (extinction_coefficient=0.5, wind_multiplier=0.4, horizon_angle=70.0u"°", roughness_height=0.01u"m"),  # regrowth ash forest, denser than woodland
+    "GWW"             => (extinction_coefficient=0.5, wind_multiplier=0.6, horizon_angle=25.0u"°", roughness_height=0.01u"m"),  # open eucalypt woodland
+    "Longreach"       => (extinction_coefficient=0.0, wind_multiplier=1.0, horizon_angle=0.0u"°", roughness_height=0.01u"m"),   # grassland, effectively no canopy shelter
+    "TiTreeEast"        => (extinction_coefficient=0.0, wind_multiplier=0.7, horizon_angle=10.0u"°", roughness_height=0.01u"m"),  # sparse mulga/spinifex woodland
+    "AliceSpringsMulga" => (extinction_coefficient=0.0, wind_multiplier=0.8, horizon_angle=10.0u"°", roughness_height=0.01u"m"),
 )
 legacy_params(site_name) = get(SITE_LEGACY_PARAMS, site_name, DEFAULT_LEGACY_PARAMS)
 
-# Depth/height grid constants (NMR_DEP_CM, SIM_DEPTHS_M, CANOPY_NEAR_GROUND_M,
-# CANOPY_COARSE_STEP_M): see utils.jl.
+# Depth/height grid constants (NMR_DEP_CM, SIM_DEPTHS_M, N_CANOPY_LAYERS):
+# see utils.jl.
 
 # ── Reference height for forcing (Ta/RH/Ws) ──────────────────────────────────
 # Microclimate.jl always treats forcing as valid AT last(heights) (see
@@ -82,13 +93,13 @@ legacy_params(site_name) = get(SITE_LEGACY_PARAMS, site_name, DEFAULT_LEGACY_PAR
 # themselves QC-merged composites across several physical instrument heights
 # (see each file's own `height` attribute + `description_L3`) which often do
 # NOT match the site's `tower_height` global attribute:
-#   CapeTribulation, GWW: bare Ta/Ws genuinely sit at tower_height already --
+#   CapeTribulation, GWW: bare Ta/Ws sit at tower_height already --
 #     no entry needed, falls back to tower_height/bare "Ta"/"RH"/"Ws" below.
-#   Calperum, Whroo: a genuine single-sensor tower-top instrument exists
+#   Calperum, Whroo: a single-sensor tower-top instrument exists
 #     (Ws_SONIC_Av/Ta_SONIC_Av at Calperum, Ws_CSAT/Ta_HMP_36m at Whroo) --
 #     SITE_FORCING_VARS below prefers that over the lower/blended composite.
 #   Wallaby: no tower-top wind/temp sensor exists at all -- Ws_CSAT (= bare
-#     Ws) genuinely sits at only 5m, well below both canopy top and
+#     Ws) sits at only 5m, well below both canopy top and
 #     tower_height=12m. reference_height must be 5m here, not tower_height,
 #     or the same wrong-reference-height bug applies to the *only* data
 #     available (there's nothing better to switch to).
@@ -121,12 +132,12 @@ const SITE_FORCING_VARS = Dict(
 const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
     "CapeTribulation" => 6.0,
     "Calperum"        => 0.3,
-    "Whroo"           => 0.7,
+    "Whroo"           => 1.5,
     "Wallaby"         => 5.0,   # fire in 2009
     "GWW"             => 0.5,   # semi-arid eucalypt woodland, canopy_height=18m per file metadata
     "Longreach"       => 0.5,   # grassland, canopy_height=0.5m per file metadata
     "TiTreeEast"        => 0.5,  # sparse mulga/spinifex woodland, canopy_height=6.5m per file metadata
-    "AliceSpringsMulga" => 1.0,  # same study/template as TiTreeEast -- sparse mulga woodland, canopy_height=6.5m
+    "AliceSpringsMulga" => 0.5,  # same study/template as TiTreeEast -- sparse mulga woodland, canopy_height=6.5m
 )
 
 # ── Per-site vertical PAI density shape (pipeline.jl's PAI_SHAPES/
@@ -141,13 +152,13 @@ const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
 # Falls back to :uniform for any site without an entry.
 const SITE_PAI_SHAPE = Dict(
     "CapeTribulation" => :top_heavy,
-    "Calperum"        => :bottom_heavy,
+    "Calperum"        => :uniform,
     "Whroo"           => :bottom_heavy,
     "Wallaby"         => :uniform,
     "GWW"             => :uniform,  
     "Longreach"       => :uniform,       # grassland -- no crown structure
-    "TiTreeEast"        => :uniform,  # sparse mulga woodland, simple shrub/small-tree structure
-    "AliceSpringsMulga" => :bottom_heavy,
+    "TiTreeEast"        => :top_heavy,  # sparse mulga woodland, simple shrub/small-tree structure
+    "AliceSpringsMulga" => :top_heavy,
 )
 
 # ── Per-site canopy leaf spectral properties ──────────────────────────────────────────
@@ -155,12 +166,12 @@ const SITE_PAI_SHAPE = Dict(
 const SITE_LEAF_REFLECTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
     "Calperum"        => 0.25,
-    "Whroo"           => 0.15,
+    "Whroo"           => 0.25,
     "Wallaby"         => 0.15,
     "GWW"             => 0.30,
     "Longreach"       => 0.25,
     "TiTreeEast"        => 0.25,
-    "AliceSpringsMulga" => 0.20,
+    "AliceSpringsMulga" => 0.25,
 )
 const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
@@ -169,8 +180,8 @@ const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
     "Wallaby"         => 0.25,
     "GWW"             => 0.10,
     "Longreach"       => 0.25,
-    "TiTreeEast"        => 0.10,
-    "AliceSpringsMulga" => 0.10,
+    "TiTreeEast"        => 0.15,
+    "AliceSpringsMulga" => 0.15,
 )
 
 # ── Per-site leaf structural/physiological traits (Microclimate.jl's
@@ -186,8 +197,7 @@ const DEFAULT_LEAF_PARAMETERS = (
 )
 const SITE_LEAF_PARAMETERS = Dict(
     "CapeTribulation"   => DEFAULT_LEAF_PARAMETERS,
-    "Calperum"          => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
-                            leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=1.0,),
+    "Calperum"          => DEFAULT_LEAF_PARAMETERS,
     "Whroo"             => DEFAULT_LEAF_PARAMETERS,
     "Wallaby"           => DEFAULT_LEAF_PARAMETERS,
     "GWW"               => DEFAULT_LEAF_PARAMETERS,
@@ -206,10 +216,10 @@ leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_nam
 const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
     "CapeTribulation"   => 0.13,  # dark, wet closed-canopy rainforest litter
-    "Calperum"          => 0.20,  # pale sandy mallee soil, sparse cover
+    "Calperum"          => 0.25,  # pale sandy mallee soil, sparse cover
     "Whroo"             => 0.10,  # box/ironbark woodland, leaf litter + some bare soil
     "Wallaby"           => 0.12,  # dense wet sclerophyll regrowth
-    "GWW"               => 0.25,  # semi-arid eucalypt woodland, red sandy soil
+    "GWW"               => 0.15,  # semi-arid eucalypt woodland, red sandy soil
     "Longreach"         => 0.25,  # dry grassland, pale soil/cured grass
     "TiTreeEast"        => 0.15,  # central Australian red sand, sparse mulga/spinifex
     "AliceSpringsMulga" => 0.15,
@@ -224,13 +234,13 @@ const SITE_ALBEDO = Dict(
 const DEFAULT_STOMATAL_CLOSURE_POTENTIAL = -1500.0u"J/kg"
 const SITE_STOMATAL_CLOSURE_POTENTIAL = Dict{String,typeof(DEFAULT_STOMATAL_CLOSURE_POTENTIAL)}(
     "CapeTribulation"   => -1500.0u"J/kg",
-    "Calperum"          => -1500.0u"J/kg",
+    "Calperum"          => -2500.0u"J/kg",
     "Whroo"             => -1500.0u"J/kg",
     "Wallaby"           => -1500.0u"J/kg",
     "GWW"               => -1500.0u"J/kg",
-    "Longreach"         => -1500.0u"J/kg",
-    "TiTreeEast"        => -1500.0u"J/kg",
-    "AliceSpringsMulga" => -1500.0u"J/kg",
+    "Longreach"         => -2500.0u"J/kg",
+    "TiTreeEast"        => -2500.0u"J/kg",
+    "AliceSpringsMulga" => -2500.0u"J/kg",
 )
 stomatal_closure_potential(site_name) = get(SITE_STOMATAL_CLOSURE_POTENTIAL, site_name, DEFAULT_STOMATAL_CLOSURE_POTENTIAL)
 soil_hydraulic_model(site_name) = Microclimate.example_soil_hydraulic_model(;
@@ -242,7 +252,7 @@ const SITE_ORGANIC_CAP = Dict(
     "CapeTribulation"   => true,
     "Calperum"          => false,
     "Whroo"             => false,
-    "Wallaby"           => true,
+    "Wallaby"           => false,
     "GWW"               => false,
     "Longreach"         => false,
     "TiTreeEast"        => false,
@@ -263,7 +273,7 @@ organic_cap(site_name) = get(SITE_ORGANIC_CAP, site_name, false)
 #   :slga_uniform -- the same real SLGA fetch, collapsed to one depth-weighted
 #                     mean slab (flatten_soil_profile, utils.jl) BEFORE either
 #                     model runs -- both then see the exact same flat numbers,
-#                     for a genuine like-for-like comparison. Also avoids
+#                     for a like-for-like comparison. Also avoids
 #                     RunModelFull's indefinite hang on a full per-depth SLGA
 #                     profile (bisected to Smax; see
 #                     micropoint/ozflux/README.md) -- not that it matters
@@ -302,11 +312,11 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
     "CapeTribulation" => :clay_loam,
-    "Calperum" => :sandy_clay_loam,
+    "Calperum" => :sandy_loam,
     "Wallaby" => :clay_loam,
     "Whroo" => :clay_loam,
     "GWW" => :clay_loam,
-    "Longreach" => :clay_loam,
+    "Longreach" => :clay,
     "TiTreeEast" => :clay_loam,
     "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
@@ -362,7 +372,7 @@ const SITE_HEIGHT_SERIES = Dict{String,Vector{Tuple{Float64,String}}}(
     "Wallaby" => [
         (5.0, "Ta_HMP_5m"),
     ],
-    # canopy_height=6.5m -- genuine sub-canopy-to-near-top mast profile.
+    # canopy_height=6.5m -- sub-canopy-to-near-top mast profile.
     "AliceSpringsMulga" => [
         (2.0,  "Ta_HMP_200cm"),  (2.0,  "Ws_SENTRY_200cm_Av"),
         (4.25, "Ta_HMP_425cm"),  (4.25, "Ws_SENTRY_425cm_Av"),

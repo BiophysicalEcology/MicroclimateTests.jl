@@ -123,7 +123,7 @@ const GRIDMET_LAT_MIN =   24.1;  const GRIDMET_LAT_MAX =  49.4
 # whole country (e.g. a random site_subset) blows that box up to a multi-GB
 # read. Capping each tile's extent keeps every batch's bounding box close to
 # what a single site's own buffer already needed, so batching only combines
-# sites that are genuinely close together.
+# sites that are close together.
 const PREFETCH_TILE_DEG          = 3.0   # max lon/lat span of sites grouped into one batch
 const PREFETCH_MAX_SITES_PER_TILE = 40   # secondary cap even within one tile
 
