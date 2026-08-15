@@ -44,7 +44,7 @@ soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture,
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
 canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact), near_field_subdivisions=20,
-    relaxation=0.7, max_air_temperature_deviation=40.0u"K", aitken_omega_max=0.8, min_ground_resistance=5.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
+    relaxation=0.7, max_air_temperature_deviation=40.0u"K", aitken_omega_max=0.8, min_ground_resistance=10.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
 # Raised from the 0.02 m/s default -- near-calm nights were driving canopy_top_flux_boundary's ±40K clamp.
@@ -55,8 +55,8 @@ boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
 #                                         mixing_length_coefficient = 2.0,
 #                                         mixing_length_pai_coefficient = 0.25,
 #                                         )
-canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
-#canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
+#canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
+canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
 # NoCanopy + a PAI-derived shade fraction + a wind-speed knockdown + a large
 # horizon angle (sun only reaches the ground near-overhead) -- how forest
@@ -153,7 +153,7 @@ const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
 const SITE_PAI_SHAPE = Dict(
     "CapeTribulation" => :top_heavy,
     "Calperum"        => :uniform,
-    "Whroo"           => :bottom_heavy,
+    "Whroo"           => :uniform,
     "Wallaby"         => :uniform,
     "GWW"             => :uniform,  
     "Longreach"       => :uniform,       # grassland -- no crown structure
@@ -166,7 +166,7 @@ const SITE_PAI_SHAPE = Dict(
 const SITE_LEAF_REFLECTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
     "Calperum"        => 0.25,
-    "Whroo"           => 0.25,
+    "Whroo"           => 0.20,
     "Wallaby"         => 0.15,
     "GWW"             => 0.30,
     "Longreach"       => 0.25,
@@ -176,7 +176,7 @@ const SITE_LEAF_REFLECTANCE = Dict{String,Float64}(
 const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
     "Calperum"        => 0.15,
-    "Whroo"           => 0.25,
+    "Whroo"           => 0.20,
     "Wallaby"         => 0.25,
     "GWW"             => 0.10,
     "Longreach"       => 0.25,
