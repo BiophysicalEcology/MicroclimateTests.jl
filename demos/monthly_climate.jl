@@ -42,7 +42,6 @@ model = MicroMapModel(;
     roughness_height_source = 0.004u"m",
     compute_terrain         = false,
 )
-import ZarrDatasets
 problem = MicroVectorProblem(;
     model,
     points,

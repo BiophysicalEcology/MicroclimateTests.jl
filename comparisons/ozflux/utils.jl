@@ -75,7 +75,7 @@ _build_depths(base_depths_m, extra_depths_m) = sort(unique(vcat(base_depths_m, e
 # though its density was correctly high -- an unequal-layer-thickness
 # artifact, not a bug in the PAI math. Uniform N=50 spacing avoids it
 # entirely (matches micropoint's own approach) at the cost of more layers.
-const N_CANOPY_LAYERS = 50  # wind_attenuation_profile requires at least 10
+const N_CANOPY_LAYERS = 20  # wind_attenuation_profile requires at least 10
 const N_ABOVE_CANOPY_POINTS = 6  # graded points from canopy_height up to reference_height
 
 # Full height grid: N_CANOPY_LAYERS evenly-spaced canopy points up to

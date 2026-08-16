@@ -156,7 +156,6 @@ model = MicroMapModel(;
     compute_terrain         = false,
     output_layers,
 )
-import ZarrDatasets
 problem = MicroVectorProblem(;
     model,
     points,

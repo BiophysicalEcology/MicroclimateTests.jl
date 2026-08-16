@@ -36,10 +36,10 @@ soil_properties_model_choice = Microclimate.example_soil_properties_model()
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
 canopy_convergence_model_choice = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80), relaxation=0.5) # set relaxation high for short canopies
+    convergence=IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80), relaxation=0.8) # set relaxation high for short canopies
 canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
 canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
-rainfall_schedule_choice     = HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
+rainfall_schedule_choice     = DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
@@ -167,7 +167,7 @@ const SITE_LEAF_REFLECTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
     "Calperum"        => 0.25,
     "Whroo"           => 0.20,
-    "Wallaby"         => 0.15,
+    "Wallaby"         => 0.25,
     "GWW"             => 0.30,
     "Longreach"       => 0.25,
     "TiTreeEast"        => 0.25,
@@ -197,11 +197,13 @@ const DEFAULT_LEAF_PARAMETERS = (
 )
 const SITE_LEAF_PARAMETERS = Dict(
     "CapeTribulation"   => DEFAULT_LEAF_PARAMETERS,
-    "Calperum"          => DEFAULT_LEAF_PARAMETERS,
+    "Calperum"          => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
+                            leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=0.0,),
     "Whroo"             => DEFAULT_LEAF_PARAMETERS,
     "Wallaby"           => DEFAULT_LEAF_PARAMETERS,
     "GWW"               => DEFAULT_LEAF_PARAMETERS,
-    "Longreach"         => DEFAULT_LEAF_PARAMETERS,
+    "Longreach"         => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
+                            leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=0.0,),
     "TiTreeEast"        => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
                             leaf_water_potential=0.0u"J/kg", canopy_projection_ratio=1.0,),
     "AliceSpringsMulga" => (leaf_length=0.02u"m", leaf_width=0.005u"m", leaf_emissivity=0.97,
@@ -311,14 +313,14 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 )
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
-    "CapeTribulation" => :clay_loam,
-    "Calperum" => :sandy_loam,
-    "Wallaby" => :clay_loam,
-    "Whroo" => :clay_loam,
-    "GWW" => :clay_loam,
-    "Longreach" => :clay,
-    "TiTreeEast" => :clay_loam,
-    "AliceSpringsMulga" => :clay_loam,
+    # "CapeTribulation" => :clay_loam,
+    # "Calperum" => :sandy_loam,
+    # "Wallaby" => :clay_loam,
+    # "Whroo" => :clay_loam,
+    # "GWW" => :clay_loam,
+    # "Longreach" => :clay,
+    # "TiTreeEast" => :clay_loam,
+    # "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
 soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
 

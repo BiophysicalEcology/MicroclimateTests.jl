@@ -24,9 +24,9 @@ include("pipeline.jl")
 include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
-site_name = "CapeTribulation"  # "CapeTribulation", "Calperum" (:legacy), "Whroo", "Wallaby", "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
-years = [2025]
-max_days = 10  # set e.g. 30 for a fast iteration loop
+site_name = "Longreach"  # "CapeTribulation", "Calperum" (:legacy), "Whroo", "Wallaby", "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
+years = [2020]
+max_days = 90  # set e.g. 30 for a fast iteration loop
 forcing_source = :gapfilled  # :tower, :silo (gridded forcing), :gapfilled (tower + SILO-filled gaps), or :daily (real tower data reduced to a daily envelope, then diel-synthesized the same way :silo is -- isolates hourly-forcing-noise effects from real-vs-gridded-value effects)
 canopy_mode = :full  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation)
 
@@ -40,7 +40,7 @@ plot_end   = nothing
 plot_start = DateTime(years[1], 1, 1, 0)
 plot_end   = DateTime(years[1], 12, 30, 23)
 plot_forcing = false  # false: skip the Ta/RH/Ws/Fsd/Fld/Precip forcing-sanity plots
-plot_variable = nothing#"Ts"  # nothing plots every variable; or a short key: "Fsu","Flu","Fn","Fh","Fe","Fg","Ts","Sws", or a height-series name like "Ta_HMP_2m" -- stats are still computed/printed for all either way
+plot_variable = nothing  # nothing plots every variable; or a short key: "Fsu","Flu","Fn","Fh","Fe","Fg","Ts","Sws", or a height-series name like "Ta_HMP_2m" -- stats are still computed/printed for all either way
 
 stats = report_site_results(result, result.output; plot_start, plot_end, display_plots=true,
     source="$(forcing_source)_$(canopy_mode)", plot_forcing, plot_variable)

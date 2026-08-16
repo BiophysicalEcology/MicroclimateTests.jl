@@ -412,7 +412,11 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
             leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
-            stomatal_model = MoistureResponsiveStomatalConductance(),
+            stomatal_model = MoistureResponsiveStomatalConductance(conductance = LeafEvaporationParameters(;
+                    abaxial_vapour_conductance=0.3u"mol/m^2/s", adaxial_vapour_conductance=0.0u"mol/m^2/s",
+                    cuticular_conductance=0.01u"mol/m^2/s",
+                )
+            ),
             convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
             wind_model = canopy_wind_model_choice)
     end
