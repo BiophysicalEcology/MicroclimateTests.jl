@@ -41,8 +41,10 @@ end
 # see comparisons/ozflux/report.jl's _profile_series) as a line, micropoint's
 # own evenly-spaced grid as a second line, tower obs at each configured
 # sensor height as points.
-function _profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, mp_convert; units)
-    (; t_model, heights, resolved, hourly, height_series, canopy_mode) = result
+function _profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, mp_convert; units,
+                          mp_soil_mat=nothing, mp_depth_m=nothing, xlims=:auto)
+    (; t_model, heights, resolved, hourly, height_series, canopy_mode, depths) = result
+    surface_i = argmin(ustrip.(u"m", depths))
     canopy_height = resolved.canopy_height
     title = Dates.format(dt, "yyyy-mm-dd HH:MM")
     i = findfirst(==(dt), t_model)
@@ -54,9 +56,11 @@ function _profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, 
     order = sortperm(heights_m)
     keep = [k for k in order if !ismissing(jl_vals[k])]
     p = plot(jl_vals[keep], heights_m[keep]; label="Julia", color=:black, lw=1.5,
-        xlabel=units, ylabel="height (m)", title, titlefontsize=8, legend=false)
+        marker=:circle, ms=3, markerstrokewidth=0,
+        xlabel=units, ylabel="height (m)", title, titlefontsize=8, legend=false, xlims)
     mp_vals = mp_convert.(mp_mat[i, :])
-    plot!(p, mp_vals, mp_z_m; label="micropoint", color=:steelblue, lw=1.5)
+    plot!(p, mp_vals, mp_z_m; label="micropoint", color=:steelblue, lw=1.5,
+        marker=:circle, ms=3, markerstrokewidth=0)
     hline!(p, [ustrip(u"m", canopy_height)]; label=nothing, color=:green, ls=:dash, lw=1)
     row = findfirst(==(dt), hourly.DateTime)
     if row !== nothing
@@ -67,13 +71,51 @@ function _profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, 
                 markerstrokewidth=1.5, markerstrokecolor=:white)
         end
     end
+
+    # Predicted soil surface temperature (shallowest depth node, both models)
+    # as a single point at height 0 -- context for the air profile's ground
+    # boundary, without the clutter of the full depth profile (see
+    # plot_soil_profiles3).
+    if field == :air_temperature && mp_soil_mat !== nothing
+        jl_surface = jl_convert(output.soil_temperature[i, surface_i])
+        scatter!(p, [jl_surface], [0.0]; label=nothing, color=:black, ms=4, markerstrokewidth=0)
+        mp_surface_i = argmin(mp_depth_m)
+        mp_surface = mp_convert(mp_soil_mat[i, mp_surface_i])
+        scatter!(p, [mp_surface], [0.0]; label=nothing, color=:steelblue, ms=4, markerstrokewidth=0)
+    end
     return p
+end
+
+# Shared x-axis range for a plot_profiles3 grid, mirroring
+# comparisons/ozflux/report.jl's _shared_profile_xlims.
+function _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert)
+    (; t_model, heights, resolved, hourly, height_series, canopy_mode) = result
+    canopy_height = resolved.canopy_height
+    vals = Float64[]
+    for dt in profile_times
+        i = findfirst(==(dt), t_model)
+        i === nothing && continue
+        append!(vals, Iterators.filter(isfinite, skipmissing(_vertical_profile(output, heights, canopy_height, i, field, canopy_mode, jl_convert))))
+        append!(vals, filter(isfinite, mp_convert.(mp_mat[i, :])))
+        row = findfirst(==(dt), hourly.DateTime)
+        row === nothing && continue
+        for (h, name) in height_series
+            (_height_field(name) == field && name in names(hourly)) || continue
+            v = hourly[row, name]
+            (!ismissing(v) && isfinite(Float64(v))) && push!(vals, Float64(v))
+        end
+    end
+    isempty(vals) && return :auto
+    lo, hi = extrema(vals)
+    pad = 0.05 * max(hi - lo, 1.0e-6)
+    return (lo - pad, hi + pad)
 end
 
 # Grid of _profile_panel3, one panel per profile_times entry.
 function plot_profiles3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert;
-                         units, save_dir=nothing, tag="", display_plots=false)
-    panels = [_profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, mp_convert; units) for dt in profile_times]
+                         units, save_dir=nothing, tag="", display_plots=false, mp_soil_mat=nothing, mp_depth_m=nothing)
+    xlims = _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert)
+    panels = [_profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, mp_convert; units, mp_soil_mat, mp_depth_m, xlims) for dt in profile_times]
     ncols = min(4, length(panels))
     nrows = cld(length(panels), ncols)
     p = plot(panels...; layout=(nrows, ncols), size=(320 * ncols, 260 * nrows),
@@ -84,6 +126,125 @@ function plot_profiles3(result, output, profile_times, field, jl_convert, mp_mat
         savefig(p, joinpath(save_dir, "$(tag)_$(field)_profiles.png"))
     end
     return nothing
+end
+
+# Soil temperature vs depth at a single hour, both models -- same conventions
+# as _profile_panel3, depth plotted as negative height so 0 is the surface.
+# y-axis fixed to (-2, ~0) m so panels stay comparable regardless of the
+# models' own deepest node.
+function _soil_profile_panel3(result, output, dt, mp_soil_mat, mp_depth_m, mp_air_mat, mp_z_m; xlims=:auto)
+    (; t_model, hourly, depths, heights, resolved, canopy_mode, height_series) = result
+    canopy_height = resolved.canopy_height
+    title = Dates.format(dt, "yyyy-mm-dd HH:MM")
+    i = findfirst(==(dt), t_model)
+    if i === nothing
+        return plot(; title="$title\noutside solved range", titlefontsize=7, framestyle=:none)
+    end
+    depths_m = -ustrip.(u"m", depths)
+    jl_soil = ustrip.(u"°C", output.soil_temperature[i, :])
+    order = sortperm(depths_m)
+    p = plot(jl_soil[order], depths_m[order]; label=nothing, color=:black, lw=1.5,
+        marker=:circle, ms=3, markerstrokewidth=0,
+        xlabel="°C", ylabel="height (m)", title, titlefontsize=8, legend=false, xlims, ylims=(-2.0, 0.5))
+    mp_depths_m = -mp_depth_m
+    order_md = sortperm(mp_depths_m)
+    plot!(p, mp_soil_mat[i, order_md], mp_depths_m[order_md]; label=nothing, color=:steelblue, lw=1.5,
+        marker=:circle, ms=3, markerstrokewidth=0)
+    row = findfirst(==(dt), hourly.DateTime)
+    if row !== nothing
+        for r in _hourly_depth_series(hourly, "Ts")
+            v = r.values[row]
+            ismissing(v) || scatter!(p, [Float64(v)], [-r.depth_m]; label=nothing, color=:red, ms=6,
+                markerstrokewidth=1.5, markerstrokecolor=:white)
+        end
+    end
+
+    _plot_near_ground_air!(p, output, heights, canopy_height, i, canopy_mode, :black)
+    mp_keep = _near_ground_indices(mp_z_m, NEAR_GROUND_TOP_M)
+    kma = mp_keep[sortperm(mp_z_m[mp_keep])]
+    plot!(p, mp_air_mat[i, kma], mp_z_m[kma]; label=nothing, color=:steelblue, lw=1.5,
+        marker=:circle, ms=3, markerstrokewidth=0)
+    row !== nothing && _scatter_near_ground_obs!(p, hourly, row, height_series)
+    return p
+end
+
+# Shared x-axis range for a plot_soil_profiles3 grid. Julia output + obs
+# only -- micropoint's own soil/near-ground-air arrays carry real NaN
+# cascades on some sites/hours (not a filtering bug), which would otherwise
+# blow the range out to the whole panel's auto-scale anyway.
+function _shared_soil_profile_xlims3(result, output, profile_times, mp_soil_mat, mp_air_mat, mp_z_m)
+    (; t_model, hourly, heights, resolved, canopy_mode, height_series) = result
+    canopy_height = resolved.canopy_height
+    vals = Float64[]
+    for dt in profile_times
+        i = findfirst(==(dt), t_model)
+        i === nothing && continue
+        append!(vals, Iterators.filter(isfinite, ustrip.(u"°C", output.soil_temperature[i, :])))
+        air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, canopy_mode, t -> ustrip(u"°C", t))
+        heights_m = ustrip.(u"m", heights)
+        for k in eachindex(heights_m)
+            (heights_m[k] <= NEAR_GROUND_TOP_M && !ismissing(air_vals[k]) && isfinite(air_vals[k])) && push!(vals, air_vals[k])
+        end
+        row = findfirst(==(dt), hourly.DateTime)
+        row === nothing && continue
+        for r in _hourly_depth_series(hourly, "Ts")
+            v = r.values[row]
+            (!ismissing(v) && isfinite(Float64(v))) && push!(vals, Float64(v))
+        end
+        for (h, name) in height_series
+            (h <= NEAR_GROUND_TOP_M && _height_field(name) == :air_temperature && name in names(hourly)) || continue
+            v = hourly[row, name]
+            (!ismissing(v) && isfinite(Float64(v))) && push!(vals, Float64(v))
+        end
+    end
+    isempty(vals) && return :auto
+    lo, hi = extrema(vals)
+    pad = 0.05 * max(hi - lo, 1.0e-6)
+    return (lo - pad, hi + pad)
+end
+
+# Grid of _soil_profile_panel3, one panel per profile_times entry.
+function plot_soil_profiles3(result, output, profile_times, mp_soil_mat, mp_depth_m, mp_air_mat, mp_z_m;
+                              save_dir=nothing, tag="", display_plots=false)
+    xlims = _shared_soil_profile_xlims3(result, output, profile_times, mp_soil_mat, mp_air_mat, mp_z_m)
+    panels = [_soil_profile_panel3(result, output, dt, mp_soil_mat, mp_depth_m, mp_air_mat, mp_z_m; xlims) for dt in profile_times]
+    ncols = min(4, length(panels))
+    nrows = cld(length(panels), ncols)
+    p = plot(panels...; layout=(nrows, ncols), size=(320 * ncols, 260 * nrows),
+        plot_title="soil_temperature profile — $(result.site_name) (Julia vs micropoint)")
+    display_plots && display(p)
+    if save_dir !== nothing
+        mkpath(save_dir)
+        savefig(p, joinpath(save_dir, "$(tag)_soil_temperature_profiles.png"))
+    end
+    return nothing
+end
+
+# Per-layer plant area index vs height, both models -- Julia's own layer grid
+# vs micropoint's canopy_layers.csv (write_ozflux_micropoint_inputs.jl's
+# micropoint_canopy_layers, shaped to match Julia's PAI profile on a separate,
+# evenly-spaced grid). Static structure, not time-varying -- a single panel.
+# :legacy (NoCanopy) has no per-layer PAI -- skipped.
+function plot_plant_area_index3(result, mp; save_dir=nothing, tag="", display_plots=false)
+    canopy_model = result.problem.model.canopy_model
+    canopy_model isa NoCanopy && return nothing
+    pai = canopy_model.plant_area_index
+    layer_heights = Microclimate.canopy_layer_heights(result.heights, canopy_model.canopy_height, length(pai)).layer_heights
+    heights_m = ustrip.(u"m", layer_heights)
+    order = sortperm(heights_m)
+    p = plot(pai[order], heights_m[order]; label="Julia", color=:black, lw=1.5,
+        marker=:circle, ms=4, markerstrokewidth=0,
+        xlabel="plant area index (m²/m²)", ylabel="height (m)",
+        title="Plant area index — $(result.site_name) (Julia vs micropoint)", legend=:bottomright)
+    order_mp = sortperm(mp.z_m)
+    plot!(p, mp.paii[order_mp], mp.z_m[order_mp]; label="micropoint", color=:steelblue, lw=1.5,
+        marker=:circle, ms=4, markerstrokewidth=0)
+    display_plots && display(p)
+    if save_dir !== nothing
+        mkpath(save_dir)
+        savefig(p, joinpath(save_dir, "$(tag)_plant_area_index.png"))
+    end
+    return p
 end
 
 # Top-level entry: stats/plots for every comparison target (radiation,
@@ -248,7 +409,11 @@ function report_site_results3(result, mp; outdir, plot_start=nothing, plot_end=n
     # Vertical profile snapshots (Ta, Ws, AH) at profile_times.
     # ══════════════════════════════════════════════════════════════════════
     plot_profiles3(result, output, profile_times, :air_temperature, t -> ustrip(u"°C", t), mp.tair, mp.z_m, identity;
-        units="°C", save_dir=site_dir("profiles_vertical"), tag, display_plots=display_plots_3way)
+        units="°C", save_dir=site_dir("profiles_vertical"), tag, display_plots=display_plots_3way,
+        mp_soil_mat=mp.tsoil, mp_depth_m=mp.depth_m)
+    plot_soil_profiles3(result, output, profile_times, mp.tsoil, mp.depth_m, mp.tair, mp.z_m;
+        save_dir=site_dir("profiles_vertical"), tag, display_plots=display_plots_3way)
+    plot_plant_area_index3(result, mp; save_dir=site_dir("profiles_vertical"), tag, display_plots=display_plots_3way)
     plot_profiles3(result, output, profile_times, :wind_speed, w -> ustrip(u"m/s", w), mp.wind, mp.z_m, identity;
         units="m/s", save_dir=site_dir("profiles_vertical"), tag, display_plots=display_plots_3way)
     output_ah = _with_absolute_humidity(output)

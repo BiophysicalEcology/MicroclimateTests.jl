@@ -224,6 +224,8 @@ function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attr
             soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
             soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
         end
+        macropores(site_name) && apply_macropore_boost!(soil_profile, depths;
+            max_boost=MACROPORE_MAX_BOOST, taper_depth=MACROPORE_TAPER_DEPTH)
         _SOIL_CACHE[cache_key] = soil_profile
         return soil_profile
     end
@@ -255,6 +257,8 @@ function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attr
     end
     #soil_profile.bulk_density .*= 1.4
     println(soil_profile.bulk_density)
+    macropores(site_name) && apply_macropore_boost!(soil_profile, depths;
+        max_boost=MACROPORE_MAX_BOOST, taper_depth=MACROPORE_TAPER_DEPTH)
     if source === :slga_uniform
         soil_profile = flatten_soil_profile(soil_profile, depths)
     end
@@ -410,7 +414,8 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
         plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
+            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
+            interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(conductance = LeafEvaporationParameters(;
                     abaxial_vapour_conductance=0.3u"mol/m^2/s", adaxial_vapour_conductance=0.0u"mol/m^2/s",
@@ -440,7 +445,7 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
     # back to the mean air temperature / a mid-range moisture guess for any
     # depth with no observation to anchor to).
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2)
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     inputs = MicroInputs(;
@@ -498,9 +503,10 @@ function initial_temperature_profile(ts_depths, depths, fallback_temperature)
     return [u"K"(_interp_flat(known_d, known_v_C, ustrip(u"m", d)) * u"°C") for d in depths]
 end
 
-function initial_moisture_profile(sws_depths, depths, fallback_fraction)
+function initial_moisture_profile(sws_depths, depths, fallback_fraction; scale=1.0)
     known_d, known_v = _known_depth_points(sws_depths)
     isempty(known_d) && return fill(fallback_fraction, length(depths))
+    known_v = known_v .* scale  # before clamping -- see sws_obs_scale (utils.jl)
     return [clamp(_interp_flat(known_d, known_v, ustrip(u"m", d)), 0.02, 0.5) for d in depths]
 end
 
@@ -608,7 +614,6 @@ function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full
 
     mean_air_temperature = mean(skipmissing(hourly.Ta)) * u"°C"
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2)
 
     site = Site(;
         latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
@@ -618,6 +623,7 @@ function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full
     )
     println("  Fetching SLGA soil texture...")
     soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     # Same construction as prepare_site's canopy_mode==:full branch. Note
@@ -632,7 +638,8 @@ function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full
         plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
+            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
+            interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
             convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
@@ -797,7 +804,8 @@ function prepare_site_daily(site_name, years; max_days=nothing, canopy_mode=:ful
         plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
+            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
+            interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
             convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
@@ -813,7 +821,7 @@ function prepare_site_daily(site_name, years; max_days=nothing, canopy_mode=:ful
         canopy_model, config)
 
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2)
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)
 
     # A minmax-driven solve still reads environment_hourly.pressure directly

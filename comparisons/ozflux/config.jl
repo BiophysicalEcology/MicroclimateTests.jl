@@ -33,13 +33,14 @@ soil_area_buffer_deg = 0.05
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 soil_properties_model_choice = Microclimate.example_soil_properties_model()
+rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics   
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
 canopy_convergence_model_choice = PicardCanopyConvergence(;
     convergence=IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80), relaxation=0.8) # set relaxation high for short canopies
 canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
 canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
-rainfall_schedule_choice     = DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
+rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
@@ -57,6 +58,7 @@ boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
 #                                         )
 #canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
 canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
+leaf_temperature_solver_choice = LinearizedLeafTemperature()#RootFindLeafTemperature() # LinearizedLeafTemperature()
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
 # NoCanopy + a PAI-derived shade fraction + a wind-speed knockdown + a large
 # horizon angle (sun only reaches the ground near-overhead) -- how forest
@@ -218,12 +220,12 @@ leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_nam
 const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
     "CapeTribulation"   => 0.13,  # dark, wet closed-canopy rainforest litter
-    "Calperum"          => 0.25,  # pale sandy mallee soil, sparse cover
+    "Calperum"          => 0.20,  # pale sandy mallee soil, sparse cover
     "Whroo"             => 0.10,  # box/ironbark woodland, leaf litter + some bare soil
     "Wallaby"           => 0.12,  # dense wet sclerophyll regrowth
     "GWW"               => 0.15,  # semi-arid eucalypt woodland, red sandy soil
     "Longreach"         => 0.25,  # dry grassland, pale soil/cured grass
-    "TiTreeEast"        => 0.15,  # central Australian red sand, sparse mulga/spinifex
+    "TiTreeEast"        => 0.20,  # central Australian red sand, sparse mulga/spinifex
     "AliceSpringsMulga" => 0.15,
 )
 
@@ -246,7 +248,9 @@ const SITE_STOMATAL_CLOSURE_POTENTIAL = Dict{String,typeof(DEFAULT_STOMATAL_CLOS
 )
 stomatal_closure_potential(site_name) = get(SITE_STOMATAL_CLOSURE_POTENTIAL, site_name, DEFAULT_STOMATAL_CLOSURE_POTENTIAL)
 soil_hydraulic_model(site_name) = Microclimate.example_soil_hydraulic_model(;
-    stomatal_closure_potential = stomatal_closure_potential(site_name))
+    stomatal_closure_potential = stomatal_closure_potential(site_name),
+    rainfall_entry_mode = rainfall_entry_mode_choice,
+    )
 
 # Organic litter-layer soil override -- not universal (grassland/sparse
 # mallee sites lack a real litter layer), off by default.
@@ -261,6 +265,25 @@ const SITE_ORGANIC_CAP = Dict(
     "AliceSpringsMulga" => false,
 )
 organic_cap(site_name) = get(SITE_ORGANIC_CAP, site_name, false)
+
+# Macropore/crack proxy -- boosts near-surface saturated_hydraulic_conductivity
+# (apply_macropore_boost!, utils.jl) to crudely approximate root-channel/crack
+# fast transmission, since this Campbell solver has no real bypass-flow term.
+# Off by default; not universal (dense root systems/shrink-swell clays favour
+# it, uniform sandy profiles don't need it).
+const MACROPORE_MAX_BOOST = 10.0
+const MACROPORE_TAPER_DEPTH = 1.0u"m"
+const SITE_MACROPORES = Dict(
+    "CapeTribulation"   => false,
+    "Calperum"          => false,
+    "Whroo"             => false,
+    "Wallaby"           => false,
+    "GWW"               => false,
+    "Longreach"         => false,
+    "TiTreeEast"        => false,
+    "AliceSpringsMulga" => false,
+)
+macropores(site_name) = get(SITE_MACROPORES, site_name, false)
 
 # ── Soil source: real per-site SLGA fetch, a depth-flattened version of the
 # same SLGA fetch, or a fixed literature texture class (Campbell & Norman
@@ -313,14 +336,14 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 )
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
-    # "CapeTribulation" => :clay_loam,
-    # "Calperum" => :sandy_loam,
-    # "Wallaby" => :clay_loam,
-    # "Whroo" => :clay_loam,
-    # "GWW" => :clay_loam,
-    # "Longreach" => :clay,
-    # "TiTreeEast" => :clay_loam,
-    # "AliceSpringsMulga" => :clay_loam,
+    #"CapeTribulation" => :clay_loam,
+    "Calperum" => :sandy_loam,
+    "Wallaby" => :clay_loam,
+    "Whroo" => :clay_loam,
+    "GWW" => :clay_loam,
+    #"Longreach" => :clay,
+    "TiTreeEast" => :clay_loam,
+    "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
 soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
 

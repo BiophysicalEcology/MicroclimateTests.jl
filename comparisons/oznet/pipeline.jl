@@ -33,7 +33,8 @@ end
 function build_micro_model(depths)
     soil_properties_model = Microclimate.example_soil_properties_model()
     soil_hydraulic_model  = Microclimate.example_soil_hydraulic_model(;
-        infiltration_algorithm = infiltration_algorithm_choice)
+        infiltration_algorithm = infiltration_algorithm_choice,
+        rainfall_entry_mode = rainfall_entry_mode_choice)
 
     micro_config = MicroConfig(;
         convergence            = convergence_choice,

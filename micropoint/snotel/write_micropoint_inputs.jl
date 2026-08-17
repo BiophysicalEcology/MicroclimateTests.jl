@@ -36,7 +36,7 @@ function write_micropoint_inputs(micro_out, prep, outdir)
     # noon) -- SolarRadiation.jl's hour_angle() defaults longitude_correction
     # to 0 and it's never overridden anywhere in Microclimate.jl/
     # MicroclimateMapper.jl (confirmed via source). micropoint's obs_time must
-    # be genuine UTC (its own docs). Without this shift, micropoint computes
+    # be UTC (its own docs). Without this shift, micropoint computes
     # solar geometry for the wrong instant -- confirmed empirically: Rdirdown
     # was collapsing to exactly 0 at the labeled "solar noon" on the clearest
     # days, because a site ~111°W's ~7.4h offset shifted what micropoint saw

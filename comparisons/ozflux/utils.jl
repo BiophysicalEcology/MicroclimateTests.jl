@@ -23,6 +23,14 @@ fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
     @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  (n=%d)", s.r, s.rmse, s.bias, s.n)
 
+# Longreach's Sws sensor appears to report degree-of-saturation (fraction of
+# pore space) rather than the volumetric water content its own m^3/m^3
+# metadata claims -- obs peaks ~0.77, above plausible soil porosity. Applied
+# to both the obs comparison (report.jl) and the initial-condition read
+# (pipeline.jl), which both source the same raw column; a no-op elsewhere.
+sws_obs_scale(site_name, soil_profile) =
+    site_name == "Longreach" ? 1 - soil_profile.bulk_density[1] / soil_profile.mineral_density[1] : 1.0
+
 # Truncates a DailyMinMaxEnvironment's per-day forcing series to the first
 # `ndays` days. Needed by prepare_site_silo's max_days path: fetch_silo_forcing
 # is deliberately fetched full-year (silo_gapfill_donor's rainfall donor needs
@@ -220,6 +228,19 @@ function flatten_soil_profile(soil_profile, depths; active_depth=0.3u"m")
             root_density = soil_profile.hydraulics.root_density,
         ),
     )
+end
+
+# Depth-tapered saturated_hydraulic_conductivity multiplier -- a bulk,
+# single-domain proxy for root-channel/crack macroporosity (this Campbell
+# matrix-flow solver has no true bypass-flow term). Linear from `max_boost`
+# at the surface down to 1.0 at `taper_depth`, unchanged below.
+function apply_macropore_boost!(soil_profile, depths; max_boost, taper_depth)
+    ksat = soil_profile.hydraulics.saturated_hydraulic_conductivity
+    for i in eachindex(depths)
+        frac = clamp(1.0 - depths[i] / taper_depth, 0.0, 1.0)
+        ksat[i] *= 1.0 + (max_boost - 1.0) * frac
+    end
+    return soil_profile
 end
 
 # ── OzFlux NetCDF reading ─────────────────────────────────────────────────────

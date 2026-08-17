@@ -22,6 +22,7 @@ const OZNET_SITEINFO = joinpath(OZNET_DATA_DIR, "oznetsiteinfo2.csv")
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 infiltration_algorithm_choice  = MatricPotentialAlgorithm()   # swap to MatricFluxPotentialAlgorithm() etc. to compare
+rainfall_entry_mode_choice     = RateLimitedFrontRainfall()   # swap to RateLimitedFrontRainfall() or ImplicitFluxRainfall() to compare
 convergence_choice             = FixedIterationConvergence(10)
 rainfall_schedule_choice       = DailyRainfall()
 soil_moisture_strategy_choice  = DynamicSoilMoisture()

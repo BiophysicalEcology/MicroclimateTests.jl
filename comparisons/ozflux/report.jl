@@ -13,6 +13,13 @@ function _col(hourly, t_model, name)
     return [haskey(idx, t) ? col[idx[t]] : missing for t in t_model]
 end
 
+# Rescales an obs column by a constant factor, `missing` untouched -- used to
+# test whether a site's Sws sensor is reporting degree-of-saturation
+# (fraction of pore space) rather than the volumetric water content its own
+# metadata claims (see Longreach: obs peaks ~0.77, above plausible porosity).
+_scale_obs(obs_vec::Nothing, scale) = nothing
+_scale_obs(obs_vec, scale) = scale == 1.0 ? obs_vec : [ismissing(v) ? v : v * scale for v in obs_vec]
+
 function _height_index(heights, h_m; atol=0.05)
     findfirst(x -> abs(ustrip(u"m", x) - h_m) <= atol, heights)
 end
@@ -483,9 +490,9 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         end
         return nothing
     end
-    _depth_panels!(prefix, kind, model_mat, units, convert, ylims) = _panel_grids!(kind,
+    _depth_panels!(prefix, kind, model_mat, units, convert, ylims; obs_scale=1.0) = _panel_grids!(kind,
         [("$kind $(r.depth_m) m", convert(model_mat[:, argmin(abs.(ustrip.(u"m", depths) .- r.depth_m))]),
-          _col(hourly, t_model, "$(prefix)_$(r.depth_m)m"), units, prefix, "$(r.depth_m) m")
+          _scale_obs(_col(hourly, t_model, "$(prefix)_$(r.depth_m)m"), obs_scale), units, prefix, "$(r.depth_m) m")
          for r in _hourly_depth_series(hourly, prefix)];
         ylims)
 
@@ -615,11 +622,15 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
             (lo - pad, hi + pad)
         end
     end
-    for (prefix, kind, model_mat, units, convert, ylims) in (
-        ("Ts", "soil_temperature", output.soil_temperature, "°C", d -> ustrip.(u"°C", d), ts_ylims),
-        ("Sws", "soil_moisture", output.soil_moisture, "frac", identity, (0.0, 0.6)),
+    # sws_obs_scale (utils.jl): Longreach's Sws sensor appears to report
+    # degree-of-saturation rather than true volumetric water content --
+    # rescaled by the site's own void fraction, a no-op elsewhere. Also
+    # applied to the initial-condition read (pipeline.jl), same raw column.
+    for (prefix, kind, model_mat, units, convert, ylims, obs_scale) in (
+        ("Ts", "soil_temperature", output.soil_temperature, "°C", d -> ustrip.(u"°C", d), ts_ylims, 1.0),
+        ("Sws", "soil_moisture", output.soil_moisture, "frac", identity, (0.0, 0.6), sws_obs_scale(site_name, prep.problem.inputs.soil_profile)),
     )
-        _depth_panels!(prefix, kind, model_mat, units, convert, ylims)
+        _depth_panels!(prefix, kind, model_mat, units, convert, ylims; obs_scale)
     end
 
     # ── Multi-height Ta/Ws profiles -- routed to canopy- or profile-output

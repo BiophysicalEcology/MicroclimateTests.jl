@@ -24,9 +24,9 @@ include("pipeline.jl")
 include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
-site_name = "Longreach"  # "CapeTribulation", "Calperum" (:legacy), "Whroo", "Wallaby", "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
-years = [2020]
-max_days = 90  # set e.g. 30 for a fast iteration loop
+site_name = "CapeTribulation"  # "CapeTribulation", "Calperum" (:legacy), "Whroo", "Wallaby", "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
+years = [2015]
+max_days = nothing  # set e.g. 30 for a fast iteration loop
 forcing_source = :gapfilled  # :tower, :silo (gridded forcing), :gapfilled (tower + SILO-filled gaps), or :daily (real tower data reduced to a daily envelope, then diel-synthesized the same way :silo is -- isolates hourly-forcing-noise effects from real-vs-gridded-value effects)
 canopy_mode = :full  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation)
 
@@ -47,6 +47,6 @@ stats = report_site_results(result, result.output; plot_start, plot_end, display
 #display(stats)
 
 # ── Vertical canopy profiles (obs vs model) for a chosen date/hour range ──────
-profile_times = DateTime(years[1], 1, 1, 1):Hour(1):DateTime(years[1], 1, 1, 16)
+profile_times = DateTime(years[1], 11, 1, 1):Hour(1):DateTime(years[1], 11, 1, 16)
 #plot_canopy_profiles_all(result, result.output, profile_times)
 

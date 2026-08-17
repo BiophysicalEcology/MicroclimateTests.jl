@@ -40,169 +40,169 @@ weather_cache = Dict{Tuple{Symbol,String,Date,Date}, Any}()
 @time site_rows = run_site(row, weather_cache;
     sim_start, sim_end, auto_date_range, max_sim_years, plot_start, plot_end)
 
-using MySQL
-using DBInterface
-using DataFrames
+# using MySQL
+# using DBInterface
+# using DataFrames
 
-host = "115.146.93.180"
-uid = "general"
-pwd = "predecol"
-
-
-conn = DBInterface.connect(
-    MySQL.Connection,
-    host,
-    uid,
-    pwd;
-    db = "AWAPMoist",
-    port = 3306,
-    ssl_mode = MySQL.API.SSL_MODE_DISABLED,
-    ssl_enforce = false,
-    ssl_verify_server_cert = false,
-)
-#databases = DataFrame(DBInterface.execute(conn, "SHOW DATABASES"))
-tables = DataFrame(DBInterface.execute(conn, "SHOW TABLES FROM AWAPMoist"))
-display(tables)
-columns = DataFrame(DBInterface.execute(
-    conn,
-    "SHOW COLUMNS FROM AWAPMoist.1960"
-))
-display(columns)
-columns = DataFrame(DBInterface.execute(
-    conn,
-    "SHOW COLUMNS FROM AWAPMoist.latlon"
-))
-display(columns)
-columns = DataFrame(DBInterface.execute(
-    conn,
-    "SHOW COLUMNS FROM AWAPMoist.latlon_char"
-))
-display(columns)
+# host = "115.146.93.180"
+# uid = "general"
+# pwd = "predecol"
 
 
-function query_awap_moisture(
-    conn,
-    start_date::Date,
-    end_date::Date;
-    id::Union{Nothing,Integer}=nothing,
-)
-    start_date <= end_date ||
-        error("start_date must not be after end_date")
+# conn = DBInterface.connect(
+#     MySQL.Connection,
+#     host,
+#     uid,
+#     pwd;
+#     db = "AWAPMoist",
+#     port = 3306,
+#     ssl_mode = MySQL.API.SSL_MODE_DISABLED,
+#     ssl_enforce = false,
+#     ssl_verify_server_cert = false,
+# )
+# #databases = DataFrame(DBInterface.execute(conn, "SHOW DATABASES"))
+# tables = DataFrame(DBInterface.execute(conn, "SHOW TABLES FROM AWAPMoist"))
+# display(tables)
+# columns = DataFrame(DBInterface.execute(
+#     conn,
+#     "SHOW COLUMNS FROM AWAPMoist.1960"
+# ))
+# display(columns)
+# columns = DataFrame(DBInterface.execute(
+#     conn,
+#     "SHOW COLUMNS FROM AWAPMoist.latlon"
+# ))
+# display(columns)
+# columns = DataFrame(DBInterface.execute(
+#     conn,
+#     "SHOW COLUMNS FROM AWAPMoist.latlon_char"
+# ))
+# display(columns)
 
-    table_df = DataFrame(
-        DBInterface.execute(conn, "SHOW TABLES FROM AWAPMoist")
-    )
 
-    available_years = Set(
-        parse(Int, name)
-        for name in string.(table_df[:, 1])
-        if occursin(r"^\d{4}$", name)
-    )
+# function query_awap_moisture(
+#     conn,
+#     start_date::Date,
+#     end_date::Date;
+#     id::Union{Nothing,Integer}=nothing,
+# )
+#     start_date <= end_date ||
+#         error("start_date must not be after end_date")
 
-    requested_years = collect(year(start_date):year(end_date))
-    years = filter(in(available_years), requested_years)
+#     table_df = DataFrame(
+#         DBInterface.execute(conn, "SHOW TABLES FROM AWAPMoist")
+#     )
 
-    isempty(years) &&
-        error("No AWAPMoist tables exist between $start_date and $end_date")
+#     available_years = Set(
+#         parse(Int, name)
+#         for name in string.(table_df[:, 1])
+#         if occursin(r"^\d{4}$", name)
+#     )
 
-    missing_years = setdiff(requested_years, years)
-    if !isempty(missing_years)
-        @warn "No AWAPMoist tables found for these years" missing_years
-    end
+#     requested_years = collect(year(start_date):year(end_date))
+#     years = filter(in(available_years), requested_years)
 
-    clauses = String[]
-    parameters = Any[]
+#     isempty(years) &&
+#         error("No AWAPMoist tables exist between $start_date and $end_date")
 
-    for y in years
-        first_day = y == year(start_date) ? dayofyear(start_date) : 1
-        last_day  = y == year(end_date)   ? dayofyear(end_date)   :
-                    daysinyear(y)
+#     missing_years = setdiff(requested_years, years)
+#     if !isempty(missing_years)
+#         @warn "No AWAPMoist tables found for these years" missing_years
+#     end
 
-        if id === nothing
-            push!(clauses, """
-                SELECT
-                    $y AS yr,
-                    id,
-                    day,
-                    WRel1,
-                    WRel2
-                FROM AWAPMoist.`$y`
-                WHERE day BETWEEN ? AND ?
-            """)
+#     clauses = String[]
+#     parameters = Any[]
 
-            append!(parameters, (first_day, last_day))
-        else
-            push!(clauses, """
-                SELECT
-                    $y AS yr,
-                    id,
-                    day,
-                    WRel1,
-                    WRel2
-                FROM AWAPMoist.`$y`
-                WHERE day BETWEEN ? AND ?
-                  AND id = ?
-            """)
+#     for y in years
+#         first_day = y == year(start_date) ? dayofyear(start_date) : 1
+#         last_day  = y == year(end_date)   ? dayofyear(end_date)   :
+#                     daysinyear(y)
 
-            append!(parameters, (first_day, last_day, id))
-        end
-    end
+#         if id === nothing
+#             push!(clauses, """
+#                 SELECT
+#                     $y AS yr,
+#                     id,
+#                     day,
+#                     WRel1,
+#                     WRel2
+#                 FROM AWAPMoist.`$y`
+#                 WHERE day BETWEEN ? AND ?
+#             """)
 
-    sql = join(clauses, "\nUNION ALL\n") *
-          "\nORDER BY yr, day, id"
+#             append!(parameters, (first_day, last_day))
+#         else
+#             push!(clauses, """
+#                 SELECT
+#                     $y AS yr,
+#                     id,
+#                     day,
+#                     WRel1,
+#                     WRel2
+#                 FROM AWAPMoist.`$y`
+#                 WHERE day BETWEEN ? AND ?
+#                   AND id = ?
+#             """)
 
-    # Parameter binding in MySQL.jl requires a prepared statement.
-    stmt = DBInterface.prepare(conn, sql)
+#             append!(parameters, (first_day, last_day, id))
+#         end
+#     end
 
-    result = try
-        DataFrame(DBInterface.execute(stmt, Tuple(parameters)))
-    finally
-        DBInterface.close!(stmt)
-    end
+#     sql = join(clauses, "\nUNION ALL\n") *
+#           "\nORDER BY yr, day, id"
 
-    if !isempty(result)
-        result.date = [
-            Date(y, 1, 1) + Day(d - 1)
-            for (y, d) in zip(result.yr, result.day)
-        ]
+#     # Parameter binding in MySQL.jl requires a prepared statement.
+#     stmt = DBInterface.prepare(conn, sql)
 
-        select!(result, :id, :date, :WRel1, :WRel2)
-    end
+#     result = try
+#         DataFrame(DBInterface.execute(stmt, Tuple(parameters)))
+#     finally
+#         DBInterface.close!(stmt)
+#     end
 
-    return result
-end
+#     if !isempty(result)
+#         result.date = [
+#             Date(y, 1, 1) + Day(d - 1)
+#             for (y, d) in zip(result.yr, result.day)
+#         ]
 
-function nearest_awap_cell(conn, lon, lat)
-    sql = """
-        SELECT id, latitude, longitude
-        FROM AWAPMoist.latlon
-        ORDER BY
-            POWER(latitude - ?, 2) +
-            POWER(longitude - ?, 2)
-        LIMIT 1
-    """
+#         select!(result, :id, :date, :WRel1, :WRel2)
+#     end
 
-    stmt = DBInterface.prepare(conn, sql)
+#     return result
+# end
 
-    try
-        DataFrame(DBInterface.execute(stmt, (lat, lon)))
-    finally
-        DBInterface.close!(stmt)
-    end
-end
+# function nearest_awap_cell(conn, lon, lat)
+#     sql = """
+#         SELECT id, latitude, longitude
+#         FROM AWAPMoist.latlon
+#         ORDER BY
+#             POWER(latitude - ?, 2) +
+#             POWER(longitude - ?, 2)
+#         LIMIT 1
+#     """
 
-lon = siteinfo.lon[row]
-lat = siteinfo.lat[row]
+#     stmt = DBInterface.prepare(conn, sql)
 
-cell = nearest_awap_cell(conn, lon, lat)
-display(cell)
+#     try
+#         DataFrame(DBInterface.execute(stmt, (lat, lon)))
+#     finally
+#         DBInterface.close!(stmt)
+#     end
+# end
 
-cell_id = cell.id[1]
+# lon = siteinfo.lon[row]
+# lat = siteinfo.lat[row]
 
-moisture = query_awap_moisture(
-    conn,
-    Date(2010, 1, 1),
-    Date(2010, 12, 31);
-    id=cell_id,
-)
-display(moisture)
+# cell = nearest_awap_cell(conn, lon, lat)
+# display(cell)
+
+# cell_id = cell.id[1]
+
+# moisture = query_awap_moisture(
+#     conn,
+#     Date(2010, 1, 1),
+#     Date(2010, 12, 31);
+#     id=cell_id,
+# )
+# display(moisture)

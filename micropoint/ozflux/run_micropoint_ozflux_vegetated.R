@@ -29,15 +29,15 @@ p  <- as.list(read.csv(file.path(outdir, "params.csv"))[1, ])
 cp <- as.list(read.csv(file.path(outdir, "canopy_params.csv"))[1, ])
 layers <- read.csv(file.path(outdir, "canopy_layers.csv"))
 
-# Near-zero-but-nonzero swdown/difrad right at sunrise/sunset.
-solar_pre <- solarposition(p$lat, p$lon, year = climdata$obs_time)
-lowsun <- solar_pre$zen >= 89
+lowsun <- climdata$zenith_deg >= 89
 climdata$swdown[lowsun] <- 0
 climdata$difrad[lowsun] <- 0
 
-# micropoint's own internal layer depths (geometricCpp -- same spacing
-# createsoilc uses internally).
-r_depth_m <- getFromNamespace("geometricCpp", "micropoint")(p$nlayers, p$totaldepth)
+r_depth_m <- head(getFromNamespace("geometricCpp", "micropoint")(p$nlayers, 1.5 * p$totaldepth), p$nlayers + 1)
+
+for (k in 2:length(r_depth_m)) {
+  r_depth_m[k] <- max(r_depth_m[k], r_depth_m[k - 1] + 0.01)
+}
 
 # ── Soil: createsoilc(soiltype=p$soiltype) -- "Clay loam" placeholder for
 # soil_source=:slga (overridden below with soil_profile.csv's real SLGA
@@ -120,12 +120,22 @@ chunk_id <- ceiling(seq_len(nrow(climdata)) / chunk_size)
 chunks <- split(seq_len(nrow(climdata)), chunk_id)
 chunk_names <- as.character(seq_along(chunks))
 
+# Julia's own initial soil state, interpolated onto r_depth_m -- seeds the
+# first chunk instead of RunModelFull's generic auto-generated guess.
+initial_state <- read.csv(file.path(outdir, "initial_soil_state.csv"))
+SoilTempIni <- approx(initial_state$depth_m, initial_state$temp_C, r_depth_m, rule = 2)$y
+ThetaIni <- approx(initial_state$depth_m, initial_state$moisture_frac, r_depth_m, rule = 2)$y
+
 mout_list <- vector("list", length(chunks))
-SoilTempIni <- NA
-ThetaIni <- NA
 t0 <- Sys.time()
 for (i in seq_along(chunks)) {
   cd_chunk <- climdata[chunks[[i]], ]
+  # Flushed before the call -- RunModelFull crashes are native (segfault/stack
+  # overrun), bypassing R's own error handler entirely, so this is the only
+  # way to know which chunk it was.
+  cat(sprintf("  chunk %s/%d: rows %d-%d (%s to %s)\n", chunk_names[i], length(chunks),
+      min(chunks[[i]]), max(chunks[[i]]), cd_chunk$obs_time[1], cd_chunk$obs_time[nrow(cd_chunk)]))
+  flush(stdout())
   m <- RunModelFull(cd_chunk, soilc, vegp, paii, Lfrac, lat = p$lat, long = p$lon, zref = zref,
                      boundaryT = boundaryT, SoilTempIni = SoilTempIni, ThetaIni = ThetaIni)
   n_na <- sum(is.na(m$tair[, 1]))
@@ -154,7 +164,7 @@ mout <- setNames(lapply(var_names, function(nm) do.call(rbind, lapply(mout_list,
 # Rdirdown is beam-normal, not horizontal (confirmed via ?RunModelFull) --
 # convert to horizontal so it's directly comparable to Microclimate.jl's
 # own horizontal-irradiance convention.
-coszen <- pmax(cos(solar_pre$zen * pi / 180), 0)
+coszen <- pmax(cos(climdata$zenith_deg * pi / 180), 0)
 mout$Rdirdown <- mout$Rdirdown * coszen
 
 for (nm in names(mout)) {

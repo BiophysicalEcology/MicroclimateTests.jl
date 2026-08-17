@@ -10,11 +10,13 @@
 # evaluates the same density shape function pipeline.jl uses (PAI_SHAPES/
 # SITE_PAI_SHAPE) on that even grid instead, so both models start from the
 # same PAI *shape*, not just the same total. z_m/paii are bottom(1)-to-
-# top(n), micropoint's own convention.
-function micropoint_canopy_layers(site_name, canopy_height, target_pai; n=50)
+# top(n), micropoint's own convention. n defaults to N_CANOPY_LAYERS (utils.jl)
+# -- the same layer count Julia's own _build_heights uses -- not duplicated
+# separately, so the two can't silently drift apart.
+function micropoint_canopy_layers(site_name, canopy_height, target_pai; n=N_CANOPY_LAYERS)
     shape = PAI_SHAPES[get(SITE_PAI_SHAPE, site_name, :uniform)]
     layer_thickness = canopy_height / n
-    z_m = [(i / n) * canopy_height for i in 1:n]
+    z_m = _floor_ascending!([(i / n) * canopy_height for i in 1:n], NEAR_ZERO_FLOOR_M * u"m")
     density = shape(z_m, canopy_height)
     raw = density .* layer_thickness
     paii = raw .* (target_pai / sum(raw))
@@ -43,6 +45,13 @@ function write_ozflux_micropoint_inputs(result, outdir)
     # Floor guards the same near-zero-wind crash the old value happened to
     # avoid by construction.
     windspeed = forcing_used.Ws
+    # zenith_deg: Julia's own solar geometry, not micropoint's -- its
+    # solarposition() was dropped entirely in a recent micropoint update (no
+    # longer in NAMESPACE or anywhere in source), and reusing ours keeps both
+    # models on identical solar geometry anyway (see windspeed's own note on
+    # avoiding one model's internals leaking into the other's input, though
+    # here the alternative simply no longer exists).
+    zenith_deg = ustrip.(u"°", output.solar_radiation.zenith_angle[1:n])
     climdata = DataFrame(
         obs_time  = obs_time_str,
         temp      = forcing_used.Ta,
@@ -54,6 +63,7 @@ function write_ozflux_micropoint_inputs(result, outdir)
         windspeed = max.(windspeed, 0.1),
         winddir   = zeros(n),
         precip    = forcing_used.Precip,
+        zenith_deg = zenith_deg,
     )
     CSV.write(joinpath(outdir, "climdata.csv"), climdata)
 
@@ -73,6 +83,16 @@ function write_ozflux_micropoint_inputs(result, outdir)
     CSV.write(joinpath(outdir, "soil_profile.csv"), DataFrame(
         depth_m = depths_m[nodes], smax = smax_profile, b = b_profile,
         psi_e = psi_e_profile, ksat = ksat_profile, rho_kgm3 = rho_profile,
+    ))
+
+    # Julia's own initial soil state -- R interpolates this onto r_depth_m
+    # for SoilTempIni/ThetaIni on the first chunk, instead of RunModelFull's
+    # generic auto-generated guess (a fixed depth-based formula unrelated to
+    # the real observed initial conditions).
+    initial_temp_C = ustrip.(u"°C", result.problem.inputs.initial_soil_temperature[nodes])
+    initial_moisture = result.problem.inputs.initial_soil_moisture[nodes]
+    CSV.write(joinpath(outdir, "initial_soil_state.csv"), DataFrame(
+        depth_m = depths_m[nodes], temp_C = initial_temp_C, moisture_frac = initial_moisture,
     ))
 
     # soil_source==:slga/:slga_uniform: createsoilc(soiltype="Clay loam") is
@@ -97,7 +117,7 @@ function write_ozflux_micropoint_inputs(result, outdir)
         elev_m = [ustrip(u"m", result.problem.inputs.site.elevation)],
         zref = [ustrip(u"m", resolved.reference_height)],
         gref = [site_albedo(resolved.site_name)], groundem = [emissivity],
-        nlayers = [15], totaldepth = [2.0],
+        nlayers = [15], totaldepth = [2.0],  # package default/vignette value; higher nlayers NaN-cascaded (unfloored internal geometricCpp)
         organic_cap = [organic_cap(resolved.site_name)],
         soiltype = [soiltype], soil_override = [soil_override],
     )

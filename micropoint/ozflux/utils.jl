@@ -17,7 +17,7 @@ function read_micropoint_output(outdir)
     layers = CSV.read(joinpath(outdir, "canopy_layers.csv"), DataFrame)
     soil_depths = CSV.read(joinpath(outdir, "soil_depths.csv"), DataFrame)
     return (; tair, tleaf, relhum, wind, Rdirdown, Rdifdown, Rswup, Rlwdown, Rlwup, tsoil, theta,
-              z_m = layers.z_m, depth_m = soil_depths.depth_m)
+              z_m = layers.z_m, paii = layers.paii, depth_m = soil_depths.depth_m)
 end
 
 # micropoint's own flat grid onto an arbitrary target height/depth -- same

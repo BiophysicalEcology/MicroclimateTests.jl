@@ -10,7 +10,7 @@ options(error = function() { traceback(2); quit(status = 1) })
 suppressMessages(library(micropoint))
 suppressMessages(library(microclimlearn))
 
-outdir <- "C:/git/MicroclimateTests.jl/micropoint/below_canopy/outputs"
+outdir <- "C:/git/MicroclimateTests.jl/micropoint/module_comparison/outputs"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 lat <- 49.96807
@@ -179,5 +179,170 @@ es5 <- satvap(tleaf5)
 ea5 <- satvap(tair5) * (rh5 / 100)
 write.csv(data.frame(z = z5, tleaf = tleaf5, tair = tair5, rh = rh5, es = es5, ea = ea5),
     file.path(outdir, "05_airtemphumidity.csv"), row.names = FALSE)
+
+# ── 5c: zero-stomatal-conductance, ground-temperature sweep ─────────────────
+# Isolates the heat-only (sensible-flux-driven) below-canopy transport from
+# stomatal/latent-heat coupling -- gs forced near-zero (not exactly 0, to
+# avoid rS = rhohair/gs blowing up to literal Inf) so rS is astronomically
+# large and Lz5 (latent) collapses to ~0, leaving temp_below purely driven
+# by Hz5/tground5. Reuses section 5's already-computed uf5/uh5/th5/TL5/
+# tsmod5/uz5/z5 (wind & radiation don't depend on tground or gs).
+gs5_zero <- 1e-9
+tground_sweep <- c(5, 10, 15, 20, 25, 30, 35)
+
+for (tg in tground_sweep) {
+  tleaf5c <- rep(th5 + 1, n5)
+  tair5c <- rep(th5, n5)
+  rh5c <- rep(weather$relhum[hr], n5)
+  ea5c <- satvap(tair5c) * (rh5c / 100)
+  aitkt5c <- list(oldv = tair5c, newv = tair5c, z = z5, hgt = vegp5$h)
+  aitkr5c <- list(oldv = ea5c, newv = ea5c, z = z5, hgt = vegp5$h)
+  error5c <- 1e99
+  itr5c <- 0
+
+  while (error5c > 1e-2 && itr5c < 200) {
+    lwb5c <- longwavebelow(paii5, lwdown5, tleaf5c, tg, 0.97, 0.97)
+    Rabs5c <- lwb5c$RlwLabs + tsmod5$Rleafabs
+
+    dT5c <- abs(tleaf5c - tair5c)
+    rHa5c <- leafresistance(tair5c, dT5c, uz5, vegp5$len, vegp5$wid, vegp5$x)
+    rS5c <- rhohair(tair5c, pk5) / gs5_zero
+
+    tleaf5c <- SolveEnergyBalance(tair5c, pk5, rh5c, Rabs5c, rHa5c, rS5c, G = 0, em = 0.97,
+        method = "Penman", iters = 4)
+
+    ph5c <- rhohair(tair5c, pk5)
+    cp5c <- cpair(tair5c)
+    Hz5c <- (ph5c * cp5c / rHa5c) * (tleaf5c - tair5c)
+    tairn5c <- temp_below(vegp5$h, paii5, TL5, uf5, pk5, Hz5c, tair5c, tleaf5c, tg)
+
+    rV5c <- rHa5c + rS5c
+    es5c <- satvap(tleaf5c)
+    ea5c <- satvap(tair5c) * (rh5c / 100)
+    Lz5c <- ((latvap(tleaf5c) * ph5c) / (rV5c * pk5)) * (es5c - ea5c)
+    rhn5c <- relhum_below(vegp5$h, paii5, TL5, uf5, pk5, Lz5c, rh5c, tair5c, tleaf5c, tg, soilrh5)
+    ean5c <- satvap(tairn5c) * (rhn5c / 100)
+
+    error5c <- max(abs(tair5c - tairn5c))
+    aitkt5c$oldv <- tair5c; aitkr5c$oldv <- ea5c
+    aitkt5c$newv <- tairn5c; aitkr5c$newv <- ean5c
+    aitkt5c <- aitken_weightdif(aitkt5c)
+    aitkr5c <- aitken_weightdif(aitkr5c)
+    tair5c <- aitkt5c$newv
+    rh5c <- (aitkr5c$newv / satvap(tair5c)) * 100
+
+    itr5c <- itr5c + 1
+  }
+  cat(sprintf("Section 5c (tground=%g): converged in %d iterations, error=%.5f\n", tg, itr5c, error5c))
+
+  # Diagnostic: ground-most resistance rHa at i=1 -- matches temp_below's own
+  # internal computation exactly (single term, since sumRH only has RH[1] at
+  # i=1). Direct analog of Julia's buffers.air_profile.resistance_to_ground[n]
+  # (n=ground-most in Julia's opposite indexing convention), for the
+  # ground-coupling-gain comparison.
+  ow_diag <- uf5 * (0.75 + 0.5 * cos(pi * (1 - z5[1] / vegp5$h)))
+  KH_diag <- TL5 * ow_diag^2
+  rHa_ground <- max(2, (1 / KH_diag) * (vegp5$h / n5))
+  cat(sprintf("  ground_resistance(R rHa_ground) = %.4f s/m\n", rHa_ground))
+
+  # Diagnostic: the actual GT value fed into H at i=1 (ground-most), using
+  # the converged tair5c -- includes rHa_ground AND the dz factor together,
+  # so this is the real operational weight R gives the ground term, not
+  # just the resistance in isolation.
+  dz_diag <- vegp5$h / n5
+  GT_ground <- (rhohair(tair5c[1], pk5) * cpair(tair5c[1]) / rHa_ground) * (tg - tair5c[1]) * dz_diag
+  cat(sprintf("  ground_flux(R GT, i=1) = %.4f  (dz=%.4f, tair[1]=%.3f)\n", GT_ground, dz_diag, tair5c[1]))
+
+  # Converged-state Hz (raw, pre-paii-weighted, matching temp_below's own SS
+  # = paii*Hz split) -- exported so Julia can inject the *exact same* SS
+  # source terms into canopy_air_profile! directly, single-pass, isolating
+  # the transport formula itself from any leaf-energy-balance formula
+  # differences between the two models.
+  dT5c_final <- abs(tleaf5c - tair5c)
+  rHa5c_final <- leafresistance(tair5c, dT5c_final, uz5, vegp5$len, vegp5$wid, vegp5$x)
+  ph5c_final <- rhohair(tair5c, pk5)
+  cp5c_final <- cpair(tair5c)
+  Hz5c_final <- (ph5c_final * cp5c_final / rHa5c_final) * (tleaf5c - tair5c)
+
+  write.csv(data.frame(z = z5, tleaf = tleaf5c, tair = tair5c, rh = rh5c, Hz = Hz5c_final, paii = paii5, uf = uf5, TL = TL5, th = th5),
+      file.path(outdir, sprintf("05c_gs0_tg%g_micropoint.csv", tg)), row.names = FALSE)
+}
+
+# ── 5d: real (non-zero) stomatal conductance, ground-temperature sweep ──────
+# Same sweep as 5c, but with actual stomatalcond_calc-derived gs (light/CO2/
+# VPD-responsive, as section 5 itself uses) instead of forced near-zero --
+# shows how much the stomatal/photosynthesis-model difference (Julia's flat
+# PrescribedStomatalConductance vs R's stomatalcond_calc) adds on top of the
+# already-verified transport formula. Exports both Hz and Lz (latent flux,
+# W/m^2) so raupach_formula_isolation.jl can inject the full heat+vapor
+# source terms.
+for (tg in tground_sweep) {
+  tleaf5d <- rep(th5 + 1, n5)
+  tair5d <- rep(th5, n5)
+  rh5d <- rep(weather$relhum[hr], n5)
+  ea5d <- satvap(tair5d) * (rh5d / 100)
+  aitkt5d <- list(oldv = tair5d, newv = tair5d, z = z5, hgt = vegp5$h)
+  aitkr5d <- list(oldv = ea5d, newv = ea5d, z = z5, hgt = vegp5$h)
+  error5d <- 1e99
+  itr5d <- 0
+
+  while (error5d > 1e-2 && itr5d < 200) {
+    lwb5d <- longwavebelow(paii5, lwdown5, tleaf5d, tg, 0.97, 0.97)
+    Rabs5d <- lwb5d$RlwLabs + tsmod5$Rleafabs
+
+    dT5d <- abs(tleaf5d - tair5d)
+    rHa5d <- leafresistance(tair5d, dT5d, uz5, vegp5$len, vegp5$wid, vegp5$x)
+
+    tsmod5d_par <- twostream(vegp5, groundp, paii5, swdown5, difrad5, lat, long, solp5, PAR = TRUE)
+    gs_sun5d <- stomatalcond_calc(Ca5, tsmod5d_par$Rsun, tair5d, tleaf5d, rh5d, pk5, psi_r5, vegp5, z5)
+    gs_shade5d <- stomatalcond_calc(Ca5, tsmod5d_par$Rshade, tair5d, tleaf5d, rh5d, pk5, psi_r5, vegp5, z5)
+    gs5d <- gs_sun5d * tsmod5d_par$sunlitfrac + (1 - tsmod5d_par$sunlitfrac) * gs_shade5d
+    rS5d <- rhohair(tair5d, pk5) / gs5d
+
+    tleaf5d <- SolveEnergyBalance(tair5d, pk5, rh5d, Rabs5d, rHa5d, rS5d, G = 0, em = 0.97,
+        method = "Penman", iters = 4)
+
+    ph5d <- rhohair(tair5d, pk5)
+    cp5d <- cpair(tair5d)
+    Hz5d <- (ph5d * cp5d / rHa5d) * (tleaf5d - tair5d)
+    tairn5d <- temp_below(vegp5$h, paii5, TL5, uf5, pk5, Hz5d, tair5d, tleaf5d, tg)
+
+    rV5d <- rHa5d + rS5d
+    es5d <- satvap(tleaf5d)
+    ea5d <- satvap(tair5d) * (rh5d / 100)
+    Lz5d <- ((latvap(tleaf5d) * ph5d) / (rV5d * pk5)) * (es5d - ea5d)
+    rhn5d <- relhum_below(vegp5$h, paii5, TL5, uf5, pk5, Lz5d, rh5d, tair5d, tleaf5d, tg, soilrh5)
+    ean5d <- satvap(tairn5d) * (rhn5d / 100)
+
+    error5d <- max(abs(tair5d - tairn5d))
+    aitkt5d$oldv <- tair5d; aitkr5d$oldv <- ea5d
+    aitkt5d$newv <- tairn5d; aitkr5d$newv <- ean5d
+    aitkt5d <- aitken_weightdif(aitkt5d)
+    aitkr5d <- aitken_weightdif(aitkr5d)
+    tair5d <- aitkt5d$newv
+    rh5d <- (aitkr5d$newv / satvap(tair5d)) * 100
+
+    itr5d <- itr5d + 1
+  }
+  cat(sprintf("Section 5d (tground=%g): converged in %d iterations, error=%.5f, mean gs=%.4f\n",
+      tg, itr5d, error5d, mean(gs5d)))
+
+  # Converged-state Hz and Lz (raw, pre-paii-weighted), recomputed once more
+  # from the converged state for export, same pattern as section 5c.
+  dT5d_final <- abs(tleaf5d - tair5d)
+  rHa5d_final <- leafresistance(tair5d, dT5d_final, uz5, vegp5$len, vegp5$wid, vegp5$x)
+  ph5d_final <- rhohair(tair5d, pk5)
+  cp5d_final <- cpair(tair5d)
+  Hz5d_final <- (ph5d_final * cp5d_final / rHa5d_final) * (tleaf5d - tair5d)
+  rS5d_final <- rhohair(tair5d, pk5) / gs5d
+  rV5d_final <- rHa5d_final + rS5d_final
+  es5d_final <- satvap(tleaf5d)
+  ea5d_final <- satvap(tair5d) * (rh5d / 100)
+  Lz5d_final <- ((latvap(tleaf5d) * ph5d_final) / (rV5d_final * pk5)) * (es5d_final - ea5d_final)
+
+  write.csv(data.frame(z = z5, tleaf = tleaf5d, tair = tair5d, rh = rh5d, Hz = Hz5d_final, Lz = Lz5d_final,
+      gs = gs5d, paii = paii5, uf = uf5, TL = TL5, th = th5),
+      file.path(outdir, sprintf("05d_gsreal_tg%g_micropoint.csv", tg)), row.names = FALSE)
+}
 
 cat("Done -- wrote all below_canopy CSVs to", outdir, "\n")

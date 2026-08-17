@@ -11,11 +11,11 @@ if (length(to_install) > 0) {
     install.packages(to_install)
 }
 
-if (!("micropoint" %in% installed.packages()[, "Package"])) {
+#if (!("micropoint" %in% installed.packages()[, "Package"])) {
     remotes::install_github("ilyamaclean/micropoint")
-} else {
-    cat("micropoint already installed.\n")
-}
+#} else {
+#    cat("micropoint already installed.\n")
+#}
 
 cat("\nDone. Run the comparison with:\n")
 cat("  cd c:/git/BiophysicalEcologyEnv && julia --project=. c:/git/MicroclimateTests.jl/micropoint/comparison.jl\n")

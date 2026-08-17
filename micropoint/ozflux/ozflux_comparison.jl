@@ -26,20 +26,24 @@ include(joinpath(@__DIR__, "report.jl"))
 # site_name: any comparisons/ozflux/data site with a SITE_UTC_OFFSET_MINUTES
 # entry (config.jl) -- "CapeTribulation", "Calperum", "Whroo", "Wallaby",
 # "GWW", "Longreach", "TiTreeEast", "AliceSpringsMulga".
-site_name = "Whroo"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulgaa"
+site_name = "CapeTribulation"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulga"
 years = [2015]
+max_days = 30  # set e.g. 10-15 for a fast iteration loop -- both models still run on identical (shorter) forcing
 outdir = joinpath(@__DIR__, "outputs", "$(site_name)_$(join(years, '-'))")
 save_outputs_3way = true
 display_plots_3way = false
 plot_start = Date(years[1], 1, 1)
-plot_end   = Date(years[1], 12, 30)
+plot_end   = max_days === nothing ? Date(years[1], 12, 30) : Date(years[1], 1, 1) + Day(max_days - 1)
 # Arbitrary snapshot window for the vertical-profile plots -- needs to land
 # in a cleanly-solved chunk (see README); empty panels just mean pick a
-# different date, not an error.
-profile_times = DateTime(years[1], 11, 1, 4):Hour(1):DateTime(years[1], 11, 1, 15)
+# different date, not an error. Falls back to just inside day 2 when
+# max_days truncates the run short of the default November window.
+profile_times = max_days === nothing ?
+    (DateTime(years[1], 11, 1, 4):Hour(1):DateTime(years[1], 11, 1, 15)) :
+    (DateTime(years[1], 1, 1, 0):Hour(1):DateTime(years[1], 1, 1, 11))
 
 # ── Run both models on identical forcing ─────────────────────────────────
-result = run_site_gapfilled(site_name, years; canopy_mode=:full)
+result = run_site_gapfilled(site_name, years; max_days, canopy_mode=:full)
 write_ozflux_micropoint_inputs(result, outdir)
 
 rscript = joinpath(@__DIR__, "run_micropoint_ozflux_vegetated.R")
@@ -59,5 +63,9 @@ CSV.write(joinpath(outdir, "julia_timing.csv"),
 # period here, so no realignment needed.
 mp = read_micropoint_output(outdir)
 
-stats_df = report_site_results3(result, mp; outdir, plot_start, plot_end, profile_times, save_outputs_3way, display_plots_3way)
+#profile_times = DateTime(years[1], 12, 2, 4):Hour(1):DateTime(years[1], 12, 2, 15)
+statzs_df = report_site_results3(result, mp; outdir, plot_start, plot_end, profile_times, save_outputs_3way, display_plots_3way)
+
 println("\nDone. Outputs in $outdir")
+
+

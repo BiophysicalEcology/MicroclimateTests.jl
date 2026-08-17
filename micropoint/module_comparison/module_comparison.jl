@@ -157,7 +157,7 @@ body4 = leaf_body(vegp4_len, vegp4_wid, 1.6)
 air_temperature4 = fill(u"K"(25.0u"°C"), n4)
 relative_humidity4 = fill(0.80, n4)
 atmospheric_pressure4 = 101.3u"kPa" |> p -> uconvert(u"Pa", p)
-leaf_water_potential4 = -0.5e6u"J/kg"
+leaf_water_potential4 = -0.5e3u"J/kg"
 
 jl_tleaf4 = zeros(n4)
 for i in 1:n4
@@ -176,7 +176,8 @@ println("  " * rpad("tleaf", 12) * fmt(compute_stats(d4.tleaf, jl_tleaf4)))
 
 fig4 = plot(size=(600, 500), dpi=120, xlabel="Leaf temperature (°C)", ylabel="Height (m)", title="Leaf temperature")
 plot!(fig4, jl_tleaf4, d4.z; label="Julia", color=:tomato, lw=2)
-plot!(fig4, d4.tleaf, d4.z; label="R", color=:steelblue, lw=2)
+plot!(fig4, d4.tleaf, d4.z; label="R", color=:steelblue, lw=2, 
+    xlims=(ustrip(u"°C", air_temperature4[1])-5, ustrip(u"°C", air_temperature4[1])+5))
 savefig(fig4, joinpath(outdir, "04_leaftemperature_comparison.png"))
 display(fig4)
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -197,15 +198,16 @@ heights5 = vcat(heights5_below, [22.0u"m"])
 d5_paii = DataFrame(CSV.File(joinpath(outdir, "05_paii.csv")))
 plant_area_index5 = reverse(d5_paii.paii)  # R bottom-to-top -> Julia top-to-bottom
 
-boundary_layer_model5 = MoninObukhov()
+boundary_layer_model5 = MoninObukhov(; thermal_roughness_model=ScalarRoughnessRatio())
 model5 = MultilayerCanopy(;
     canopy_height=canopy_height5, plant_area_index=plant_area_index5,
     shortwave_model=TwoStreamRadiation(; leaf_reflectance=0.4, leaf_transmittance=0.2),
     leaf_parameters=LeafParameters(; leaf_length=0.15u"m", leaf_width=0.07u"m", leaf_emissivity=0.97, canopy_projection_ratio=1.6),
     leaf_temperature_solver=RootFindLeafTemperature(),
+    longwave_model = AllPairsLongwaveExchange(),
     air_profile_model=RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)),  # R's temp_below/relhum_below are Raupach LNF, not K-theory
     convergence_model=PicardCanopyConvergence(;
-        convergence=IterationToleranceConvergence(; tolerance=0.01u"K", max_iterations_per_day=30)),
+        convergence=IterationToleranceConvergence(; tolerance=0.01u"K", max_iterations_per_day=200)),
 )
 buffers5 = Microclimate.allocate_canopy(model5, heights5, boundary_layer_model5)
 
@@ -227,6 +229,32 @@ inputs5 = Microclimate.CanopyEnergyBalanceInputs(model5;
 result5 = Microclimate.canopy_energy_balance!(buffers5, model5, boundary_layer_model5, inputs5)
 println("Julia Picard iterations: ", result5.iterations, "  (R Aitken iterations: see run_micropoint.R output)")
 
+# Boundary conditions feeding Raupach -- compare directly against R's own
+# solve_wholecanopy output (05_wholecanopy.csv: uf, th, TL) to check whether
+# the section-5 divergence is upstream of canopy_air_profile! (a different
+# friction_velocity/canopy_top_air_temperature/T_L reaching Raupach) rather
+# than inside it.
+a1_raupach = model5.air_profile_model.canopy_top_velocity_std_factor
+γ_dyer = boundary_layer_model5.dyer_constant
+z_eval5 = max(canopy_height5 - result5.displacement_height, 1.0e-3u"m")
+Φ_h5 = isfinite(result5.obukhov_length) ?
+    Microclimate.calc_Φ_h(z_eval5, γ_dyer, result5.obukhov_length, boundary_layer_model5.stable_Φ_h_coefficient,
+        boundary_layer_model5.min_stable_Φ_h, boundary_layer_model5.max_stable_Φ_h) : 1.0
+a2_5 = Φ_h5 * boundary_layer_model5.karman_constant * (1.0 - result5.displacement_height / canopy_height5) / a1_raupach^2
+T_L_julia5 = a2_5 * canopy_height5 / result5.friction_velocity
+println("  Boundary state (Julia vs R):")
+println("    friction_velocity:  Julia=", round(ustrip(u"m/s", result5.friction_velocity); digits=4), " m/s   R uf=", can5.uf, " m/s")
+println("    canopy_top_temp:    Julia=", round(ustrip(u"°C", result5.canopy_top_air_temperature); digits=3), " °C    R th=", can5.th, " °C")
+println("    obukhov_length:     Julia=", result5.obukhov_length)
+println("    displacement_height:Julia=", result5.displacement_height)
+println("    T_L:                Julia=", round(ustrip(u"s", T_L_julia5); digits=4), " s      R TL=", can5.TL, " s")
+# canopy_source_temperature that actually drove the final Picard pass's
+# wind/stability solve (leaf_temperature_buffer[1], NOT canopy_top_air_temperature
+# above -- two different quantities) vs the reference air temperature it's compared against.
+println("    top leaf_temperature (drives stability): ", round(ustrip(u"°C", buffers5.leaf.leaf_temperature[1]); digits=3), " °C")
+println("    reference_temperature:                   ", round(ustrip(u"°C", environment_instant5.reference_temperature); digits=3), " °C")
+println("    ΔT (reference - top leaf):                ", round(ustrip(u"K", environment_instant5.reference_temperature - buffers5.leaf.leaf_temperature[1]); digits=3), " K")
+
 jl_tleaf5 = reverse(ustrip.(u"°C", buffers5.leaf.leaf_temperature))
 jl_tair5 = reverse(ustrip.(u"°C", buffers5.air_profile.air_temperature))
 jl_rh5 = reverse(buffers5.air_profile.relative_humidity .* 100.0)
@@ -244,5 +272,3 @@ plot!(fig5[3], jl_rh5, d5.z; label="Julia", color=:tomato, title="Relative humid
 plot!(fig5[3], d5.rh, d5.z; label="R", color=:steelblue)
 savefig(fig5, joinpath(outdir, "05_airtemphumidity_comparison.png"))
 display(fig5)
-
-println("\nDone -- comparison plots saved to $outdir")
