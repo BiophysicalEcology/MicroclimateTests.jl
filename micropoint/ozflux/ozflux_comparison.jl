@@ -26,9 +26,9 @@ include(joinpath(@__DIR__, "report.jl"))
 # site_name: any comparisons/ozflux/data site with a SITE_UTC_OFFSET_MINUTES
 # entry (config.jl) -- "CapeTribulation", "Calperum", "Whroo", "Wallaby",
 # "GWW", "Longreach", "TiTreeEast", "AliceSpringsMulga".
-site_name = "CapeTribulation"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulga"
-years = [2015]
-max_days = 30  # set e.g. 10-15 for a fast iteration loop -- both models still run on identical (shorter) forcing
+site_name = "Longreach"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulga"
+years = [2019]
+max_days = 90  # set e.g. 10-15 for a fast iteration loop -- both models still run on identical (shorter) forcing
 outdir = joinpath(@__DIR__, "outputs", "$(site_name)_$(join(years, '-'))")
 save_outputs_3way = true
 display_plots_3way = false

@@ -305,7 +305,7 @@ function _gapfilled_hourly_forcing(site_name, hourly, forcing_vars, gap_fill_don
             both = [(Float64(rh), ad) for (rh, ad) in zip(hourly.RH, ah_derived) if !ismissing(rh) && !ismissing(ad)]
             if length(both) > 1
                 obs = first.(both); der = last.(both)
-                @printf("  RH cross-check vs Ah-derived: r=%+.3f  bias=%+.2f%%  (n=%d)\n", cor(obs, der), mean(der .- obs), length(both))
+                #@printf("  RH cross-check vs Ah-derived: r=%+.3f  bias=%+.2f%%  (n=%d)\n", cor(obs, der), mean(der .- obs), length(both))
             end
             rr = [ismissing(rh) ? ad : rh for (rh, ad) in zip(hourly.RH, ah_derived)]
         end

@@ -132,10 +132,10 @@ const SITE_FORCING_VARS = Dict(
 # ── Per-site canopy leaf area index ──────────────────────────────────────────
 # Guessed, no emprirical data.
 const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
-    "CapeTribulation" => 6.0,
+    "CapeTribulation" => 8.0,
     "Calperum"        => 0.3,
-    "Whroo"           => 1.5,
-    "Wallaby"         => 5.0,   # fire in 2009
+    "Whroo"           => 2.0,
+    "Wallaby"         => 2.0,   # fire in 2009
     "GWW"             => 0.5,   # semi-arid eucalypt woodland, canopy_height=18m per file metadata
     "Longreach"       => 0.5,   # grassland, canopy_height=0.5m per file metadata
     "TiTreeEast"        => 0.5,  # sparse mulga/spinifex woodland, canopy_height=6.5m per file metadata
@@ -168,22 +168,22 @@ const SITE_PAI_SHAPE = Dict(
 const SITE_LEAF_REFLECTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
     "Calperum"        => 0.25,
-    "Whroo"           => 0.20,
+    "Whroo"           => 0.25,
     "Wallaby"         => 0.25,
-    "GWW"             => 0.30,
+    "GWW"             => 0.25,
     "Longreach"       => 0.25,
     "TiTreeEast"        => 0.25,
     "AliceSpringsMulga" => 0.25,
 )
 const SITE_LEAF_TRANSMITTANCE = Dict{String,Float64}(
     "CapeTribulation" => 0.25,
-    "Calperum"        => 0.15,
-    "Whroo"           => 0.20,
+    "Calperum"        => 0.25,
+    "Whroo"           => 0.25,
     "Wallaby"         => 0.25,
-    "GWW"             => 0.10,
+    "GWW"             => 0.25,
     "Longreach"       => 0.25,
-    "TiTreeEast"        => 0.15,
-    "AliceSpringsMulga" => 0.15,
+    "TiTreeEast"        => 0.25,
+    "AliceSpringsMulga" => 0.25,
 )
 
 # ── Per-site leaf structural/physiological traits (Microclimate.jl's
@@ -219,14 +219,14 @@ leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_nam
 # an entry.
 const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
-    "CapeTribulation"   => 0.13,  # dark, wet closed-canopy rainforest litter
-    "Calperum"          => 0.20,  # pale sandy mallee soil, sparse cover
-    "Whroo"             => 0.10,  # box/ironbark woodland, leaf litter + some bare soil
-    "Wallaby"           => 0.12,  # dense wet sclerophyll regrowth
-    "GWW"               => 0.15,  # semi-arid eucalypt woodland, red sandy soil
-    "Longreach"         => 0.25,  # dry grassland, pale soil/cured grass
+    "CapeTribulation"   => 0.20,  # dark, wet closed-canopy rainforest litter
+    "Calperum"          => 0.35,  # pale sandy mallee soil, sparse cover
+    "Whroo"             => 0.20,  # box/ironbark woodland, leaf litter + some bare soil
+    "Wallaby"           => 0.20,  # dense wet sclerophyll regrowth
+    "GWW"               => 0.20,  # semi-arid eucalypt woodland, red sandy soil
+    "Longreach"         => 0.20,  # dry grassland, pale soil/cured grass
     "TiTreeEast"        => 0.20,  # central Australian red sand, sparse mulga/spinifex
-    "AliceSpringsMulga" => 0.15,
+    "AliceSpringsMulga" => 0.20,
 )
 
 # Per-site critical soil (root) water potential at which stomata close --
@@ -258,7 +258,7 @@ const SITE_ORGANIC_CAP = Dict(
     "CapeTribulation"   => true,
     "Calperum"          => false,
     "Whroo"             => false,
-    "Wallaby"           => false,
+    "Wallaby"           => true,
     "GWW"               => false,
     "Longreach"         => false,
     "TiTreeEast"        => false,
@@ -337,13 +337,13 @@ const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(
 
 const SITE_SOIL_SOURCE = Dict{String,Symbol}(
     #"CapeTribulation" => :clay_loam,
-    "Calperum" => :sandy_loam,
-    "Wallaby" => :clay_loam,
-    "Whroo" => :clay_loam,
-    "GWW" => :clay_loam,
+    # "Calperum" => :sandy_loam,
+    # "Wallaby" => :clay_loam,
+    # "Whroo" => :clay_loam,
+    # "GWW" => :clay_loam,
     #"Longreach" => :clay,
-    "TiTreeEast" => :clay_loam,
-    "AliceSpringsMulga" => :clay_loam,
+    # "TiTreeEast" => :clay_loam,
+    # "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
 soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
 

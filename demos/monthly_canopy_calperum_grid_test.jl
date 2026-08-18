@@ -6,34 +6,20 @@ using Rasters, RasterDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
-# Grid + PAI helpers mirror comparisons/ozflux/utils.jl, duplicated (not
-# included) so this demo stays standalone.
-const CANOPY_NEAR_GROUND_M = [0.025, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.75, 1.00, 1.50, 2.00]
-const CANOPY_COARSE_STEP_M = 1.5
-const MIN_CANOPY_LAYERS = 10
-const N_ABOVE_CANOPY_POINTS = 6  # graded points from canopy_height up to reference_height
-function _pad_to_min_count(pts, min_n)
-    pts = sort(unique(pts))
-    while length(pts) < min_n
-        anchored = vcat(0.0, pts)
-        gaps = diff(anchored)
-        i = argmax(gaps)
-        push!(pts, (anchored[i] + anchored[i + 1]) / 2)
-        sort!(pts); unique!(pts)
-    end
-    return pts
-end
-function _build_heights(canopy_height, reference_height)
+# Same evenly-spaced canopy grid now in comparisons/ozflux/utils.jl's
+# _build_heights (N_CANOPY_LAYERS points from 0 to canopy_height, then
+# N_ABOVE_CANOPY_POINTS graded up to reference_height) -- testing whether
+# this grid + a Calperum-like short canopy (canopy_height=3m, LAI=0.3,
+# :bottom_heavy) hangs even in this demo's fast 12-representative-day solve.
+const N_CANOPY_LAYERS = 15
+const N_ABOVE_CANOPY_POINTS = 6
+function _evenly_spaced_heights(canopy_height, reference_height, extra_heights_m=Float64[])
     canopy_m = ustrip(u"m", canopy_height)
     reference_m = ustrip(u"m", reference_height)
-    near_ground = filter(<=(canopy_m), CANOPY_NEAR_GROUND_M)
-    coarse_top = isempty(near_ground) ? 0.0 : near_ground[end]
-    coarse_pts = coarse_top < canopy_m ? collect((coarse_top + CANOPY_COARSE_STEP_M):CANOPY_COARSE_STEP_M:canopy_m) : Float64[]
-    canopy_pts = unique(vcat(near_ground, coarse_pts, canopy_m))
-    length(canopy_pts) < MIN_CANOPY_LAYERS && (canopy_pts = _pad_to_min_count(canopy_pts, MIN_CANOPY_LAYERS))
+    canopy_pts = [(i / N_CANOPY_LAYERS) * canopy_m for i in 1:N_CANOPY_LAYERS]
     graded_above = canopy_m < reference_m ?
         collect(range(canopy_m, reference_m; length=N_ABOVE_CANOPY_POINTS + 1)[2:end]) : Float64[]
-    above_pts = filter(>(canopy_m), unique(vcat(graded_above, reference_m)))
+    above_pts = filter(>(canopy_m), unique(vcat(extra_heights_m, graded_above, reference_m)))
     return sort(vcat(canopy_pts, above_pts)) .* u"m"
 end
 
@@ -55,59 +41,34 @@ function plant_area_index_profile(shape_kind, heights, canopy_height, target_pai
     return raw .* (target_pai / sum(raw))
 end
 
-ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/" #"/data/scratch/projects/punim0593/rasters" #
+ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
 
 depths = DEFAULT_DEPTHS
-canopy_height = 50.0u"cm"
-reference_height = 1.5u"m"
+# Calperum-like: canopy_height/reference_height/LAI/shape from
+# comparisons/ozflux/config.jl (canopy_height from file metadata, ~3m;
+# reference_height=20m; leaf_area_index=0.3; pai_shape=:bottom_heavy).
+canopy_height = 3.0u"m"
+reference_height = 20.0u"m"
 
-# Quick diagnostic: is the graded scheme's above-canopy tier (evenly spaced BY
-# COUNT between canopy_height and reference_height) behind the midday
-# reference-height blow-up seen in both this demo and the ozflux Whroo runs?
-# first_height kept >= 5x roughness_height (site roughness_height_source below
-# is 0.004m) -- a too-small first height blew up these calculations before,
-# during development.
-function _uniform_heights(canopy_height, reference_height; n=40, first_height=0.02u"m")
-    lo, hi = ustrip(u"m", first_height), ustrip(u"m", reference_height)
-    pts = sort(unique(vcat(collect(range(lo, hi; length=n)), ustrip(u"m", canopy_height))))
-    return pts .* u"m"
-end
-function _log_heights(canopy_height, reference_height; n=40, first_height=0.02u"m")
-    lo, hi = log(ustrip(u"m", first_height)), log(ustrip(u"m", reference_height))
-    pts = sort(unique(vcat(exp.(range(lo, hi; length=n)), ustrip(u"m", canopy_height))))
-    return pts .* u"m"
-end
-
-height_grid_choice = :graded  # :graded (original tiered scheme), :uniform, or :log
-heights = height_grid_choice == :uniform ? _uniform_heights(canopy_height, reference_height) :
-          height_grid_choice == :log     ? _log_heights(canopy_height, reference_height) :
-          _build_heights(canopy_height, reference_height)
+heights = _evenly_spaced_heights(canopy_height, reference_height)
 canopy_heights = heights[heights .<= canopy_height]
+println("n canopy layers: ", length(canopy_heights), "  canopy_heights: ", canopy_heights)
 
-points = [geocode("Kimba, South Australia")]
-
-# CRUCL2 is a 1961–1990 climatology — the year is ignored; any year works.
+points = [geocode("Calperum, Australia")]  # location doesn't matter for this grid/convergence test
 dates = Date(2000, 1, 1):Day(1):Date(2000, 12, 31)
 
-leaf_area_index = 1.0
-pai_shape = :uniform # :top_heavy :bottom_heavy
+leaf_area_index = 0.3
+pai_shape = :bottom_heavy
 plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
+println("plant_area_index: ", plant_area_index)
 plot(plant_area_index, canopy_heights, ylabel="Height (cm)", xlabel="Plant Area Index", title="Canopy Structure")
 
-# relaxation=0.7 matches comparisons/ozflux/config.jl. convergence=
-# FixedIterationConvergence(3) below (on MicroConfig) does NOT match ozflux's
-# FixedIterationConvergence(1) -- each simulated day here repeats the same
-# representative day-of-month, so extra within-day iterations are needed to
-# settle away from the arbitrary initial condition; ozflux's consecutive real
-# days don't need that.
 canopy_convergence_model_choice = PicardCanopyConvergence(;
     convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20), relaxation=0.7)
-soil_hydraulic_model_choice  = Microclimate.example_soil_hydraulic_model()
-soil_properties_model_choice = Microclimate.example_soil_properties_model()
-leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
-interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") 
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#KTheoryAirProfile()#RaupachLTheoryAirProfile()  # or 
-canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20) #FixedIterationConvergence(1)
+leaf_convection_model_choice = ElaborateLeafConvection()
+interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
+canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20)
 canopy_model = MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(),
             leaf_convection_model = leaf_convection_model_choice, interception_model = interception_model_choice,
@@ -131,16 +92,8 @@ output_layers = (
     LayerSpec(:canopy_air_temperature, :canopy, :air_temperature),
     LayerSpec(:canopy_wind_speed, :canopy, :wind_speed),
     LayerSpec(:canopy_relative_humidity, :canopy, :relative_humidity),
-    LayerSpec(:ground_dew, :scalar),
-    LayerSpec(:ground_frost, :scalar),
-    LayerSpec(:ground_standing_dew, :scalar),
-    LayerSpec(:ground_standing_frost, :scalar),
-    LayerSpec(:leaf_surface_water, :canopy),
-    LayerSpec(:leaf_dew, :canopy),
-    LayerSpec(:leaf_frost, :canopy),
-    LayerSpec(:leaf_standing_dew, :canopy),
-    LayerSpec(:leaf_standing_frost, :canopy),
 )
+
 
 model = MicroMapModel(;
     micro_model = MicroModel(;
@@ -152,19 +105,39 @@ model = MicroMapModel(;
         snow_model            = NoSnow(),
         canopy_model,
         config                = MicroConfig(;
-            convergence             = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20),  # see comment above canopy_convergence_model_choice
+            convergence             = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20),
             soil_moisture_strategy  = PrescribedSoilMoisture(),
             canopy_soil_convergence = canopy_soil_convergence_choice,
         ),
     ),
     dem_source              = CRUCL2,
-    weather_source          = CRUCL2, #WorldClim{Climate},
+    weather_source          = CRUCL2,
     soil_moisture_source    = CPCSoil,
     surface_albedo_source   = 0.15,
-    roughness_height_source = 0.004u"m",
+    roughness_height_source = 0.01u"m",  # Calperum's roughness_height (config.jl SITE_LEGACY_PARAMS)
     compute_terrain         = false,
     output_layers,
 )
+
+# model = MicroMapModel(;
+#     micro_model = MicroModel(;
+#         hours                 = 0:1:23,
+#         depths,
+#         heights,
+#         soil_properties_model = example_soil_properties_model(),
+#         soil_hydraulic_model  = example_soil_hydraulic_model(),
+#         #snow_model            = NoSnow(),
+#         canopy_model,
+#     ),
+#     dem_source              = CRUCL2,
+#     weather_source          = CRUCL2,
+#     soil_moisture_source    = CPCSoil,
+#     surface_albedo_source   = 0.15,
+#     roughness_height_source = 0.01u"m",  # Calperum's roughness_height (config.jl SITE_LEGACY_PARAMS)
+#     #compute_terrain         = false,
+#     output_layers,
+# )
+
 problem = MicroVectorProblem(;
     model,
     points,
@@ -173,7 +146,7 @@ problem = MicroVectorProblem(;
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 
-@time output = solve(problem);
+@time output = solve(problem)
 
 site = 1
 rad    = output.global_radiation[point=site][:]
@@ -211,28 +184,6 @@ p8 = plot(collect(canopy_rh); title = "Canopy relative humidity", legend = false
 p9 = plot(collect(canopy_ws); title = "Canopy wind speed", legend = false)
 
 display(plot(p1, p2, p3, p4, p5, p6, p7, p8, p9; layout = (3, 3), size = (1450, 900), font_size = 12, link = :x))
-
-# --- Dew and frost: formed-this-hour and standing (formed-minus-lost) balance,
-# at the ground surface and on the leaves -----------------------------------
-ground_dew             = output.ground_dew[point=site][1:288]
-ground_frost           = output.ground_frost[point=site][1:288]
-ground_standing_dew    = output.ground_standing_dew[point=site][1:288]
-ground_standing_frost  = output.ground_standing_frost[point=site][1:288]
-leaf_dew                = output.leaf_dew[point=site][1:288, :]
-leaf_frost               = output.leaf_frost[point=site][1:288, :]
-leaf_standing_dew        = output.leaf_standing_dew[point=site][1:288, :]
-leaf_standing_frost      = output.leaf_standing_frost[point=site][1:288, :]
-
-pd1 = plot(ground_dew;            title = "Ground dew formed",           legend = false)
-pd2 = plot(ground_frost;          title = "Ground frost formed",         legend = false)
-pd3 = plot( ground_standing_dew;   title = "Ground standing dew",         legend = false)
-pd4 = plot(ground_standing_frost; title = "Ground standing frost",       legend = false)
-pd5 = plot(leaf_dew;               title = "Leaf dew formed",              legend = false)
-pd6 = plot(leaf_frost;             title = "Leaf frost formed",            legend = false)
-pd7 = plot(leaf_standing_dew;      title = "Leaf standing dew",            legend = false)
-pd8 = plot(leaf_standing_frost;    title = "Leaf standing frost",          legend = false)
-
-display(plot(pd1, pd2, pd3, pd4, pd5, pd6, pd7, pd8; layout = (2, 4), size = (1450, 700), font_size = 12, link = :x))
 
 p1 = plot(canopy_ws[6, :], reverse(canopy_heights), ylabel="Height (m)", xlabel="Wind speed (m/s)", title="Canopy wind speed profile, 04:00", legend=false)
 p1_1 = plot!(ws[6, :], heights)

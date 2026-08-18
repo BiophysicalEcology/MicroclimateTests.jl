@@ -17,6 +17,8 @@ using Rasters.Extents: Extent
 using GeoInterface: Wrappers as GIW
 using Serialization, Measures
 
+#Microclimate._DEBUG_DEW_THRESHOLD[] = 0.08u"kg/m^2"
+#Microclimate._DEBUG_GROUND_RESISTANCE[] = true
 
 include("config.jl")
 include("utils.jl")
@@ -24,8 +26,8 @@ include("pipeline.jl")
 include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
-site_name = "CapeTribulation"  # "CapeTribulation", "Calperum" (:legacy), "Whroo", "Wallaby", "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
-years = [2015]
+site_name = "AliceSpringsMulga"  # "CapeTribulation", "Calperum" (:legacy), "Whroo" what is the PAI?, "Wallaby" 2008, "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
+years = [2025]
 max_days = nothing  # set e.g. 30 for a fast iteration loop
 forcing_source = :gapfilled  # :tower, :silo (gridded forcing), :gapfilled (tower + SILO-filled gaps), or :daily (real tower data reduced to a daily envelope, then diel-synthesized the same way :silo is -- isolates hourly-forcing-noise effects from real-vs-gridded-value effects)
 canopy_mode = :full  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation)
@@ -33,7 +35,7 @@ canopy_mode = :full  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/win
 result = forcing_source == :silo ? run_site_silo(site_name, years; max_days, canopy_mode) :
           forcing_source == :gapfilled ? run_site_gapfilled(site_name, years; max_days, canopy_mode) :
           forcing_source == :daily ? run_site_daily(site_name, years; max_days, canopy_mode) :
-          run_site(site_name, years; max_days, canopy_mode)
+          run_site(site_name, years; max_days, canopy_mode);
 
 plot_start = nothing
 plot_end   = nothing
@@ -48,5 +50,5 @@ stats = report_site_results(result, result.output; plot_start, plot_end, display
 
 # ── Vertical canopy profiles (obs vs model) for a chosen date/hour range ──────
 profile_times = DateTime(years[1], 11, 1, 1):Hour(1):DateTime(years[1], 11, 1, 16)
-#plot_canopy_profiles_all(result, result.output, profile_times)
+plot_canopy_profiles_all(result, result.output, profile_times)
 

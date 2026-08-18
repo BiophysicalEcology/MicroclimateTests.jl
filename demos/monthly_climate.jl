@@ -6,23 +6,24 @@ using Rasters, RasterDataSources
 using Rasters.Extents: Extent
 using Dates, Statistics, Unitful, Plots
 
-ENV["RASTERDATASOURCES_PATH"] = "z:\\"#"c:/Spatial_Data/" #"/data/scratch/projects/punim0593/rasters" #
+ENV["RASTERDATASOURCES_PATH"] ="c:/Spatial_Data/" # "z:\\"#"/data/scratch/projects/punim0593/rasters" #
 
 depths  = [0.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 100.0, 200.0]u"cm"
 heights = [0.01, 1.2]u"m"
 
-points = [geocode("Alice Springs, Australia"),
-          geocode("Sydney, Australia"),
-          geocode("Melbourne, Australia"),
-          geocode("Perth, Australia"),
-          geocode("Adelaide, Australia"),
-          geocode("Brisbane, Australia"),
-          geocode("Darwin, Australia"),
-          geocode("Hobart, Australia"),
-          geocode("Canberra, Australia"),
-          geocode("Cairns, Australia"),
-          geocode("Broome, Australia"),
-          geocode("Katherine, Australia"),]
+points = [geocode("Kimba, South Australia"),
+        #   geocode("Sydney, Australia"),
+        #   geocode("Melbourne, Australia"),
+        #   geocode("Perth, Australia"),
+        #   geocode("Adelaide, Australia"),
+        #   geocode("Brisbane, Australia"),
+        #   geocode("Darwin, Australia"),
+        #   geocode("Hobart, Australia"),
+        #   geocode("Canberra, Australia"),
+        #   geocode("Cairns, Australia"),
+        #   geocode("Broome, Australia"),
+        #   geocode("Katherine, Australia"),
+          ]
 
 # CRUCL2 is a 1961–1990 climatology — the year is ignored; any year works.
 dates = Date(2000, 1, 1):Day(1):Date(2000, 12, 31)
@@ -37,7 +38,7 @@ model = MicroMapModel(;
     ),
     dem_source              = CRUCL2,
     weather_source          = CRUCL2, #WorldClim{Climate},
-    #soil_moisture_source    = CPCSoil,
+    soil_moisture_source    = CPCSoil,
     surface_albedo_source   = 0.15,
     roughness_height_source = 0.004u"m",
     compute_terrain         = false,
@@ -57,7 +58,12 @@ soil_T = output.soil_temperature[point=site]           # (Ti × depth)
 air_T  = output.air_temperature[point=site, height=2]  # 1.2 m
 rad    = output.global_radiation[point=site]
 rh     = output.relative_humidity[point=site, height=2]
+rh_loc = output.relative_humidity[point=site, height=1]
 ws     = output.wind_speed[point=site, height=2]
+ground_dew             = output.ground_dew[point=site]
+ground_frost           = output.ground_frost[point=site]
+ground_standing_dew    = output.ground_standing_dew[point=site]
+ground_standing_frost  = output.ground_standing_frost[point=site]
 
 ti           = lookup(soil_T, Ti)
 depth_labels = reshape(string.(depths), 1, :)
@@ -66,10 +72,20 @@ p1 = plot(collect(uconvert.(u"°C", soil_T)); label = depth_labels,
           title = points[site].display_name, legend = false)
 p2 = plot(collect(uconvert.(u"°C", air_T));  title = "Air temperature (1.2 m)",   legend = false)
 p3 = plot(collect(rad);    title = "Global radiation",           legend = false)
-p4 = plot(collect(rh);     title = "Relative humidity (1.2 m)", legend = false)
+p4 = plot(collect(rh);     title = "Relative humidity")
+p4 = plot!(p4, collect(rh_loc))
 p5 = plot(collect(ws);     title = "Wind speed (1.2 m)",        legend = false)
 
 display(plot(p1, p2, p3, p4, p5; layout = (5, 1), size = (900, 1100), link = :x))
+
+# --- Dew and frost at the ground surface: formed-this-hour and standing
+# (formed-minus-lost) balance ------------------------------------------------
+pd1 = plot(ground_dew;            title = "Ground dew formed",     legend = false)
+pd2 = plot(ground_frost;          title = "Ground frost formed",   legend = false)
+pd3 = plot(ground_standing_dew;   title = "Ground standing dew",   legend = false)
+pd4 = plot(ground_standing_frost; title = "Ground standing frost", legend = false)
+
+display(plot(pd1, pd2, pd3, pd4; layout = (4, 1), size = (900, 900), link = :x))
 
 # =============================================================================
 # Raster run — central Australia at CRUCL2 (10-minute) resolution

@@ -453,3 +453,33 @@ function try_read(path, label)
         return nothing
     end
 end
+
+# output layers requested
+output_layers = (
+    LayerSpec(:soil_temperature, :soil),
+    LayerSpec(:soil_moisture, :soil),
+    LayerSpec(:soil_thermal_conductivity, :soil),
+    LayerSpec(:soil_humidity, :soil),
+    LayerSpec(:air_temperature, :profile),
+    LayerSpec(:relative_humidity, :profile),
+    LayerSpec(:wind_speed, :profile),
+    LayerSpec(:global_radiation, :scalar),
+    LayerSpec(:sky_temperature, :scalar),
+    LayerSpec(:diffuse_fraction, :scalar),
+    LayerSpec(:reference_temperature, :scalar),
+    LayerSpec(:pressure, :scalar),
+    LayerSpec(:zenith_angle, :solar),
+    LayerSpec(:leaf_temperature, :canopy),
+    LayerSpec(:canopy_air_temperature, :canopy, :air_temperature),
+    LayerSpec(:canopy_wind_speed, :canopy, :wind_speed),
+    LayerSpec(:canopy_relative_humidity, :canopy, :relative_humidity),
+    LayerSpec(:ground_dew, :scalar),
+    LayerSpec(:ground_frost, :scalar),
+    LayerSpec(:ground_standing_dew, :scalar),
+    LayerSpec(:ground_standing_frost, :scalar),
+    LayerSpec(:leaf_surface_water, :canopy),
+    LayerSpec(:leaf_dew, :canopy),
+    LayerSpec(:leaf_frost, :canopy),
+    LayerSpec(:leaf_standing_dew, :canopy),
+    LayerSpec(:leaf_standing_frost, :canopy),
+)
