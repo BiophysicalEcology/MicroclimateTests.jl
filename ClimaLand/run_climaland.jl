@@ -4,17 +4,6 @@
 # comparisons/scan_snotel/config.jl uses for Microclimate.jl (see config.jl's
 # comment block for the translation).
 #
-# Result extraction: this is the one part of the original Dropbox
-# scan329_comparison.jl that's known to be broken against current ClimaLand
-# (its last logged run crashed at `sol_cl.u` — `solve!(simulation)` mutates in
-# place and returns `nothing` in the installed version, ClimaLand v0.16.1).
-# The current, version-confirmed way to get an hourly time series out is
-# ClimaDiagnostics: `default_diagnostics(::EnergyHydrology, ...)` exposes
-# short names "tsoil" -> p.soil.T (K), "swc" -> Y.soil.ϑ_l (m^3/m^3, liquid
-# water content), "si" -> Y.soil.θ_i (m^3/m^3, ice content) — confirmed
-# directly from ClimaLand's src/diagnostics/land_compute_methods.jl
-# (`@diagnostic_compute` macro calls). A `DictWriter` keeps everything
-# in-memory (no netCDF round-trip) as `writer["tsoil"]::OrderedDict{t => Field}`.
 
 function run_climaland(cl_forcing, prep)
     (; t_sec, T_air_h, wind_h, q_h, SW_h, LW_h, P_h, rain_flux, snow_flux, nhours) = cl_forcing
@@ -156,23 +145,14 @@ function run_climaland(cl_forcing, prep)
     @printf("  ClimaLand solver: %.2f s\n", cl_solve_time)
 
     # ── Unpack the DictWriter into plain time-ordered arrays.
-    # ClimaCore stores columns bottom-to-top (index 1 = deepest); flip so
-    # column 1 = shallowest, matching depths_cl / Microclimate's convention.
+    # ClimaCore stores columns bottom-to-top (index 1 = deepest).
     #
     # DictWriter's top-level keys are `output_short_name(diagnostic)`, which
     # (confirmed against a real run) is NOT the bare short name passed to
     # `output_vars` -- ClimaDiagnostics appends a period/reduction suffix
     # (e.g. "tsoil_1h_inst" rather than "tsoil"), following the convention
-    # used across the CliMA diagnostics stack. So this looks up by *prefix*
-    # match against the real keys instead of assuming the exact string.
-    #
-    # Still unverified: DictWriter keys each variable's own inner dict by
-    # whatever time type the integrator hands `write_field!` (`t`,
-    # possibly a `ClimaUtilities.ITime` rather than plain Float64 seconds --
-    # `default_diagnostics`'s signature references `ITime`). `Float64(t)`
-    # below works for either; if THIS errors next, print
-    # `typeof(first(keys(diag_writer[real_key])))` to see what `t` actually
-    # is and convert accordingly (e.g. `float(t)`).
+    # used across the CliMA diagnostics stack.
+    
     function unpack(varname)
         available = collect(keys(diag_writer))
         matches = filter(k -> startswith(string(k), varname), available)

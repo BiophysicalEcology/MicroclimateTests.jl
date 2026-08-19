@@ -1,8 +1,5 @@
 # forcing_climaland.jl — build ClimaLand TimeVaryingInputs from Microclimate.jl's
-# own *solved* hourly output (`MicroResult`), so both models are driven by
-# literally the same air temperature/humidity/wind/shortwave/sky-temperature
-# series — instead of independently re-deriving an approximate diurnal curve
-# (what the original Dropbox scan329_comparison.jl did, and flagged as such).
+# own *solved* hourly output (`MicroResult`).
 #
 # `MicroResult` (see Microclimate.jl's `outputs.jl`) already carries, at
 # hourly resolution, exactly what Microclimate.jl used internally:
@@ -14,12 +11,10 @@
 #   sky_temperature         (K)          -- downward longwave = sigma*T_sky^4
 #
 # The one thing MicroResult does *not* expose is a realized hourly
-# precipitation/snowfall water-equivalent series (evaporation/transpiration/
-# drainage are computed inside Microclimate.jl's ODE right-hand side each
-# step but discarded, and `snow_fall` is a depth-rate, not water-equivalent)
-# — so rain/snow flux is still derived by hand here, from the same daily
-# total (`prep.f_rain`) and the same rain/snow temperature threshold
-# (`snow_temp_threshold`, from scan_snotel/config.jl) that Microclimate.jl's
+# precipitation/snowfall water-equivalent series so rain/snow flux is 
+# derived here from the same daily  total (`prep.f_rain`) and the same 
+# rain/snow temperature threshold ()`snow_temp_threshold`, 
+# from scan_snotel/config.jl) that Microclimate.jl's
 # own SnowModel uses, spread uniformly across each day's 24 hours.
 
 const SIGMA_SB = 5.670374419e-8   # W/m^2/K^4, Stefan-Boltzmann

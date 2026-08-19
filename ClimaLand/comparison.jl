@@ -7,14 +7,8 @@
 #   cd c:/git/BiophysicalEcologyEnv
 #   julia --project=. c:/git/MicroclimateTests.jl/ClimaLand/comparison.jl
 #
-# Soil-only comparison (no canopy/vegetation energy balance on either side —
-# see README.md for why that's the deliberate scope). Both temperature and
-# soil moisture get equal billing throughout: every stats row and every plot
-# panel comes in a temperature version and a moisture version.
-#
 # ClimaLand's own solve step runs sequentially across sites (not
-# Threads.@threads) -- its simulation objects' thread-safety isn't verified,
-# unlike Microclimate.jl's (see run_julia_batch! in scan_snotel/pipeline.jl).
+# Threads.@threads).
 
 using Microclimate, MicroclimateMapper, Unitful
 using CSV, DataFrames, Dates, Statistics, Printf, Plots, Serialization
