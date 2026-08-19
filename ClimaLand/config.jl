@@ -22,9 +22,7 @@ plot_start = nothing   # nothing = full sim_start..sim_end
 plot_end   = nothing
 
 # ── ClimaLand floating point precision ────────────────────────────────────────
-const FT_CL = Float64   # matches Microclimate.jl's Float64 outputs; avoids a
-                         # cross-precision comparison for no performance benefit
-                         # at this problem size (single column, ~40 nodes).
+const FT_CL = Float64   # matches Microclimate.jl's Float64 outputs.
 
 # ── ClimaLand soil domain ─────────────────────────────────────────────────────
 # 40 elements over 2 m -> 5 cm per cell, matching the deepest Microclimate.jl

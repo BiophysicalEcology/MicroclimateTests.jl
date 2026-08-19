@@ -12,7 +12,7 @@ ENV["RASTERDATASOURCES_PATH"] = "Z:\\"
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 infiltration_algorithm_choice  = MatricPotentialAlgorithm()   # swap to MatricFluxPotentialAlgorithm() etc. to compare
-convergence_choice             = FixedIterationConvergence(10)
+convergence_choice             = FixedIterationConvergence(1)  # soil solver
 rainfall_schedule_choice       = DailyRainfall()
 soil_moisture_strategy_choice  = DynamicSoilMoisture()
 dem_source_choice              = SRTM

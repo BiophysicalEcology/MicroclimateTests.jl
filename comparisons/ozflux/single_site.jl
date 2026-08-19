@@ -26,11 +26,11 @@ include("pipeline.jl")
 include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
-site_name = "AliceSpringsMulga"  # "CapeTribulation", "Calperum" (:legacy), "Whroo" what is the PAI?, "Wallaby" 2008, "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
-years = [2025]
+site_name = "Longreach"  # "CapeTribulation", "Calperum" (:legacy), "Whroo" what is the PAI?, "Wallaby" 2008, "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
+years = [2020]
 max_days = nothing  # set e.g. 30 for a fast iteration loop
 forcing_source = :gapfilled  # :tower, :silo (gridded forcing), :gapfilled (tower + SILO-filled gaps), or :daily (real tower data reduced to a daily envelope, then diel-synthesized the same way :silo is -- isolates hourly-forcing-noise effects from real-vs-gridded-value effects)
-canopy_mode = :full  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation)
+canopy_mode = :legacy  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation)
 
 result = forcing_source == :silo ? run_site_silo(site_name, years; max_days, canopy_mode) :
           forcing_source == :gapfilled ? run_site_gapfilled(site_name, years; max_days, canopy_mode) :
