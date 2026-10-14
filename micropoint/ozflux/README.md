@@ -44,7 +44,7 @@ already applied:
    switching Ta/RH to canopy-top too *and* setting `zref=canopy_height` for
    full height-consistency was tried and made the cascade dramatically
    *worse* (canopy_height as `zref` is a boundary case `RunModelFull`'s own
-   docs treat differently from genuinely-above-canopy forcing) — reverted.
+   docs treat differently from above-canopy forcing) — reverted.
    The height mismatch this leaves for wind specifically is a smaller,
    accepted imprecision against a much larger, confirmed stability gain.
 2. **The R run is chunked** into ~monthly blocks (fixed row count, *not*
@@ -65,7 +65,7 @@ Even with both mitigations, roughly half the year still cascades somewhere
 (varies by block). **The obs-vs-micropoint stats/plots only cover the hours
 that came through valid** — `n` in the printed stats table shows exactly how
 much of the year that is per variable (compare against the obs-vs-Julia
-`n`, which covers the full year modulo real data gaps). This is a genuine,
+`n`, which covers the full year modulo real data gaps). This is an
 only-partially-resolved fragility in micropoint's own solver under real
 tower-data noise, not a Microclimate.jl issue — the obs-vs-Julia leg is
 unaffected and matches `comparisons/ozflux`'s own independently-run stats
@@ -93,7 +93,7 @@ for the same site-year exactly (checked directly, not assumed).
   conversions documented in `micropoint/config.jl`/`micropoint/README.md`.
   **Not a full per-depth profile** — that was tried (each param interpolated
   onto micropoint's own node depths) and made `RunModelFull` hang
-  indefinitely (not a NaN cascade — a genuine non-returning call, confirmed
+  indefinitely (not a NaN cascade — a non-returning call, confirmed
   via isolated Rscript reproduction and bisected to `Smax` specifically: a
   flat, single, self-consistent `Smax` well below micropoint's own default
   soil-type table (SLGA's real bulk density at Whroo gives ~0.15-0.28 vs.

@@ -138,6 +138,14 @@ available_environments = AvailableEnvironments(
 shape_pars = DesertIguana(0.07u"kg", 1000.0u"kg/m^3")
 body       = Body(shape_pars, Naked())
 
+heat_exchage_traits_eg = example_ectotherm_heat_exchange_traits()
+
+behavioral_limits_eg = example_ectotherm_behavioral_limits()
+
+behavioral_traits_eg = example_ectotherm_behavioral_traits()
+
+organism_traits_eg = example_ectotherm_organism_traits()
+
 organism_traits = example_ectotherm_organism_traits(
     activity_period         = Diurnal(),
     

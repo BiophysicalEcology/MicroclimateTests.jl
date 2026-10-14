@@ -68,13 +68,7 @@ display(fig1)
 savefig(fig1, joinpath(outdir, "01_twostream_comparison.png"))
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  2: below-canopy longwave -- Rlwdown should match closely (both models   ║
-# ║  transmit the sky term the same way); Rlwup/RlwLabs are expected to      ║
-# ║  diverge in profile shape, not just noise: R's longwavebelow() computes  ║
-# ║  the upward/reflected stream via an all-pairs view-factor matrix         ║
-# ║  (inter-layer weights from cumulative-PAI distance), while Microclimate.jl's║
-# ║  LayeredLongwaveExchange uses a sequential top-down/bottom-up cascade -- ║
-# ║  a real, already-documented structural-fidelity difference, not a bug.   ║
+# ║  2: below-canopy longwave                                                ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 println("\n" * "="^72); println("2: below-canopy longwave"); println("="^72)
 

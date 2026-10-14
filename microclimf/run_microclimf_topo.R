@@ -34,7 +34,7 @@ suppressMessages({
 })
 
 # Padded to 2 identical bands: runpointmodela's internal processing (e.g.
-# winddir's `apply(..., MARGIN=3, .getmode)`) expects a genuine time
+# winddir's `apply(..., MARGIN=3, .getmode)`) expects a time
 # dimension to summarise over; a true single-band raster collapses to 2D
 # somewhere internally (R silently drops singleton dims), leaving no 3rd
 # dimension for MARGIN=3 to act on. Since we only want one hour's snapshot,
@@ -86,7 +86,7 @@ class(soilc) <- "soilcharac"
 # in array mode ("Only one grid cell of the climate data overlaps with dtm").
 # resampleclimdata upsamples climarrayr onto a finer intermediate grid
 # matching dtm's own extent -- doesn't add real information (the source
-# climate genuinely is uniform at sub-CRUCL2-pixel scale), just satisfies
+# climate is uniform at sub-CRUCL2-pixel scale), just satisfies
 # runpointmodela's structural requirement for more than one cell. Its
 # element order matches ours (temp, relhum, pres, swdown, difrad, lwdown,
 # windspeed, winddir, precip): confirmed from source, it indexes
