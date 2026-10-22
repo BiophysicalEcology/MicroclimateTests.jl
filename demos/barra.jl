@@ -222,16 +222,18 @@ init_soil_temperature = temp_spline.(depths_cm) .* u"K"
 
 model = MicroMapModel(;
     micro_model = MicroModel(;
-        depths,
-        heights,
-        soil_properties_model = CampbelldeVriesSoilProperties(;
-            de_vries_shape_factor = 0.1,
-            recirculation_power = 4.0,
-            return_flow_threshold = 0.162,
+        site = nothing,   # each point's site comes from the terrain
+        soil = SoilModel(; depths, profile = soil_profile,
+            properties_model = CampbelldeVriesSoilProperties(;
+                de_vries_shape_factor = 0.1,
+                recirculation_power = 4.0,
+                return_flow_threshold = 0.162,
+            ),
+            hydraulic_model   = example_soil_hydraulic_model(),
+            moisture_strategy = DynamicSoilMoisture(),
         ),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
-        config                = MicroConfig(soil_moisture_strategy = DynamicSoilMoisture()),
+        atmosphere = AtmosphereModel(; heights),
+        snow = NoSnow(),
     ),
     dem_source              = BARRA{BARRAC2, AUST04},
     weather_source          = BARRA{BARRAC2, AUST04},
@@ -245,7 +247,6 @@ problem = MicroVectorProblem(;
     model,
     points,
     dates,
-    soil_profile,
     init = (; soil_moisture = init_soil_moisture, soil_temperature = init_soil_temperature),
 )
 

@@ -71,13 +71,13 @@ function write_ozflux_micropoint_inputs(result, outdir)
     # up to totaldepth=2m -- R interpolates onto its own layer depths
     # (geometricCpp). Flat soil_source (:slga_uniform/texture class) just
     # produces identical rows, so the interpolation is a no-op there.
-    soil_profile = result.problem.inputs.soil_profile
+    soil_profile = result.problem.model.soil.profile
     depths_m = ustrip.(u"m", result.depths)
     totaldepth = 2.0
     nodes = findall(<=(totaldepth), depths_m)
     smax_profile = 1.0 .- ustrip.(u"Mg/m^3", soil_profile.bulk_density[nodes]) ./ ustrip.(u"Mg/m^3", soil_profile.mineral_density[nodes])
     b_profile = soil_profile.hydraulics.campbell_b_parameter[nodes]
-    psi_e_profile = abs.(ustrip.(u"J/kg", soil_profile.hydraulics.air_entry_water_potential[nodes])) ./ ustrip(u"m/s^2", Unitful.gn)
+    psi_e_profile = abs.(ustrip.(u"J/kg", soil_profile.hydraulics.air_entry_water_potential[nodes]))  # micropoint 0.2 takes J/kg
     ksat_profile = ustrip.(soil_profile.hydraulics.saturated_hydraulic_conductivity[nodes])
     rho_profile = ustrip.(u"kg/m^3", soil_profile.bulk_density[nodes])
     CSV.write(joinpath(outdir, "soil_profile.csv"), DataFrame(
@@ -86,7 +86,7 @@ function write_ozflux_micropoint_inputs(result, outdir)
     ))
 
     # Julia's own initial soil state -- R interpolates this onto r_depth_m
-    # for SoilTempIni/ThetaIni on the first chunk, instead of RunModelFull's
+    # for SoilTempIni/ThetaIni at the start of the run, instead of RunModelFull's
     # generic auto-generated guess (a fixed depth-based formula unrelated to
     # the real observed initial conditions).
     initial_temp_C = ustrip.(u"°C", result.problem.inputs.initial_soil_temperature[nodes])
@@ -107,14 +107,14 @@ function write_ozflux_micropoint_inputs(result, outdir)
     soiltype = is_slga ? "Clay loam" : CAMPBELL_NORMAN_MICROPOINT_NAME[source]
     soil_override = is_slga
 
-    canopy_model = result.problem.model.canopy_model
+    canopy_model = result.problem.model.canopy
     (; leaf_parameters, shortwave_model, interception_model) = canopy_model
     canopy_height_m = ustrip(u"m", canopy_model.canopy_height)
     pai = sum(canopy_model.plant_area_index)
 
     params = DataFrame(
         lat = [ustrip(u"°", resolved.latitude)], lon = [ustrip(u"°", resolved.longitude)],
-        elev_m = [ustrip(u"m", result.problem.inputs.site.elevation)],
+        elev_m = [ustrip(u"m", result.problem.model.site.elevation)],
         zref = [ustrip(u"m", resolved.reference_height)],
         gref = [site_albedo(resolved.site_name)], groundem = [emissivity],
         nlayers = [15], totaldepth = [2.0],  # package default/vignette value; higher nlayers NaN-cascaded (unfloored internal geometricCpp)

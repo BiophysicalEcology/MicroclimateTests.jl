@@ -45,13 +45,17 @@ soil_profile = example_soil_profile(depths)
 plot_depth = 5.0u"cm"
 plot_node = argmin(abs.(depths .- plot_depth))
 
-function map_model(weather_source; init_source = nothing, config = MicroConfig(soil_moisture_strategy = DynamicSoilMoisture()))
+function map_model(weather_source; init_source = nothing, config = MicroConfig())
     MicroMapModel(;
         micro_model = MicroModel(;
-            depths, heights,
-            soil_properties_model = example_soil_properties_model(),
-            soil_hydraulic_model  = example_soil_hydraulic_model(),
-            snow_model            = NoSnow(),
+            site       = nothing,   # each point's site comes from the terrain
+            soil       = SoilModel(; depths, profile = soil_profile,
+                properties_model  = example_soil_properties_model(),
+                hydraulic_model   = example_soil_hydraulic_model(),
+                moisture_strategy = DynamicSoilMoisture(),
+            ),
+            atmosphere = AtmosphereModel(; heights),
+            snow       = NoSnow(),
             config,
         ),
         dem_source              = CRUCL2,
@@ -70,7 +74,7 @@ println("Solving history (ERA5-Land): $(first(history_dates)) to $(last(history_
 # ERA5-Land's own soil state on `history_start` starts the history run.
 @time history = solve(MicroVectorProblem(;
     model = map_model(ERA5ECMWFLand; init_source = ERA5ECMWFLand),
-    points, dates = history_dates, soil_profile))
+    points, dates = history_dates))
 
 # Soil profile at the last history hour -> each forecast member's start.
 history_temperature = history.soil_temperature[point = 1]
@@ -84,12 +88,11 @@ forecast_dates = forecast_start:Day(1):(forecast_start + Day(forecast_days - 1))
 # One solver iteration per day: the soil state already carries over from the
 # history, so this trades a little accuracy for a several-fold speed-up
 # across members.
-forecast_config = MicroConfig(soil_moisture_strategy = DynamicSoilMoisture(),
-    convergence = FixedIterationConvergence(1))
+forecast_config = MicroConfig(convergence = FixedIterationConvergence(1))
 forecasts = map(members) do member
     println("Solving SEAS5 member $member: $(first(forecast_dates)) to $(last(forecast_dates))...")
     model = map_model(seas5_forecast(forecast_start; member); config = forecast_config)
-    @time solve(MicroVectorProblem(; model, points, dates = forecast_dates, soil_profile,
+    @time solve(MicroVectorProblem(; model, points, dates = forecast_dates,
         init = (; soil_temperature = now_soil_temperature, soil_moisture = now_soil_moisture)))
 end
 

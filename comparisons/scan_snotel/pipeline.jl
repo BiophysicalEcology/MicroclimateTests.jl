@@ -14,6 +14,8 @@
 # Single source of truth: change the model in build_micro_model() once, both
 # scripts pick it up. Requires config.jl and utils.jl to already be included.
 
+using ConstructionBase: setproperties
+
 # ── Site-independent model setup ─────────────────────────────────────────────
 # Built once per script run (not per-site — nothing here depends on site_num),
 # using the MODEL ALGORITHM CHOICES section of config.jl. That's the one
@@ -61,19 +63,23 @@ function build_micro_model()
     micro_config = MicroConfig(;
         convergence            = convergence_choice,
         rainfall_schedule      = rainfall_schedule_choice,
-        soil_moisture_strategy = soil_moisture_strategy_choice,
     )
 
     # `radiation`/`boundary_layer_model` are left at MicroModel's defaults
     # (RadiationModel() / MoninObukhov()) — they already match the values
     # this script used to set explicitly, so no `using SolarRadiation` needed.
+    # `site = nothing`: MicroclimateMapper fills in each point's site, and
+    # prepare_site sets the site and that site's own soil profile on the final model.
+    soil = SoilModel(; depths, profile = soil_profile,
+        properties_model  = soil_properties_model,
+        hydraulic_model   = soil_hydraulic_model,
+        moisture_strategy = soil_moisture_strategy_choice,
+    )
     micro_model = MicroModel(;
         hours   = collect(0.0:1:23.0),
-        depths,
-        heights = profile_heights,
-        soil_properties_model,
-        soil_hydraulic_model,
-        snow_model,
+        site = nothing, soil,
+        atmosphere = AtmosphereModel(; heights = profile_heights),
+        snow = snow_model,
         config = micro_config,
     )
 
@@ -212,7 +218,8 @@ end
 # reuse_weather/cache_weather/weather_cache_dir). Namespaced by weather source
 # so switching weather_source_choice can't silently reuse another source's cache.
 _weather_cache_path(site_num, sim_start, sim_end) =
-    joinpath(weather_cache_dir, "$(nameof(weather_source_choice))_$(site_num)_$(sim_start)_$(sim_end).jls")
+    # v2: a NamedTuple of the forcing and site (older caches hold the pre-nested-tree MicroInputs)
+    joinpath(weather_cache_dir, "$(nameof(weather_source_choice))_v2_$(site_num)_$(sim_start)_$(sim_end).jls")
 
 # Disk path for one site's cached soil profile. Keyed by site + pedotransfer
 # model so switching pedotransfer_model_choice can't reuse a stale cache.
@@ -334,14 +341,13 @@ function prefetch_weather_batch!(weather_cache, meta_all, sites, mapper_model, s
                 model = mapper_model,
                 points,
                 dates  = dates_range,
-                soil_profile,
                 init = (; soil_moisture = fill(0.3, length(depths))),
             )
             init_time = @elapsed weather_result = MicroclimateMapper.init(vec_problem)
             @printf("  MicroclimateMapper.init (DEM + weather fetch, %d points): %.2f s\n", length(batch), init_time)
             worker = take!(weather_result.cache_pool)
             for (i, (site_num, _, _)) in enumerate(batch)
-                inputs = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(i),))
+                inputs = _fetched_forcing(weather_result.init_inputs.build_pixel(worker.scratch, (Dim{:point}(i),)))
                 # Disk cache written before the in-memory assignment so an
                 # expensive fetch survives even if weather_cache turns out to
                 # be stale (e.g. a leftover Dict with an old key type).
@@ -356,6 +362,10 @@ function prefetch_weather_batch!(weather_cache, meta_all, sites, mapper_model, s
     end
     return weather_cache
 end
+
+# The weather forcing and site of one fetched point, as cached
+_fetched_forcing(pixel) = (; pixel.model.site, pixel.inputs.environment_minmax,
+    pixel.inputs.environment_daily, pixel.inputs.environment_hourly)
 
 # ── Prepare one site: metadata, weather, obs, initial conditions, problem ───
 # Does everything up through building the final `MicroProblem`, but doesn't
@@ -427,7 +437,6 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
                 compute_terrain = compute_terrain_choice),
             points = [point],
             dates  = dates_range,
-            soil_profile,
             # Most weather sources don't provide soil_moisture natively, so
             # `init()` needs a placeholder here to build `base_inputs` — this
             # value is discarded; the real initial soil moisture (obs-derived
@@ -437,7 +446,7 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
         init_time = @elapsed weather_result = MicroclimateMapper.init(vec_problem)
         @printf("  MicroclimateMapper.init (DEM + weather fetch): %.2f s\n", init_time)
         worker = take!(weather_result.cache_pool)
-        inputs = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
+        inputs = _fetched_forcing(weather_result.init_inputs.build_pixel(worker.scratch, (Dim{:point}(1),)))
         put!(weather_result.cache_pool, worker)
         # Disk cache written before the in-memory assignment so an expensive
         # fetch survives even if weather_cache turns out to be stale (e.g. a
@@ -597,9 +606,9 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
     # ── Build the final MicroProblem ──────────────────────────────────────────
     # Uses site_soil_profile (this site's own), not the `soil_profile`
     # parameter (only used above for the weather-fetch calls).
+    site_model = setproperties(micro_model, (; site = base_inputs.site,
+        soil = setproperties(micro_model.soil, (; profile = site_soil_profile))))
     inputs = MicroInputs(;
-        site               = base_inputs.site,
-        soil_profile       = site_soil_profile,
         environment_minmax = base_inputs.environment_minmax,
         environment_daily  = base_inputs.environment_daily,
         environment_hourly = base_inputs.environment_hourly,
@@ -609,7 +618,7 @@ function prepare_site(site_num, meta_all, weather_cache, micro_model, soil_profi
         initial_snow_temperature = u"K"(0.0u"°C"),
     )
 
-    problem = MicroProblem(micro_model, inputs;
+    problem = MicroProblem(site_model, inputs;
         days      = f_doy,
         time_mode = ConsecutiveDayMode(; spinup_first_day=false),
     )

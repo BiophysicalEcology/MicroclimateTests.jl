@@ -97,9 +97,9 @@ site = Site(;
 )
 
 # Soil: Clay loam (createsoilc defaults) translated via the already-verified
-# psi_e (m -> J/kg, x9.81) and Ksat (kg*s/m^3, exact unit match) conversions
-# from the sibling micropoint/config.jl bare-ground comparison. Smax/Smin/n/
-# Vq/Vm/Vo/Mc/rho have no Microclimate.jl equivalent (different retention-
+# psi_e (J/kg, exact unit match in micropoint 0.2) and Ksat (kg*s/m^3, exact unit match)
+# from the sibling micropoint/config.jl bare-ground comparison. Smax/Smin/
+# Vq/Vm/Vo/Mc have no Microclimate.jl equivalent (different retention-
 # curve formulation) -- not translated, see README.md.
 # Microclimate.jl's own default depth grid, not micropoint's geometricCpp
 # nodes (first step ~2.4mm) -- that fine a near-surface spacing forces the
@@ -110,7 +110,7 @@ site = Site(;
 # already validates against.
 depths = Microclimate.DEFAULT_DEPTHS  # not exported
 
-psi_e_Jkg = mean(soilc.psi_e) * 9.81 * -1.0u"J/kg"
+psi_e_Jkg = mean(soilc.psi_e) * -1.0u"J/kg"
 Ksat = mean(soilc.Ksat) * 1.0u"kg*s/m^3"
 campbell_b = mean(soilc.b) * 1.0
 
@@ -131,8 +131,6 @@ canopy_model = MultilayerCanopy(;
         leaf_length = 0.12u"m", leaf_width = 0.05u"m",
         leaf_emissivity = 0.97, canopy_projection_ratio = 1.6,
     ),
-    convergence_model = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=200), relaxation=0.7),
 )
 
 environment_daily = DailyTimeseries(;
@@ -190,22 +188,24 @@ environment_hourly = HourlyTimeseries(;
 )
 radiation = RadiationModel()
 
-model = MicroModel(;
-    hours = 0.0:1.0:23.0,
-    depths, heights,
-    soil_properties_model = example_soil_properties_model(),
-    soil_hydraulic_model,
-    radiation,
-    canopy_model,
-    config = MicroConfig(; rainfall_schedule = HourlyRainfall(), soil_moisture_strategy = DynamicSoilMoisture(;
+soil = SoilModel(; depths, profile = soil_profile,
+    properties_model = example_soil_properties_model(),
+    hydraulic_model = soil_hydraulic_model,
+    moisture_strategy = DynamicSoilMoisture(;
         #moisture_tolerance = microinput[:IM]u"kg/m^2/s",
         #moisture_max_iterations = 36,
         #moisture_timestep = 50u"s",
-        )),
+        ),
+)
+model = MicroModel(;
+    hours = 0.0:1.0:23.0,
+    site, soil,
+    atmosphere = AtmosphereModel(; heights, radiation),
+    canopy = canopy_model,
+    config = MicroConfig(; rainfall_schedule = HourlyRainfall()),
 )
 
 inputs = MicroInputs(;
-    site, soil_profile,
     environment_minmax = nothing,
     environment_daily, environment_hourly,
     initial_soil_temperature = fill(u"K"((mean(climdata.temp) + 273.15) * 1.0u"K"), length(depths)),

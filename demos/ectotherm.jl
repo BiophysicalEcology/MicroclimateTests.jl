@@ -72,10 +72,13 @@ output_layers = (
 
 model = MicroMapModel(;
     micro_model = MicroModel(;
-        depths, heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
+        site = nothing,   # each point's site comes from the terrain
+        soil = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model = example_soil_properties_model(),
+            hydraulic_model  = example_soil_hydraulic_model(),
+        ),
+        atmosphere = AtmosphereModel(; heights),
+        snow = NoSnow(),
     ),
     dem_source              = DEM_SOURCE,
     weather_source          = WEATHER_SOURCE,
@@ -87,7 +90,6 @@ model = MicroMapModel(;
 
 problem_kwargs = (;
     model, points, dates,
-    soil_profile = example_soil_profile(depths),
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 
@@ -734,7 +736,6 @@ grid_template = load_template(WEATHER_SOURCE, grid_site)
 @time grid_output = solve_grid_cached(MicroRasterProblem(;
     model, area = raster_area, dates,
     template     = grid_template,
-    soil_profile = example_soil_profile(depths),
     init         = (; soil_moisture = fill(0.2, length(depths))),
 ), "grid_0pct_shade")
 
@@ -924,7 +925,6 @@ grid_low_output = grid_output
 @time grid_high_output = solve_grid_cached(MicroRasterProblem(;
     model, area = raster_area, dates,
     template     = grid_template,
-    soil_profile = example_soil_profile(depths),
     init         = (; soil_moisture = fill(0.2, length(depths))),
     data         = (; shade = maximum_shade),
 ), "grid_90pct_shade")

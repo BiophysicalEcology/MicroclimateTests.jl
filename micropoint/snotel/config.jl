@@ -65,12 +65,12 @@ MP_RHO_KGM3   = ustrip(u"kg/m^3", uconvert(u"kg/m^3", bulk_density))
 
 # micropoint's createsoilc uses different units than microclimf's soilc for
 # two of the shared parameters (confirmed via `?createsoilc`, not guessed):
-#   psi_e: air-entry water potential in METRES (head), not J/m^3 -- convert
-#     J/kg -> m via /g (9.81 m/s^2), since J/kg = m^2/s^2.
+#   psi_e: air-entry water potential in J/kg (micropoint 0.2), the same
+#     units as Microclimate.jl's air_entry_potential, so no conversion.
 #   Ksat: "kg s / m^3" -- an exact unit match to Microclimate.jl's own
 #     sat_hydraulic_cond, so no conversion at all (unlike microclimf's
 #     MCF_KSAT, which needs the kg/m^3/day best-effort conversion above).
-MP_PSI_E = ustrip(u"J/kg", air_entry_potential) / 9.81   # m
+MP_PSI_E = ustrip(u"J/kg", air_entry_potential)          # J/kg
 MP_KSAT  = ustrip(sat_hydraulic_cond)                     # kg*s/m^3, exact
 
 # Bare ground (vegp = NA): micropoint's vegetated mode needs a full

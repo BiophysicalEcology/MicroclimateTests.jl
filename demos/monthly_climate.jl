@@ -30,11 +30,13 @@ dates = Date(2000, 1, 1):Day(1):Date(2000, 12, 31)
 
 model = MicroMapModel(;
     micro_model = MicroModel(;
-        depths,
-        heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
+        site       = nothing,   # each point's site comes from the terrain
+        soil       = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model = example_soil_properties_model(),
+            hydraulic_model  = example_soil_hydraulic_model(),
+        ),
+        atmosphere = AtmosphereModel(; heights),
+        snow       = NoSnow(),
     ),
     dem_source              = CRUCL2,
     weather_source          = CRUCL2, #WorldClim{Climate},
@@ -47,7 +49,6 @@ problem = MicroVectorProblem(;
     model,
     points,
     dates,
-    soil_profile = example_soil_profile(depths),
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 
@@ -110,7 +111,6 @@ raster_problem = MicroRasterProblem(;
     area         = raster_area,
     dates,
     template     = crucl2_template,
-    soil_profile = example_soil_profile(depths),
     init         = (; soil_moisture = fill(0.2, length(depths))),
 )
 
@@ -139,11 +139,13 @@ display(plot(max_Tsoil .- min_Tsoil;
 
 model_srtm = MicroMapModel(;
     micro_model = MicroModel(;
-        depths,
-        heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
+        site       = nothing,   # each point's site comes from the terrain
+        soil       = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model = example_soil_properties_model(),
+            hydraulic_model  = example_soil_hydraulic_model(),
+        ),
+        atmosphere = AtmosphereModel(; heights),
+        snow       = NoSnow(),
     ),
     dem_source              = SRTM,
     weather_source          = CRUCL2,
@@ -171,7 +173,6 @@ srtm_problem = MicroRasterProblem(;
     area     = srtm_area,
     dates,
     template = SRTM,          # framework loads + crops the tile automatically
-    soil_profile = example_soil_profile(depths),
     init         = (; soil_moisture = fill(0.2, length(depths))),
 )
 
@@ -221,10 +222,13 @@ display(plot(srtm_template;
 
 model_solar_clearsky = MicroMapModel(;
     micro_model = MicroModel(;
-        depths, heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
+        site       = nothing,   # each point's site comes from the terrain
+        soil       = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model = example_soil_properties_model(),
+            hydraulic_model  = example_soil_hydraulic_model(),
+        ),
+        atmosphere = AtmosphereModel(; heights),
+        snow       = NoSnow(),
     ),
     dem_source              = SRTM,
     weather_source          = CRUCL2,
@@ -248,7 +252,6 @@ solar_clearsky_problem = MicroRasterProblem(;
     area         = srtm_area,
     dates,
     template     = SRTM,
-    soil_profile = example_soil_profile(depths),
     init         = (; soil_moisture = fill(0.2, length(depths))),
 )
 
@@ -286,10 +289,13 @@ display(plot(variable_to_plot;
 
 model_solar_cloud = MicroMapModel(;
     micro_model = MicroModel(;
-        depths, heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
+        site       = nothing,   # each point's site comes from the terrain
+        soil       = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model = example_soil_properties_model(),
+            hydraulic_model  = example_soil_hydraulic_model(),
+        ),
+        atmosphere = AtmosphereModel(; heights),
+        snow       = NoSnow(),
     ),
     dem_source              = SRTM,
     weather_source          = CRUCL2,
@@ -312,7 +318,6 @@ solar_cloud_problem = MicroRasterProblem(;
     area         = srtm_area,
     dates,
     template     = SRTM,
-    soil_profile = example_soil_profile(depths),
     init         = (; soil_moisture = fill(0.2, length(depths))),
     data         = (; terrain = srtm_terrain),  # reuse terrain — no DEM re-download or horizon sweep
 )

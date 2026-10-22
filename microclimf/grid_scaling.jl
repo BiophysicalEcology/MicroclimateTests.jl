@@ -99,7 +99,7 @@ crucl2_template = load_template(CRUCL2, area)
 # TerraClimate), so it must be supplied explicitly -- matches
 # demos/monthly_climate.jl's own CRUCL2 raster example.
 raster_problem = MicroRasterProblem(;
-    model = mapper_model_cru, area, dates = dates_range, template = crucl2_template, soil_profile,
+    model = mapper_model_cru, area, dates = dates_range, template = crucl2_template,
     init = (; soil_moisture = fill(0.2, length(depths))))
 
 jl_time = @elapsed jl_result = MicroclimateMapper.solve(raster_problem)

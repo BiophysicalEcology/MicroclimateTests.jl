@@ -338,6 +338,25 @@ function _gapfilled_hourly_forcing(site_name, hourly, forcing_vars, gap_fill_don
               longwave_radiation, rainfall_hourly, forcing_used, filled_mask)
 end
 
+# The MicroModel tree shared by prepare_site, prepare_site_silo and prepare_site_daily.
+function _site_micro_model(site_name; site, depths, soil_profile, heights, canopy_model, rainfall_schedule)
+    soil = SoilModel(; depths, profile = soil_profile,
+        properties_model = soil_properties_model_choice,
+        hydraulic_model = soil_hydraulic_model(site_name),
+        moisture_strategy = soil_moisture_strategy_choice,
+    )
+    config = MicroConfig(;
+        convergence = convergence_choice,
+        rainfall_schedule,
+        canopy_soil_convergence = canopy_soil_convergence_choice,
+        canopy_soil_relaxation = canopy_soil_relaxation_choice,
+    )
+    return MicroModel(; hours = 0:1:23, site, soil,
+        atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice),
+        canopy = canopy_model, vapour_pressure_equation = vapour_pressure_equation_choice, config,
+    )
+end
+
 # Reads + aggregates all requested years, builds the MicroProblem. Doesn't
 # run anything -- that's run_site. `max_days` truncates the run for fast
 # debug-loop iteration (unlike oznet, ozflux is keyed on whole-year files,
@@ -414,7 +433,7 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
         plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
+            leaf_convection_model = leaf_convection_model_choice,
             interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(conductance = LeafEvaporationParameters(;
@@ -422,24 +441,12 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
                     cuticular_conductance=0.01u"mol/m^2/s",
                 )
             ),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice, ground_coupling = ground_coupling_choice, roughness_sublayer = roughness_sublayer_choice,
             wind_model = canopy_wind_model_choice)
     end
 
-    config = MicroConfig(;
-        convergence = convergence_choice,
-        rainfall_schedule = rainfall_schedule_choice,
-        soil_moisture_strategy = soil_moisture_strategy_choice,
-        canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice,
-    )
-    model = MicroModel(;
-        hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice,
-        soil_hydraulic_model = soil_hydraulic_model(site_name),
-        boundary_layer_model = boundary_layer_model_choice,
-        canopy_model, config,
-    )
+    model = _site_micro_model(site_name; site, depths, soil_profile, heights, canopy_model,
+        rainfall_schedule = rainfall_schedule_choice)
 
     # Initial soil state from the site's own first observed Ts/Sws (falls
     # back to the mean air temperature / a mid-range moisture guess for any
@@ -449,7 +456,7 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     inputs = MicroInputs(;
-        site, soil_profile, environment_minmax = nothing, environment_daily, environment_hourly,
+        environment_minmax = nothing, environment_daily, environment_hourly,
         initial_soil_temperature, initial_soil_moisture,
     )
     problem = MicroProblem(model, inputs; days = collect(1:ndays), time_mode = ConsecutiveDayMode(; spinup_first_day = false))
@@ -531,35 +538,40 @@ const _SILO_CACHE = Dict{Tuple{String,Date,Date,Float64},Any}()
 function fetch_silo_forcing(site_name, latitude, longitude, sim_start::Date, sim_end::Date, depths, reference_height)
     ref_m = ustrip(u"m", reference_height)
     wc_key = (site_name, sim_start, sim_end, ref_m)
-    disk_path = joinpath(weather_cache_dir, "SILO_$(site_name)_$(sim_start)_$(sim_end)_ref$(ref_m)m.jls")
+    # v2: a NamedTuple of the forcing and site (older caches hold the pre-nested-tree MicroInputs)
+    disk_path = joinpath(weather_cache_dir, "SILO_v2_$(site_name)_$(sim_start)_$(sim_end)_ref$(ref_m)m.jls")
     if !haskey(_SILO_CACHE, wc_key) && reuse_weather && isfile(disk_path)
         _SILO_CACHE[wc_key] = deserialize(disk_path)
         println("  Loaded SILO forcing from disk cache: $disk_path")
     end
     if !haskey(_SILO_CACHE, wc_key)
         println("  Fetching SILO forcing ($sim_start to $sim_end, wind reference height $(ref_m) m)...")
-        micro_model = MicroModel(; hours = collect(0.0:1:23.0), depths, heights = [0.01, ref_m] .* u"m",
-            soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-            snow_model = NoSnow())
-        mapper_model = MicroMapModel(; micro_model, dem_source = dem_source_choice, weather_source = weather_source_choice,
-            surface_albedo_source = site_albedo(site_name), roughness_height_source = 0.004u"m", compute_terrain = compute_terrain_choice)
-        point = GIW.Point((ustrip(u"°", longitude), ustrip(u"°", latitude)))
-        # Placeholder soil_profile/init -- only sizes the fetch, doesn't inform
+        # Placeholder soil profile/init -- only sizes the fetch, doesn't inform
         # it (weather forcing doesn't depend on soil properties).
-        vec_problem = MicroVectorProblem(;
-            model = mapper_model, points = [point], dates = sim_start:Day(1):sim_end,
-            soil_profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
+        soil = SoilModel(; depths,
+            profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
                 mineral_density = fill(2.56u"Mg/m^3", length(depths)), mineral_conductivity = fill(1.25u"W/m/K", length(depths)),
                 mineral_heat_capacity = fill(870.0u"J/kg/K", length(depths)),
                 hydraulics = CampbellHydraulicProfile(; air_entry_water_potential = fill(1.0u"J/kg", length(depths)),
                     saturated_hydraulic_conductivity = fill(0.001u"kg*s/m^3", length(depths)),
                     campbell_b_parameter = fill(4.5, length(depths)), root_density = fill(1.0u"m/m^3", length(depths)))),
+            properties_model = soil_properties_model_choice, hydraulic_model = soil_hydraulic_model(site_name),
+        )
+        micro_model = MicroModel(; hours = collect(0.0:1:23.0), site = nothing, soil,
+            atmosphere = AtmosphereModel(; heights = [0.01, ref_m] .* u"m"))
+        mapper_model = MicroMapModel(; micro_model, dem_source = dem_source_choice, weather_source = weather_source_choice,
+            surface_albedo_source = site_albedo(site_name), roughness_height_source = 0.004u"m", compute_terrain = compute_terrain_choice)
+        point = GIW.Point((ustrip(u"°", longitude), ustrip(u"°", latitude)))
+        vec_problem = MicroVectorProblem(;
+            model = mapper_model, points = [point], dates = sim_start:Day(1):sim_end,
             init = (; soil_moisture = fill(0.2, length(depths))),
         )
         weather_result = MicroclimateMapper.init(vec_problem)
         worker = take!(weather_result.cache_pool)
-        fetched = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
+        pixel = weather_result.init_inputs.build_pixel(worker.scratch, (Dim{:point}(1),))
         put!(weather_result.cache_pool, worker)
+        fetched = (; pixel.model.site, pixel.inputs.environment_minmax,
+            pixel.inputs.environment_daily, pixel.inputs.environment_hourly)
         if cache_weather
             mkpath(weather_cache_dir)
             serialize(disk_path, fetched)
@@ -638,21 +650,16 @@ function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full
         plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
+            leaf_convection_model = leaf_convection_model_choice,
             interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice, ground_coupling = ground_coupling_choice, roughness_sublayer = roughness_sublayer_choice,
             wind_model = canopy_wind_model_choice)
     end
 
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = DailyRainfall(),  # SILO rainfall is a daily total, not per-timestep
-        soil_moisture_strategy = soil_moisture_strategy_choice, canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice)
-    model = MicroModel(; hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-        boundary_layer_model = boundary_layer_model_choice,
-        canopy_model, config)
+    model = _site_micro_model(site_name; site, depths, soil_profile, heights, canopy_model,
+        rainfall_schedule = DailyRainfall())  # SILO rainfall is a daily total, not per-timestep
 
     # max_days truncates the solve to `ndays` days, but fetch_silo_forcing
     # above is deliberately full-year -- truncate environment_minmax/
@@ -664,7 +671,6 @@ function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full
         truncate_environment_hourly(fetched.environment_hourly, n)
 
     inputs = MicroInputs(;
-        site, soil_profile,
         environment_minmax, environment_daily = fetched.environment_daily,
         environment_hourly,
         initial_soil_temperature, initial_soil_moisture,
@@ -804,21 +810,16 @@ function prepare_site_daily(site_name, years; max_days=nothing, canopy_mode=:ful
         plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
         MultilayerCanopy(; canopy_height, plant_area_index,
             shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
+            leaf_convection_model = leaf_convection_model_choice,
             interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice, ground_coupling = ground_coupling_choice, roughness_sublayer = roughness_sublayer_choice,
             wind_model = canopy_wind_model_choice)
     end
 
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = DailyRainfall(),
-        soil_moisture_strategy = soil_moisture_strategy_choice, canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice)
-    model = MicroModel(; hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-        boundary_layer_model = boundary_layer_model_choice,
-        canopy_model, config)
+    model = _site_micro_model(site_name; site, depths, soil_profile, heights, canopy_model,
+        rainfall_schedule = DailyRainfall())
 
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
     initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
@@ -836,7 +837,7 @@ function prepare_site_daily(site_name, years; max_days=nothing, canopy_mode=:ful
         rainfall = nothing, zenith_angle = nothing,
     )
     inputs = MicroInputs(;
-        site, soil_profile, environment_minmax, environment_daily, environment_hourly,
+        environment_minmax, environment_daily, environment_hourly,
         initial_soil_temperature, initial_soil_moisture,
     )
     problem = MicroProblem(model, inputs; days = collect(1:ndays_actual), time_mode = ConsecutiveDayMode(; spinup_first_day = false))

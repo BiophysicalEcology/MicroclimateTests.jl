@@ -50,8 +50,6 @@ canopy_model = MultilayerCanopy(;
     # per metre than its own forest example (PAI=4 over 25m); 1.0 keeps a
     # modest, still-plausible low canopy without that numerical fragility.
     canopy_height, plant_area_index = 1.0,
-    leaf_temperature_solver = RootFindLeafTemperature(),
-    convergence = IterationToleranceConvergence(; tolerance = 0.01u"K", max_iterations_per_day = 30),
 )
 
 soil_properties_model = CampbelldeVriesSoilProperties(;
@@ -80,11 +78,15 @@ snow_model = SnowModel(;
 )
 micro_config = MicroConfig(;
     convergence = convergence_choice, rainfall_schedule = rainfall_schedule_choice,
-    soil_moisture_strategy = soil_moisture_strategy_choice,
+)
+soil = SoilModel(; depths, profile = soil_profile,
+    properties_model = soil_properties_model, hydraulic_model = soil_hydraulic_model,
+    moisture_strategy = soil_moisture_strategy_choice,
 )
 micro_model = MicroModel(;
-    hours = collect(0.0:1:23.0), depths, heights = canopy_heights,
-    soil_properties_model, soil_hydraulic_model, snow_model, canopy_model,
+    hours = collect(0.0:1:23.0), site = nothing, soil,
+    atmosphere = AtmosphereModel(; heights = canopy_heights),
+    snow = snow_model, canopy = canopy_model,
     config = micro_config,
 )
 # NoCanopy baseline (defaults to NoCanopy(), profile_heights matches the
@@ -92,8 +94,9 @@ micro_model = MicroModel(;
 # version so the soil comparison can isolate the canopy's own effect from any
 # other model difference vs. micropoint.
 micro_model_nocanopy = MicroModel(;
-    hours = collect(0.0:1:23.0), depths, heights = profile_heights,
-    soil_properties_model, soil_hydraulic_model, snow_model,
+    hours = collect(0.0:1:23.0), site = nothing, soil,
+    atmosphere = AtmosphereModel(; heights = profile_heights),
+    snow = snow_model,
     config = micro_config,
 )
 
@@ -461,7 +464,6 @@ env_h_ablation = HourlyTimeseries(;
     zenith_angle = nothing,
 )
 inputs_ablation = MicroInputs(;
-    site = old_inputs.site, soil_profile = old_inputs.soil_profile,
     # nothing, not old_inputs.environment_minmax -- interpolate_minmax! prefers
     # environment_minmax over environment_hourly for everything except
     # pressure when both are set, which would silently ignore this ablation.
@@ -473,7 +475,7 @@ inputs_ablation = MicroInputs(;
     initial_snow_temperature = old_inputs.initial_snow_temperature,
     initial_snow_density = old_inputs.initial_snow_density,
 )
-problem_ablation = MicroProblem(micro_model, inputs_ablation; days = prep.problem.days, time_mode = prep.problem.time_mode)
+problem_ablation = MicroProblem(prep.problem.model, inputs_ablation; days = prep.problem.days, time_mode = prep.problem.time_mode)
 
 ablation_ok = true
 try

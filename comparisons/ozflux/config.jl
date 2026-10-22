@@ -36,16 +36,19 @@ soil_properties_model_choice = Microclimate.example_soil_properties_model()
 rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics   
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
-canopy_convergence_model_choice = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80), relaxation=0.8) # set relaxation high for short canopies
+canopy_convergence_model_choice = NonlinearCanopyConvergence()  # NewtonRaphson with a backtracking line search
 canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
 canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact), near_field_subdivisions=20,
-    relaxation=0.7, max_air_temperature_deviation=40.0u"K", aitken_omega_max=0.8, min_ground_resistance=10.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact),
+    min_ground_resistance=10.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
+ground_coupling_choice = FloorTurbulence() # ProfileGroundResistance(), FloorTurbulence(), SakaguchiZeng2009()
+roughness_sublayer_choice = CanopyTopMixingEnhancement() # NoRoughnessSublayer(), CanopyTopMixingEnhancement()
+# Tabulated Goff-Gratch (-40 to 90 °C, 0.1 K steps), linearly interpolated: faster than the formula
+vapour_pressure_equation_choice = VapourPressureLookup()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
 # Raised from the 0.02 m/s default -- near-calm nights were driving canopy_top_flux_boundary's ±40K clamp.
@@ -58,7 +61,6 @@ boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
 #                                         )
 #canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
 canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
-leaf_temperature_solver_choice = LinearizedLeafTemperature()#RootFindLeafTemperature() # LinearizedLeafTemperature()
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
 # NoCanopy + a PAI-derived shade fraction + a wind-speed knockdown + a large
 # horizon angle (sun only reaches the ground near-overhead) -- how forest

@@ -17,7 +17,7 @@ subprocess, Julia reads the output CSVs back.
   `canopy_params.csv`, `canopy_layers.csv` from a solved `comparisons/ozflux`
   result.
 - `run_micropoint_ozflux_vegetated.R` — reads those four CSVs, runs
-  `RunModelFull` in chunks (see below), writes `veg_*.csv` + timing +
+  `RunModelFull` in one run over the whole period, writes `veg_*.csv` + timing +
   `soil_depths.csv`.
 - `ozflux_below_canopy_comparison.jl` — entry point: `run_site_gapfilled` ->
   write inputs -> `Rscript` -> read `veg_*.csv` back -> 3-way stats/plots +
@@ -29,8 +29,8 @@ subprocess, Julia reads the output CSVs back.
 `RunModelFull` can hit a permanent, non-recovering NaN cascade under real
 (as opposed to smooth/synthetic) forcing — once triggered, every hour after
 it in that call is NaN, with no recovery, confirmed deterministic (repeat
-runs on identical input give identical results). Two mitigations are
-already applied:
+runs on identical input give identical results). One mitigation is
+applied:
 
 1. **Wind speed uses Microclimate.jl's own canopy-top wind**
    (`output.canopy.wind_speed[:,1]`), not the raw tower `Ws`. A/B tested
@@ -47,22 +47,9 @@ already applied:
    docs treat differently from above-canopy forcing) — reverted.
    The height mismatch this leaves for wind specifically is a smaller,
    accepted imprecision against a much larger, confirmed stability gain.
-2. **The R run is chunked** into ~monthly blocks (fixed row count, *not*
-   calendar months parsed from `obs_time` — `obs_time` is UTC-shifted from
-   `climdata`'s own local-time-ordered rows, so a UTC-calendar-month split
-   creates a tiny leading fragment whose own instability poisons the real
-   first month's initial soil state). A cascade is contained to the block
-   it starts in instead of losing the rest of the year. Soil state (weeks
-   to months of memory) carries forward between blocks via
-   `SoilTempIni`/`ThetaIni`, but only from a block that was itself mostly
-   clean (>=90% non-NaN) — a heavily-cascaded block's tail state isn't a
-   trustworthy initial condition and gets reset instead of propagating the
-   corruption indefinitely (confirmed empirically: a clean-in-isolation
-   month came out 100% NaN when initialised from the previous month's own
-   99.9%-NaN ending state).
 
-Even with both mitigations, roughly half the year still cascades somewhere
-(varies by block). **The obs-vs-micropoint stats/plots only cover the hours
+Hours after a cascade starts are NaN for the rest of the run. **The
+obs-vs-micropoint stats/plots only cover the hours
 that came through valid** — `n` in the printed stats table shows exactly how
 much of the year that is per variable (compare against the obs-vs-Julia
 `n`, which covers the full year modulo real data gaps). This is an

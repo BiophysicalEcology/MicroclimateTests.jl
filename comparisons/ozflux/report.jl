@@ -333,7 +333,7 @@ end
 # single panel rather than a profile_times grid. :legacy (NoCanopy) has no
 # per-layer PAI -- skipped.
 function plot_plant_area_index(prep; save_dir=nothing, tag="", display_plots=false)
-    canopy_model = prep.problem.model.canopy_model
+    canopy_model = prep.problem.model.canopy
     canopy_model isa NoCanopy && return nothing
     pai = canopy_model.plant_area_index
     layer_heights = Microclimate.canopy_layer_heights(prep.heights, canopy_model.canopy_height, length(pai)).layer_heights
@@ -628,7 +628,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     # applied to the initial-condition read (pipeline.jl), same raw column.
     for (prefix, kind, model_mat, units, convert, ylims, obs_scale) in (
         ("Ts", "soil_temperature", output.soil_temperature, "°C", d -> ustrip.(u"°C", d), ts_ylims, 1.0),
-        ("Sws", "soil_moisture", output.soil_moisture, "frac", identity, (0.0, 0.6), sws_obs_scale(site_name, prep.problem.inputs.soil_profile)),
+        ("Sws", "soil_moisture", output.soil_moisture, "frac", identity, (0.0, 0.6), sws_obs_scale(site_name, prep.problem.model.soil.profile)),
     )
         _depth_panels!(prefix, kind, model_mat, units, convert, ylims; obs_scale)
     end

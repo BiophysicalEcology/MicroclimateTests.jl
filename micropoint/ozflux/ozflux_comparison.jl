@@ -27,15 +27,15 @@ include(joinpath(@__DIR__, "report.jl"))
 # entry (config.jl) -- "CapeTribulation", "Calperum", "Whroo", "Wallaby",
 # "GWW", "Longreach", "TiTreeEast", "AliceSpringsMulga".
 site_name = "Longreach"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulga"
-years = [2019]
-max_days = 90  # set e.g. 10-15 for a fast iteration loop -- both models still run on identical (shorter) forcing
+years = [2020]
+max_days = nothing  # set e.g. 10-15 for a fast iteration loop -- both models still run on identical (shorter) forcing
 outdir = joinpath(@__DIR__, "outputs", "$(site_name)_$(join(years, '-'))")
 save_outputs_3way = true
 display_plots_3way = false
 plot_start = Date(years[1], 1, 1)
 plot_end   = max_days === nothing ? Date(years[1], 12, 30) : Date(years[1], 1, 1) + Day(max_days - 1)
 # Arbitrary snapshot window for the vertical-profile plots -- needs to land
-# in a cleanly-solved chunk (see README); empty panels just mean pick a
+# before any micropoint NaN cascade (see README); empty panels just mean pick a
 # different date, not an error. Falls back to just inside day 2 when
 # max_days truncates the run short of the default November window.
 profile_times = max_days === nothing ?

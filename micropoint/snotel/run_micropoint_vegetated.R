@@ -50,7 +50,12 @@ soilc$Smax  <- rep(p$smax, nl)
 soilc$b     <- rep(p$b, nl)
 soilc$psi_e <- rep(p$psi_e, nl)
 soilc$Ksat  <- rep(p$ksat, nl)
-soilc$rho   <- rep(p$rho_kgm3, nl)
+# createsoilc has no bulk density: porosity is 1 - (Vq + Vm + Vo), so rescale
+# the solid fractions to the given porosity, keeping their proportions
+solids <- soilc$Vq + soilc$Vm + soilc$Vo
+soilc$Vq <- soilc$Vq * (1 - soilc$Smax) / solids
+soilc$Vm <- soilc$Vm * (1 - soilc$Smax) / solids
+soilc$Vo <- soilc$Vo * (1 - soilc$Smax) / solids
 soilc$gref  <- p$gref
 soilc$groundem <- p$groundem
 
@@ -62,7 +67,7 @@ soilc$groundem <- p$groundem
 vegp <- createvegp(vegtype = "BET.Te")
 vegp$h    <- cp$canopy_height_m
 vegp$pai  <- cp$pai
-vegp$x    <- cp$leaf_angle_x
+vegp$x    <- max(cp$leaf_angle_x, 0.01)  # micropoint needs x > 0
 vegp$lref <- cp$leaf_reflectance
 vegp$ltra <- cp$leaf_transmittance
 vegp$vegem<- cp$leaf_emissivity

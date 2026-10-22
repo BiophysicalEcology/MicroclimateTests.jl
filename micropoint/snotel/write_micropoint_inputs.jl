@@ -63,11 +63,11 @@ function write_micropoint_inputs(micro_out, prep, outdir)
     heights_m = ustrip.(u"m", profile_heights)
 
     # Per-site soil values (SoilGrids fetch, see prepare_site) -- same unit
-    # conversions as config.jl's MP_PSI_E/MP_KSAT (psi_e: J/kg -> m via /g;
+    # units as config.jl's MP_PSI_E/MP_KSAT (psi_e: J/kg, no conversion;
     # Ksat: kg*s/m^3, exact match to createsoilc's own units, no conversion).
     site_smax  = prep.site_saturation_moisture
     site_b     = prep.site_campbell_b
-    site_psi_e = ustrip(u"J/kg", prep.site_air_entry_potential) / 9.81
+    site_psi_e = ustrip(u"J/kg", prep.site_air_entry_potential)
     site_ksat  = ustrip(prep.site_sat_hydraulic_cond)
     site_rho_kgm3 = ustrip(u"kg/m^3", uconvert(u"kg/m^3", prep.site_bulk_density))
 

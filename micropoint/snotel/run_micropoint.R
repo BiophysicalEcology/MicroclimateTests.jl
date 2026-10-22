@@ -21,7 +21,7 @@ climdata$obs_time <- as.POSIXlt(climdata$obs_time, tz = "UTC")
 p <- as.list(read.csv(file.path(outdir, "params.csv"))[1, ])
 
 soilc <- createsoilc(soiltype = "Clay loam", nlayers = p$nlayers, totalDepth = p$totaldepth)
-# Smax/b/psi_e/Ksat/rho are per-soil-layer vectors (length nlayers+1, see
+# Smax/b/psi_e/Ksat are per-soil-layer vectors (length nlayers+1, see
 # ?createsoilc) -- rep() to replace every layer with our calibrated scalar
 # rather than overwrite the vector with a length-1 value.
 nl <- length(soilc$Smax)
@@ -29,7 +29,12 @@ soilc$Smax  <- rep(p$smax, nl)
 soilc$b     <- rep(p$b, nl)
 soilc$psi_e <- rep(p$psi_e, nl)
 soilc$Ksat  <- rep(p$ksat, nl)
-soilc$rho   <- rep(p$rho_kgm3, nl)
+# createsoilc has no bulk density: porosity is 1 - (Vq + Vm + Vo), so rescale
+# the solid fractions to the given porosity, keeping their proportions
+solids <- soilc$Vq + soilc$Vm + soilc$Vo
+soilc$Vq <- soilc$Vq * (1 - soilc$Smax) / solids
+soilc$Vm <- soilc$Vm * (1 - soilc$Smax) / solids
+soilc$Vo <- soilc$Vo * (1 - soilc$Smax) / solids
 # gref/groundem are single scalars (not per-layer), unlike the above.
 soilc$gref <- p$gref
 soilc$groundem <- p$groundem
@@ -39,7 +44,7 @@ soilc$groundem <- p$groundem
 # organic litter layer in the top ~2.5cm transitioning to mineral soil by
 # ~5cm. Node depths here (from micropoint's own geometricCpp(nlayers,
 # totalDepth), verified against the C++ source) are approximately
-# [0, 0.24, 1.21, 3.39, 7.26, ...] cm for nlayers=15/totalDepth=2m -- nodes
+# [0, 0.16, 0.81, 2.26, 4.84, ...] cm for nlayers=15/totalDepth=2m -- nodes
 # 1:3 fall in the organic zone, node 4 near the transition, nodes 5+ mineral.
 # thermalConductivityCpp derives conductivity from Vq/Vm/Vo composition as
 # kSolid = 2.5^(Vq/Vs) * 8.8^(Vm/Vs) * 0.25^(Vo/Vs) (from the C++ source) --

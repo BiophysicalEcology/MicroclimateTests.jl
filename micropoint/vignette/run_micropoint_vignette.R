@@ -52,7 +52,7 @@ write.csv(climdata_adj, file.path(outdir, "climdata.csv"), row.names = FALSE)
 # are still included for completeness/documentation, ignored by Julia side) ──
 write.csv(as.data.frame(vegp), file.path(outdir, "vegp.csv"), row.names = FALSE)
 write.csv(data.frame(paii = paii, Lfrac = Lfrac), file.path(outdir, "paii.csv"), row.names = FALSE)
-write.csv(as.data.frame(soilc[c("Smax","Smin","n","Ksat","b","psi_e","rho")]),
+write.csv(as.data.frame(soilc[c("Smax","Smin","Ksat","b","psi_e","Vq","Vm","Vo")]),
           file.path(outdir, "soilc.csv"), row.names = FALSE)
 write.csv(data.frame(gref = soilc$gref, groundem = soilc$groundem, grefPAR = soilc$grefPAR,
                       nLayers = soilc$nLayers, totalDepth = soilc$totalDepth,

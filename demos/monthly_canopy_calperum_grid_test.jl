@@ -63,8 +63,7 @@ plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_he
 println("plant_area_index: ", plant_area_index)
 plot(plant_area_index, canopy_heights, ylabel="Height (cm)", xlabel="Plant Area Index", title="Canopy Structure")
 
-canopy_convergence_model_choice = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20), relaxation=0.7)
+canopy_convergence_model_choice = NonlinearCanopyConvergence()
 leaf_convection_model_choice = ElaborateLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
 canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))
@@ -98,15 +97,17 @@ output_layers = (
 model = MicroMapModel(;
     micro_model = MicroModel(;
         hours                 = 0:1:23,
-        depths,
-        heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
-        canopy_model,
+        site                  = nothing,   # each point's site comes from the terrain
+        soil                  = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model  = example_soil_properties_model(),
+            hydraulic_model   = example_soil_hydraulic_model(),
+            moisture_strategy = PrescribedSoilMoisture(),
+        ),
+        atmosphere            = AtmosphereModel(; heights),
+        snow                  = NoSnow(),
+        canopy                = canopy_model,
         config                = MicroConfig(;
             convergence             = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20),
-            soil_moisture_strategy  = PrescribedSoilMoisture(),
             canopy_soil_convergence = canopy_soil_convergence_choice,
         ),
     ),
@@ -142,7 +143,6 @@ problem = MicroVectorProblem(;
     model,
     points,
     dates,
-    soil_profile = example_soil_profile(depths),
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 

@@ -72,11 +72,13 @@ end
 
 model = MicroMapModel(;
     micro_model = MicroModel(;
-        depths,
-        heights = [0.01, 1.2]u"m",
-        soil_properties_model = Microclimate.example_soil_properties_model(),
-        soil_hydraulic_model = example_soil_hydraulic_model(),
-        snow_model = NoSnow(),
+        site = nothing,   # each point's site comes from the terrain
+        soil = SoilModel(; depths, profile = sp_soilgrids_point,
+            properties_model = Microclimate.example_soil_properties_model(),
+            hydraulic_model = example_soil_hydraulic_model(),
+        ),
+        atmosphere = AtmosphereModel(; heights = [0.01, 1.2]u"m"),
+        snow = NoSnow(),
     ),
     dem_source = CRUCL2,
     weather_source = CRUCL2,
@@ -90,7 +92,6 @@ problem = MicroVectorProblem(;
     model,
     points = [site],
     dates = Date(2000, 1, 1):Day(1):Date(2000, 12, 31),
-    soil_profile = sp_soilgrids_point,
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 

@@ -29,8 +29,9 @@ if use_opendap_points
     MicroclimateMapper.loader(::Type{<:BARRA}) = MicroclimateMapper.PointQuery()
 end
 
-# ── Site-independent model setup (except depths, which vary per site) ───────
-function build_micro_model(depths)
+# ── Site-independent model setup (except depths and soil profile, which vary per site) ──
+# `site = nothing` for the weather fetch: MicroclimateMapper fills in each point's site.
+function build_micro_model(depths, soil_profile; site = nothing)
     soil_properties_model = Microclimate.example_soil_properties_model()
     soil_hydraulic_model  = Microclimate.example_soil_hydraulic_model(;
         infiltration_algorithm = infiltration_algorithm_choice,
@@ -39,16 +40,18 @@ function build_micro_model(depths)
     micro_config = MicroConfig(;
         convergence            = convergence_choice,
         rainfall_schedule      = rainfall_schedule_choice,
-        soil_moisture_strategy = soil_moisture_strategy_choice,
     )
 
+    soil = SoilModel(; depths, profile = soil_profile,
+        properties_model  = soil_properties_model,
+        hydraulic_model   = soil_hydraulic_model,
+        moisture_strategy = soil_moisture_strategy_choice,
+    )
     micro_model = MicroModel(;
         hours   = collect(0.0:1:23.0),
-        depths,
-        heights = profile_heights,
-        soil_properties_model,
-        soil_hydraulic_model,
-        snow_model = NoSnow(),   # OzNet (Murrumbidgee catchment) doesn't see persistent snow
+        site, soil,
+        atmosphere = AtmosphereModel(; heights = profile_heights),
+        snow = NoSnow(),   # OzNet (Murrumbidgee catchment) doesn't see persistent snow
         config = micro_config,
     )
 
@@ -131,7 +134,8 @@ end
 # source so switching weather_source_choice can't silently reuse another
 # source's cached forcing.
 _weather_cache_path(site_name, sim_start, sim_end) =
-    joinpath(weather_cache_dir, "$(nameof(weather_source_choice))_$(site_name)_$(sim_start)_$(sim_end).jls")
+    # v2: a NamedTuple of the forcing and site (older caches hold the pre-nested-tree MicroInputs)
+    joinpath(weather_cache_dir, "$(nameof(weather_source_choice))_v2_$(site_name)_$(sim_start)_$(sim_end).jls")
 
 # ── Prepare one site: weather, SLGA soil profile, obs, initial conditions ───
 # Does everything up through building the final `MicroProblem`, but doesn't
@@ -150,7 +154,6 @@ function prepare_site(row, weather_cache; sim_start, sim_end, auto_date_range, m
     _sim_end   = resolved.sim_end
 
     depths = (sim_depths_cm ./ 100.0) .* u"m"
-    micro_model, mapper_model = build_micro_model(depths)
 
     # ── Weather forcing ───────────────────────────────────────────────────
     dates_range = _sim_start:Day(1):_sim_end
@@ -163,29 +166,32 @@ function prepare_site(row, weather_cache; sim_start, sim_end, auto_date_range, m
     if !haskey(weather_cache, wc_key)
         println("\nFetching weather forcing ($_sim_start to $_sim_end)...")
         point = GIW.Point((lon_dd, lat_dd))
+        # Placeholder soil profile/init: only used to size the fetch, not
+        # to inform it -- weather forcing doesn't depend on soil
+        # properties. The real, SLGA-derived soil_profile is built below.
+        placeholder_profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
+            mineral_density = fill(2.56u"Mg/m^3", length(depths)),
+            mineral_conductivity = fill(1.25u"W/m/K", length(depths)),
+            mineral_heat_capacity = fill(870.0u"J/kg/K", length(depths)),
+            hydraulics = CampbellHydraulicProfile(;
+                air_entry_water_potential = fill(1.0u"J/kg", length(depths)),
+                saturated_hydraulic_conductivity = fill(0.001u"kg*s/m^3", length(depths)),
+                campbell_b_parameter = fill(4.5, length(depths)),
+                root_density = fill(1.0u"m/m^3", length(depths))))
+        _, mapper_model = build_micro_model(depths, placeholder_profile)
         vec_problem = MicroVectorProblem(;
             model  = mapper_model,
             points = [point],
             dates  = dates_range,
-            soil_profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
-                mineral_density = fill(2.56u"Mg/m^3", length(depths)),
-                mineral_conductivity = fill(1.25u"W/m/K", length(depths)),
-                mineral_heat_capacity = fill(870.0u"J/kg/K", length(depths)),
-                hydraulics = CampbellHydraulicProfile(;
-                    air_entry_water_potential = fill(1.0u"J/kg", length(depths)),
-                    saturated_hydraulic_conductivity = fill(0.001u"kg*s/m^3", length(depths)),
-                    campbell_b_parameter = fill(4.5, length(depths)),
-                    root_density = fill(1.0u"m/m^3", length(depths)))),
-            # Placeholder soil_profile/init: only used to size the fetch, not
-            # to inform it -- weather forcing doesn't depend on soil
-            # properties. The real, SLGA-derived soil_profile is built below.
             init = (; soil_moisture = fill(0.2, length(depths))),
         )
         init_time = @elapsed weather_result = MicroclimateMapper.init(vec_problem)
         @printf("  MicroclimateMapper.init (DEM + weather fetch): %.2f s\n", init_time)
         worker = take!(weather_result.cache_pool)
-        inputs = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
+        pixel = weather_result.init_inputs.build_pixel(worker.scratch, (Dim{:point}(1),))
         put!(weather_result.cache_pool, worker)
+        inputs = (; pixel.model.site, pixel.inputs.environment_minmax,
+            pixel.inputs.environment_daily, pixel.inputs.environment_hourly)
         # Disk cache written before the in-memory assignment so an expensive
         # fetch survives even if weather_cache turns out to be stale (e.g. a
         # leftover Dict with an old key type from before a wc_key change).
@@ -300,9 +306,8 @@ function prepare_site(row, weather_cache; sim_start, sim_end, auto_date_range, m
     println("  Initial ST: " * join([@sprintf("%.1f", ustrip(uconvert(u"°C", T))) for T in initial_st], ", ") * " °C")
     println("  Initial SM: " * join([@sprintf("%.3f", v) for v in initial_sm], ", "))
 
+    micro_model, _ = build_micro_model(depths, soil_profile; site = base_inputs.site)
     inputs = MicroInputs(;
-        site               = base_inputs.site,
-        soil_profile,
         environment_minmax = base_inputs.environment_minmax,
         environment_daily  = base_inputs.environment_daily,
         environment_hourly = base_inputs.environment_hourly,

@@ -42,26 +42,6 @@ if use_point_query
     MicroclimateMapper.loader(::Type{<:SILO}) = MicroclimateMapper.PointQuery()
 end
 
-model = MicroMapModel(;
-    micro_model = MicroModel(;
-        depths,
-        heights,
-        soil_properties_model = CampbelldeVriesSoilProperties(;
-            de_vries_shape_factor = 0.1,
-            recirculation_power = 4.0,
-            return_flow_threshold = 0.162,
-        ),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
-        config                = MicroConfig(soil_moisture_strategy = DynamicSoilMoisture()),
-    ),
-    dem_source              = SRTM,
-    weather_source          = SILO,
-    surface_albedo_source   = 0.15,
-    roughness_height_source = 0.004u"m",
-    compute_terrain         = false,
-)
-
 soil_profile = SoilProfile(;
     bulk_density = fill(bulk_density, length(depths)),
     mineral_density = fill(mineral_density, length(depths)),
@@ -75,11 +55,32 @@ soil_profile = SoilProfile(;
     ),
 )
 
+model = MicroMapModel(;
+    micro_model = MicroModel(;
+        site = nothing,   # each point's site comes from the terrain
+        soil = SoilModel(; depths, profile = soil_profile,
+            properties_model = CampbelldeVriesSoilProperties(;
+                de_vries_shape_factor = 0.1,
+                recirculation_power = 4.0,
+                return_flow_threshold = 0.162,
+            ),
+            hydraulic_model   = example_soil_hydraulic_model(),
+            moisture_strategy = DynamicSoilMoisture(),
+        ),
+        atmosphere = AtmosphereModel(; heights),
+        snow = NoSnow(),
+    ),
+    dem_source              = SRTM,
+    weather_source          = SILO,
+    surface_albedo_source   = 0.15,
+    roughness_height_source = 0.004u"m",
+    compute_terrain         = false,
+)
+
 problem = MicroVectorProblem(;
     model,
     points,
     dates,
-    soil_profile,
     init = (; soil_moisture = fill(0.3, length(depths))),
 )
 

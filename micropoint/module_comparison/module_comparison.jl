@@ -9,6 +9,7 @@
 #   julia --project=. c:/git/MicroclimateTests.jl/micropoint/module_comparison/module_comparison.jl
 
 using Microclimate, Unitful, Statistics, Printf, CSV, DataFrames, Plots
+using Roots: find_zero, Bisection
 
 gr()
 outdir = joinpath(@__DIR__, "outputs")
@@ -90,7 +91,7 @@ env2 = (; atmospheric_pressure=101325.0u"Pa", reference_humidity=0.7, reference_
     cloud_emissivity=1.0, cloud_cover=0.5, shade=0.0, surface_emissivity=0.97, longwave_radiation=300.0u"W/m^2")
 Microclimate.canopy_longwave!(lw_buf, lw_model, 0.97;
     leaf_temperature=leaf_temperature2, ground_temperature=ground_temperature2, ground_emissivity=0.97,
-    site=site2, environment_instant=env2)
+    incoming_longwave=env2.longwave_radiation)
 
 jl_Rlwdown = reverse(ustrip.(u"W/m^2", lw_buf.boundary_downward_longwave[1:n2]))
 jl_Rlwup   = reverse(ustrip.(u"W/m^2", lw_buf.boundary_upward_longwave[1:n2]))
@@ -160,9 +161,12 @@ for i in 1:n4
     stomatal_conductance_i = LeafEvaporationParameters(;
         abaxial_vapour_conductance=d4.gs[i] * 1.0u"mol/m^2/s", adaxial_vapour_conductance=0.0u"mol/m^2/s",
         cuticular_conductance=0.0u"mol/m^2/s")
-    solved = Microclimate.leaf_temperature(RootFindLeafTemperature(), absorbed_radiation_i, air_temperature4[i],
+    # Root of the leaf's net heat balance, bracketed as the removed RootFindLeafTemperature did
+    net_heat(T) = ustrip(u"W", Microclimate.leaf_heat_balance(T * u"K", absorbed_radiation_i, air_temperature4[i],
         relative_humidity4[i], wind_speed_i, atmospheric_pressure4, 0.97, stomatal_conductance_i,
-        leaf_water_potential4, body4; leaf_area=1.0u"m^2", leaf_temperature_guess=air_temperature4[i])
+        leaf_water_potential4, body4, 1.0u"m^2").net)
+    Ta_K = ustrip(u"K", air_temperature4[i])
+    solved = find_zero(net_heat, (Ta_K - 30.0, Ta_K + 40.0), Bisection()) * u"K"
     jl_tleaf4[i] = ustrip(u"°C", solved)
 end
 
@@ -197,17 +201,15 @@ model5 = MultilayerCanopy(;
     canopy_height=canopy_height5, plant_area_index=plant_area_index5,
     shortwave_model=TwoStreamRadiation(; leaf_reflectance=0.4, leaf_transmittance=0.2),
     leaf_parameters=LeafParameters(; leaf_length=0.15u"m", leaf_width=0.07u"m", leaf_emissivity=0.97, canopy_projection_ratio=1.6),
-    leaf_temperature_solver=RootFindLeafTemperature(),
     longwave_model = AllPairsLongwaveExchange(),
     air_profile_model=RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)),  # R's temp_below/relhum_below are Raupach LNF, not K-theory
-    convergence_model=PicardCanopyConvergence(;
-        convergence=IterationToleranceConvergence(; tolerance=0.01u"K", max_iterations_per_day=200)),
 )
-buffers5 = Microclimate.allocate_canopy(model5, heights5, boundary_layer_model5)
 
 site5 = Site(; latitude=49.96807u"°", longitude=-5.215668u"°", elevation=0.0u"m", slope=0.0u"°", aspect=0.0u"°",
     horizon_angles=fill(0.0u"°", 24), sky_view_fraction=1.0, albedo=0.15, roughness_height=0.004u"m",
     atmospheric_pressure=101.399u"kPa" |> p -> uconvert(u"Pa", p))
+buffers5 = Microclimate.allocate_canopy(model5, heights5, boundary_layer_model5;
+    site=site5, vapour_pressure_equation=GoffGratch(), soil_hydraulic_model=nothing)
 environment_instant5 = (;
     atmospheric_pressure=site5.atmospheric_pressure, reference_temperature=u"K"(25.684u"°C"),
     reference_wind_speed=1.431u"m/s", reference_humidity=0.5372, zenith_angle=30.0u"°",
@@ -220,8 +222,8 @@ inputs5 = Microclimate.CanopyEnergyBalanceInputs(model5;
     ground_reflectance=0.15, ground_temperature=u"K"(22.0u"°C"), ground_emissivity=0.97,
     ground_relative_humidity=0.87, canopy_source_temperature=u"K"(25.684u"°C"),
 )
-result5 = Microclimate.canopy_energy_balance!(buffers5, model5, boundary_layer_model5, inputs5)
-println("Julia Picard iterations: ", result5.iterations, "  (R Aitken iterations: see run_micropoint.R output)")
+result5 = Microclimate.canopy_energy_balance!(buffers5, model5, boundary_layer_model5, inputs5; site=site5)
+println("Julia Newton iterations: ", result5.iterations, "  (R Aitken iterations: see run_micropoint.R output)")
 
 # Boundary conditions feeding Raupach -- compare directly against R's own
 # solve_wholecanopy output (05_wholecanopy.csv: uf, th, TL) to check whether
@@ -232,7 +234,7 @@ a1_raupach = model5.air_profile_model.canopy_top_velocity_std_factor
 γ_dyer = boundary_layer_model5.dyer_constant
 z_eval5 = max(canopy_height5 - result5.displacement_height, 1.0e-3u"m")
 Φ_h5 = isfinite(result5.obukhov_length) ?
-    Microclimate.calc_Φ_h(z_eval5, γ_dyer, result5.obukhov_length, boundary_layer_model5.stable_Φ_h_coefficient,
+    Microclimate.calc_Φ_h(z_eval5 / result5.obukhov_length, γ_dyer, boundary_layer_model5.stable_Φ_h_coefficient,
         boundary_layer_model5.min_stable_Φ_h, boundary_layer_model5.max_stable_Φ_h) : 1.0
 a2_5 = Φ_h5 * boundary_layer_model5.karman_constant * (1.0 - result5.displacement_height / canopy_height5) / a1_raupach^2
 T_L_julia5 = a2_5 * canopy_height5 / result5.friction_velocity

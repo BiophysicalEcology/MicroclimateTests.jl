@@ -94,14 +94,13 @@ pai_shape = :uniform # :top_heavy :bottom_heavy
 plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
 plot(plant_area_index, canopy_heights, ylabel="Height (cm)", xlabel="Plant Area Index", title="Canopy Structure")
 
-# relaxation=0.7 matches comparisons/ozflux/config.jl. convergence=
+# convergence=
 # FixedIterationConvergence(3) below (on MicroConfig) does NOT match ozflux's
 # FixedIterationConvergence(1) -- each simulated day here repeats the same
 # representative day-of-month, so extra within-day iterations are needed to
 # settle away from the arbitrary initial condition; ozflux's consecutive real
 # days don't need that.
-canopy_convergence_model_choice = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20), relaxation=0.7)
+canopy_convergence_model_choice = NonlinearCanopyConvergence()
 soil_hydraulic_model_choice  = Microclimate.example_soil_hydraulic_model()
 soil_properties_model_choice = Microclimate.example_soil_properties_model()
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
@@ -145,15 +144,17 @@ output_layers = (
 model = MicroMapModel(;
     micro_model = MicroModel(;
         hours                 = 0:1:23,
-        depths,
-        heights,
-        soil_properties_model = example_soil_properties_model(),
-        soil_hydraulic_model  = example_soil_hydraulic_model(),
-        snow_model            = NoSnow(),
-        canopy_model,
+        site                  = nothing,   # each point's site comes from the terrain
+        soil                  = SoilModel(; depths, profile = example_soil_profile(depths),
+            properties_model  = example_soil_properties_model(),
+            hydraulic_model   = example_soil_hydraulic_model(),
+            moisture_strategy = PrescribedSoilMoisture(),
+        ),
+        atmosphere            = AtmosphereModel(; heights),
+        snow                  = NoSnow(),
+        canopy                = canopy_model,
         config                = MicroConfig(;
             convergence             = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=20),  # see comment above canopy_convergence_model_choice
-            soil_moisture_strategy  = PrescribedSoilMoisture(),
             canopy_soil_convergence = canopy_soil_convergence_choice,
         ),
     ),
@@ -169,7 +170,6 @@ problem = MicroVectorProblem(;
     model,
     points,
     dates,
-    soil_profile = example_soil_profile(depths),
     init = (; soil_moisture = fill(0.2, length(depths))),
 )
 

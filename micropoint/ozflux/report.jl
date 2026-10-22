@@ -88,8 +88,9 @@ end
 
 # Shared x-axis range for a plot_profiles3 grid, mirroring
 # comparisons/ozflux/report.jl's _shared_profile_xlims.
-function _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert)
-    (; t_model, heights, resolved, hourly, height_series, canopy_mode) = result
+function _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert;
+                                mp_soil_mat=nothing, mp_depth_m=nothing)
+    (; t_model, heights, resolved, hourly, height_series, canopy_mode, depths) = result
     canopy_height = resolved.canopy_height
     vals = Float64[]
     for dt in profile_times
@@ -97,6 +98,11 @@ function _shared_profile_xlims3(result, output, profile_times, field, jl_convert
         i === nothing && continue
         append!(vals, Iterators.filter(isfinite, skipmissing(_vertical_profile(output, heights, canopy_height, i, field, canopy_mode, jl_convert))))
         append!(vals, filter(isfinite, mp_convert.(mp_mat[i, :])))
+        # Surface points drawn at height 0 by _profile_panel3
+        if field == :air_temperature && mp_soil_mat !== nothing
+            push!(vals, jl_convert(output.soil_temperature[i, argmin(ustrip.(u"m", depths))]))
+            push!(vals, mp_convert(mp_soil_mat[i, argmin(mp_depth_m)]))
+        end
         row = findfirst(==(dt), hourly.DateTime)
         row === nothing && continue
         for (h, name) in height_series
@@ -114,7 +120,8 @@ end
 # Grid of _profile_panel3, one panel per profile_times entry.
 function plot_profiles3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert;
                          units, save_dir=nothing, tag="", display_plots=false, mp_soil_mat=nothing, mp_depth_m=nothing)
-    xlims = _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert)
+    xlims = _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert;
+        mp_soil_mat, mp_depth_m)
     panels = [_profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, mp_convert; units, mp_soil_mat, mp_depth_m, xlims) for dt in profile_times]
     ncols = min(4, length(panels))
     nrows = cld(length(panels), ncols)
@@ -226,7 +233,7 @@ end
 # evenly-spaced grid). Static structure, not time-varying -- a single panel.
 # :legacy (NoCanopy) has no per-layer PAI -- skipped.
 function plot_plant_area_index3(result, mp; save_dir=nothing, tag="", display_plots=false)
-    canopy_model = result.problem.model.canopy_model
+    canopy_model = result.problem.model.canopy
     canopy_model isa NoCanopy && return nothing
     pai = canopy_model.plant_area_index
     layer_heights = Microclimate.canopy_layer_heights(result.heights, canopy_model.canopy_height, length(pai)).layer_heights

@@ -104,18 +104,20 @@ environment_daily = DailyTimeseries(;
 
 config = MicroConfig(;
     convergence = FixedIterationConvergence(3),  # micro_global's own ndmax=3 default
-    soil_moisture_strategy = PrescribedSoilMoisture(; precomputed_soil_moisture = fill(0.5, n_depths, length(days))),
+)
+soil = SoilModel(; depths, profile = soil_profile,
+    properties_model = soil_properties_model, hydraulic_model = soil_hydraulic_model,
+    moisture_strategy = PrescribedSoilMoisture(; precomputed_soil_moisture = fill(0.5, n_depths, length(days))),
 )
 
 model = MicroModel(;
     hours = collect(0.0:1:23.0),
-    depths, heights,
-    soil_properties_model, soil_hydraulic_model, boundary_layer_model,
-    condensation_model = GarrattSegalCondensation(),
+    site, soil,
+    surface = SurfaceModel(; condensation_model = GarrattSegalCondensation()),
+    atmosphere = AtmosphereModel(; heights, boundary_layer_model),
     config,
 )
 inputs = MicroInputs(;
-    site, soil_profile,
     environment_minmax = nothing,
     environment_daily, environment_hourly,
     initial_soil_temperature = nothing,

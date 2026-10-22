@@ -84,25 +84,9 @@ micro_model, soil_profile, _ = build_micro_model()
 # Everything else (soil hydraulic calibration, depths, snow model) stays
 # exactly as build_micro_model() set it up -- a controlled, single-variable
 # change, not a switch to a different soil setup.
-micro_model = MicroModel(;
-    hours                    = micro_model.hours,
-    depths                   = micro_model.depths,
-    heights                  = micro_model.heights,
-    soil_properties_model    = micro_model.soil_properties_model,
-    soil_hydraulic_model     = micro_model.soil_hydraulic_model,
-    radiation                = micro_model.radiation,
-    snow_model               = micro_model.snow_model,
-    vapour_pressure_equation = micro_model.vapour_pressure_equation,
-    boundary_layer_model     = micro_model.boundary_layer_model,
-    evaporation_model        = micro_model.evaporation_model,
-    soil_energy_model        = micro_model.soil_energy_model,
-    config = MicroConfig(;
-        convergence            = micro_model.config.convergence,
-        rainfall_schedule      = micro_model.config.rainfall_schedule,
-        soil_moisture_strategy = PrescribedSoilMoisture(),
-        max_surface_pool       = micro_model.config.max_surface_pool,
-    ),
-)
+micro_model = setproperties(micro_model, (;
+    soil = setproperties(micro_model.soil, (; moisture_strategy = PrescribedSoilMoisture())),
+))
 
 mapper_model_topo = MicroMapModel(;
     micro_model,
@@ -124,7 +108,7 @@ println("=== SRTM (fine terrain) + CRUCL2 (coarse climate) around ($lat_dd, $lon
 jl_time = @elapsed begin
     raster_problem = MicroRasterProblem(;
         model = mapper_model_topo, area, dates = dates_full_year, template = SRTM,
-        soil_profile, init = (; soil_moisture = fill(0.2, length(depths))))
+        init = (; soil_moisture = fill(0.2, length(depths))))
     jl_result = MicroclimateMapper.solve(raster_problem)
 end
 nx, ny = length(dims(jl_result, X)), length(dims(jl_result, Y))
@@ -250,7 +234,7 @@ mapper_model_coarse = MicroMapModel(;
 coarse_points = [GIW.Point((x, y)) for y in coarse_ys for x in coarse_xs]
 coarse_vec_problem = MicroVectorProblem(;
     model = mapper_model_coarse, points = coarse_points, dates = dates_full_year,
-    soil_profile, init = (; soil_moisture = fill(0.2, length(depths))))
+    init = (; soil_moisture = fill(0.2, length(depths))))
 coarse_out = MicroclimateMapper.solve(coarse_vec_problem)
 
 sigma_sb = 5.670374419e-8
