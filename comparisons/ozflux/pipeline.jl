@@ -239,24 +239,23 @@ function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attr
         soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
     end
     if haskey(global_attrib, "BulkDensity")
-        # Metadata value is a real point measurement (assumed near-surface) vs
-        # SLGA's 90 m-grid mean -- rescale the whole profile by their ratio at
-        # the surface node rather than overwrite it outright, preserving
-        # SLGA's own depth trend. Doesn't touch the hydraulic parameters
-        # already derived from the pre-scaled bulk density via pedotransfer
-        # (texture, not bulk density, dominates those) -- bulk density itself
-        # (thermal capacity/conductivity) is the only thing this corrects.
+        # Metadata point value vs SLGA's 90 m-grid mean: rescale the profile by their
+        # surface ratio only when they roughly agree -- a large ratio compounds with
+        # SLGA's depth trend into near-zero porosity (e.g. Wallaby's 1900 kg/m^3)
         meta_bd = parse(Float64, string(global_attrib["BulkDensity"])) * u"kg/m^3"
         if meta_bd > 500.0u"kg/m^3" # at least one site has erroneous value
             slga_bd = soil_profile.bulk_density[5]
-            scale = meta_bd / slga_bd
-            @printf("  BulkDensity: metadata=%.0f kg/m^3  SLGA(surface)=%.0f kg/m^3  (scaling profile by %.2fx)\n",
-                ustrip(u"kg/m^3", meta_bd), ustrip(u"kg/m^3", slga_bd), scale)
-            soil_profile.bulk_density .*= scale
+            scale = uconvert(NoUnits, meta_bd / slga_bd)
+            if 0.8 <= scale <= 1.25
+                @printf("  BulkDensity: metadata=%.0f kg/m^3  SLGA(surface)=%.0f kg/m^3  (scaling profile by %.2fx)\n",
+                    ustrip(u"kg/m^3", meta_bd), ustrip(u"kg/m^3", slga_bd), scale)
+                soil_profile.bulk_density .*= scale
+            else
+                @warn "BulkDensity metadata disagrees with SLGA; keeping SLGA" site_name meta_bd slga_bd scale
+            end
         end
     end
     #soil_profile.bulk_density .*= 1.4
-    println(soil_profile.bulk_density)
     macropores(site_name) && apply_macropore_boost!(soil_profile, depths;
         max_boost=MACROPORE_MAX_BOOST, taper_depth=MACROPORE_TAPER_DEPTH)
     if source === :slga_uniform

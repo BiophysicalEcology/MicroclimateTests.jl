@@ -62,6 +62,8 @@ if (tolower(as.character(p$soil_override)) == "true") {
   soilc$Vq <- soilc$Vq * scale
   soilc$Vm <- soilc$Vm * scale
   soilc$Vo <- soilc$Vo * scale
+  # Keep residual water content below saturation
+  soilc$Smin <- pmin(soilc$Smin, 0.5 * soilc$Smax)
 }
 soilc$gref  <- p$gref
 soilc$groundem <- p$groundem

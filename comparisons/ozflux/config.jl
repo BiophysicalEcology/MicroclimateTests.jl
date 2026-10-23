@@ -36,8 +36,8 @@ soil_properties_model_choice = Microclimate.example_soil_properties_model()
 rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics   
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
-canopy_convergence_model_choice = NonlinearCanopyConvergence()  # NewtonRaphson with a backtracking line search
-canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
+canopy_convergence_model_choice = AndersonCanopyConvergence() #NonlinearCanopyConvergence(; abstol=0.1)  # NewtonRaphson with a backtracking line search
+canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
 canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
@@ -222,7 +222,7 @@ leaf_parameters(site_name) = LeafParameters(; get(SITE_LEAF_PARAMETERS, site_nam
 const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
     "CapeTribulation"   => 0.20,  # dark, wet closed-canopy rainforest litter
-    "Calperum"          => 0.35,  # pale sandy mallee soil, sparse cover
+    "Calperum"          => 0.20,  # pale sandy mallee soil, sparse cover
     "Whroo"             => 0.20,  # box/ironbark woodland, leaf litter + some bare soil
     "Wallaby"           => 0.20,  # dense wet sclerophyll regrowth
     "GWW"               => 0.20,  # semi-arid eucalypt woodland, red sandy soil
