@@ -37,7 +37,8 @@ rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(),
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
 canopy_convergence_model_choice = AndersonCanopyConvergence() #NonlinearCanopyConvergence(; abstol=0.1)  # NewtonRaphson with a backtracking line search
-canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
+canopy_soil_convergence_choice = SurfaceNodePrediction()
+#canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
 canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws

@@ -148,7 +148,7 @@ root_density          = [0.0, 0.0, 82000.0, 80000.0, 78000.0, 74000.0, 71000.0, 
 
 # Plant/root parameters for the Campbell water-uptake model (Campbell 1985 defaults).
 root_resistance             = 2.5e10u"m^3/kg/s"
-stomatal_closure_potential  = -1500.0u"J/kg"
+stomatal_closure_potential_choice = -1500.0u"J/kg"
 leaf_resistance              = 2.0e6u"m^4/kg/s"
 stomatal_stability_parameter = 10.0
 root_radius                  = 0.001u"m"

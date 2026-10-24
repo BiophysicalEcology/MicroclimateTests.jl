@@ -41,7 +41,7 @@ function build_micro_model()
     )
     soil_hydraulic_model = CampbellSoilHydraulics(;
         root_resistance,
-        stomatal_closure_potential,
+        stomatal_closure_potential = stomatal_closure_potential_choice,
         leaf_resistance,
         stomatal_stability_parameter,
         root_radius,

@@ -180,10 +180,9 @@ savefig(fig4, joinpath(outdir, "04_leaftemperature_comparison.png"))
 display(fig4)
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  5: below-canopy air temperature and humidity -- full canopy_energy_     ║
-# ║  balance! Picard solve vs. R's hand-rolled Aitken-relaxed loop. Different ║
-# ║  air-profile theory/iteration on each side (KTheoryAirProfile vs.        ║
-# ║  Raupach LNF) and different stomatal models, so qualitative agreement is ║
-# ║  the bar here, not the tight match sections 1-4 aim for.                 ║
+# ║  balance! vs. micropoint's whole-canopy solve. Both Raupach LNF with a   ║
+# ║  floor layer and roughness sublayer, but different stomatal models, so   ║
+# ║  qualitative agreement is the bar, not the tight match of sections 1-4.  ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 println("\n" * "="^72); println("5: below-canopy air temperature/humidity (qualitative)"); println("="^72)
 
@@ -203,6 +202,9 @@ model5 = MultilayerCanopy(;
     leaf_parameters=LeafParameters(; leaf_length=0.15u"m", leaf_width=0.07u"m", leaf_emissivity=0.97, canopy_projection_ratio=1.6),
     longwave_model = AllPairsLongwaveExchange(),
     air_profile_model=RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk)),  # R's temp_below/relhum_below are Raupach LNF, not K-theory
+    ground_coupling=FloorTurbulence(),
+    roughness_sublayer=CanopyTopMixingEnhancement(),
+    convergence_model=AndersonCanopyConvergence(; tolerance=0.01u"K"),
 )
 
 site5 = Site(; latitude=49.96807u"°", longitude=-5.215668u"°", elevation=0.0u"m", slope=0.0u"°", aspect=0.0u"°",
@@ -217,36 +219,28 @@ environment_instant5 = (;
     longwave_radiation=414.7725u"W/m^2",
 )
 inputs5 = Microclimate.CanopyEnergyBalanceInputs(model5;
-    site=site5, environment_instant=environment_instant5, zenith_angle=30.0u"°",
+    environment_instant=environment_instant5, zenith_angle=30.0u"°",
     direct_horizontal_irradiance=(839.008 - 223.0) * 1.0u"W/m^2", diffuse_horizontal_irradiance=223.0u"W/m^2",
     ground_reflectance=0.15, ground_temperature=u"K"(22.0u"°C"), ground_emissivity=0.97,
     ground_relative_humidity=0.87, canopy_source_temperature=u"K"(25.684u"°C"),
 )
 result5 = Microclimate.canopy_energy_balance!(buffers5, model5, boundary_layer_model5, inputs5; site=site5)
-println("Julia Newton iterations: ", result5.iterations, "  (R Aitken iterations: see run_micropoint.R output)")
+println("Julia Anderson passes: ", result5.iterations, "  (R passes: see run_micropoint.R output)")
 
-# Boundary conditions feeding Raupach -- compare directly against R's own
-# solve_wholecanopy output (05_wholecanopy.csv: uf, th, TL) to check whether
-# the section-5 divergence is upstream of canopy_air_profile! (a different
-# friction_velocity/canopy_top_air_temperature/T_L reaching Raupach) rather
-# than inside it.
-a1_raupach = model5.air_profile_model.canopy_top_velocity_std_factor
-γ_dyer = boundary_layer_model5.dyer_constant
-z_eval5 = max(canopy_height5 - result5.displacement_height, 1.0e-3u"m")
-Φ_h5 = isfinite(result5.obukhov_length) ?
-    Microclimate.calc_Φ_h(z_eval5 / result5.obukhov_length, γ_dyer, boundary_layer_model5.stable_Φ_h_coefficient,
-        boundary_layer_model5.min_stable_Φ_h, boundary_layer_model5.max_stable_Φ_h) : 1.0
-a2_5 = Φ_h5 * boundary_layer_model5.karman_constant * (1.0 - result5.displacement_height / canopy_height5) / a1_raupach^2
-T_L_julia5 = a2_5 * canopy_height5 / result5.friction_velocity
+# Boundary state feeding Raupach vs R's solve_wholecanopy output (05_wholecanopy.csv:
+# uf, th, TL), to tell divergence upstream of the air profile from divergence inside it.
+# T_L = K/σ_w², read from the solved Raupach buffers
+air5 = buffers5.air_profile
+T_L_julia5 = air5.eddy_diffusivity[1] / air5.vertical_velocity_std[1]^2
 println("  Boundary state (Julia vs R):")
 println("    friction_velocity:  Julia=", round(ustrip(u"m/s", result5.friction_velocity); digits=4), " m/s   R uf=", can5.uf, " m/s")
 println("    canopy_top_temp:    Julia=", round(ustrip(u"°C", result5.canopy_top_air_temperature); digits=3), " °C    R th=", can5.th, " °C")
 println("    obukhov_length:     Julia=", result5.obukhov_length)
 println("    displacement_height:Julia=", result5.displacement_height)
 println("    T_L:                Julia=", round(ustrip(u"s", T_L_julia5); digits=4), " s      R TL=", can5.TL, " s")
-# canopy_source_temperature that actually drove the final Picard pass's
-# wind/stability solve (leaf_temperature_buffer[1], NOT canopy_top_air_temperature
-# above -- two different quantities) vs the reference air temperature it's compared against.
+println("    canopy-top enhancement e: ", round(buffers5.roughness_sublayer.enhancement; digits=3))
+println("    ground heat conductance:  ", round(u"W/m^2/K", result5.ground_heat_conductance; digits=3))
+# Top leaf temperature, which sets the canopy-top stability, vs the reference air temperature
 println("    top leaf_temperature (drives stability): ", round(ustrip(u"°C", buffers5.leaf.leaf_temperature[1]); digits=3), " °C")
 println("    reference_temperature:                   ", round(ustrip(u"°C", environment_instant5.reference_temperature); digits=3), " °C")
 println("    ΔT (reference - top leaf):                ", round(ustrip(u"K", environment_instant5.reference_temperature - buffers5.leaf.leaf_temperature[1]); digits=3), " K")
