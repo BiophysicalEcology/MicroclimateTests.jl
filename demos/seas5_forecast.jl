@@ -12,8 +12,10 @@
 # `history` and `forecasts` (one output per member) keep MicroclimateMapper's
 # full default outputs, ready to drive the ectotherm/endotherm demos.
 #
-# The first SEAS5 run queues 7 CDS requests (a few minutes); every member
-# comes from those same files, so later members and re-runs are quick.
+# The first SEAS5 run queues its CDS requests (minutes to hours, depending on
+# the CDS queue); every member comes from those same files, so later members
+# and re-runs are quick. Members solve in parallel: start Julia with threads
+# (e.g. `julia -t auto`).
 
 using MicroclimateMapper
 using Microclimate
@@ -35,7 +37,7 @@ points = [site]
 forecast_start = Date(2026, 8, 1)
 history_start  = Date(2026, 5, 1)
 forecast_days  = 215                 # SEAS5's full horizon; shorten for quicker runs
-members        = 0:10                # 0 is the control; up to 0:50
+members        = 0:9                # 0 is the control; up to 0:50
 
 depths = [0.0, 1.25, 2.5, 3.75, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5,
           20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0]u"cm"
@@ -89,12 +91,16 @@ forecast_dates = forecast_start:Day(1):(forecast_start + Day(forecast_days - 1))
 # history, so this trades a little accuracy for a several-fold speed-up
 # across members.
 forecast_config = MicroConfig(convergence = FixedIterationConvergence(1))
-forecasts = map(members) do member
-    println("Solving SEAS5 member $member: $(first(forecast_dates)) to $(last(forecast_dates))...")
+# Load each member's weather in turn (the first fetches the shared CDS files),
+# then solve the members in parallel, one task each.
+caches = map(members) do member
+    println("Loading SEAS5 member $member: $(first(forecast_dates)) to $(last(forecast_dates))...")
     model = map_model(seas5_forecast(forecast_start; member); config = forecast_config)
-    @time solve(MicroVectorProblem(; model, points, dates = forecast_dates,
+    init(MicroVectorProblem(; model, points, dates = forecast_dates,
         init = (; soil_temperature = now_soil_temperature, soil_moisture = now_soil_moisture)))
 end
+println("Solving $(length(members)) SEAS5 members on $(Threads.nthreads()) threads...")
+@time forecasts = fetch.([Threads.@spawn solve!(cache) for cache in caches])
 
 # ── plot daily means at plot_depth: history, each member, ensemble median ──
 
