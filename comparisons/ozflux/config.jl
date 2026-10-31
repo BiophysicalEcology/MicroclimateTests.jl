@@ -9,47 +9,27 @@
 
 const OZFLUX_DATA_DIR = joinpath(@__DIR__, "data")
 
-ENV["RASTERDATASOURCES_PATH"] = "c:/Spatial_Data/"
-
-# ── SILO weather source (secondary comparison + forcing gap-fill) ───────────
-weather_source_choice = SILO
-ENV["SILO_EMAIL"] = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
-use_opendap_points = true  # PointDataSources.jl OPeNDAP point query, not a whole-raster download
-dem_source_choice = SRTM
-compute_terrain_choice = false
-
-reuse_weather     = true
-cache_weather     = true
-weather_cache_dir = joinpath(@__DIR__, "weather_cache")
-
-# ── Soil texture (live SLGA fetch + pedotransfer, like oznet) ───────────────
-# SLGA has no point-query API -- a uniform profile is derived from a small
-# bounding box around each site's coordinates (same approach as oznet).
-pedotransfer_model_choice = CosbyMultivariate()
-soil_area_buffer_deg = 0.05
+# SILO forcing and SLGA soil choices (MicroclimateMapper) live in mapper.jl,
+# which only the entry points that load MicroclimateMapper include.
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  MODEL ALGORITHM CHOICES — change the model setup here, in one place     ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 soil_properties_model_choice = Microclimate.example_soil_properties_model()
-rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics   
+rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
-# MultilayerCanopy's hourly leaf/air-temperature solve.
-canopy_convergence_model_choice = PicardCanopyConvergence(;
-    convergence=IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80), relaxation=0.8) # set relaxation high for short canopies
-canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.05u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
-canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
+# MultilayerCanopy's hourly leaf/air/vapor/stability solve: NonlinearCanopyConvergence() (Newton)
+# or AndersonCanopyConvergence(), both with per-kind residual tolerances.
+canopy_convergence_model_choice = NonlinearCanopyConvergence()
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact), near_field_subdivisions=20,
-    relaxation=0.7, max_air_temperature_deviation=40.0u"K", aitken_omega_max=0.8, min_ground_resistance=10.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact)) # or Val(:bulk), or KTheoryAirProfile()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
-# Raised from the 0.02 m/s default -- near-calm nights were driving canopy_top_flux_boundary's ±40K clamp.
-boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
+boundary_layer_model_choice = MoninObukhov()
 # canopy_wind_model_choice = MixingLengthCanopyWindAttenuation(;
 #                                         shelter_floor = 0.003,
 #                                         shelter_pai_coefficient = 0.1,
@@ -58,7 +38,6 @@ boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
 #                                         )
 #canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
 canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
-leaf_temperature_solver_choice = LinearizedLeafTemperature()#RootFindLeafTemperature() # LinearizedLeafTemperature()
 # ── "legacy" canopy_mode (see pipeline.jl prepare_site's canopy_mode kwarg) ──
 # NoCanopy + a PAI-derived shade fraction + a wind-speed knockdown + a large
 # horizon angle (sun only reaches the ground near-overhead) -- how forest
@@ -98,7 +77,7 @@ legacy_params(site_name) = get(SITE_LEGACY_PARAMS, site_name, DEFAULT_LEGACY_PAR
 #   CapeTribulation, GWW: bare Ta/Ws sit at tower_height already --
 #     no entry needed, falls back to tower_height/bare "Ta"/"RH"/"Ws" below.
 #   Calperum, Whroo: a single-sensor tower-top instrument exists
-#     (Ws_SONIC_Av/Ta_SONIC_Av at Calperum, Ws_CSAT/Ta_HMP_36m at Whroo) --
+#     (Ws_SONIC_Av/Ta_SONIC_Av at Calperum, Ws_SONIC_Av (CSAT3)/Ta_HMP_36m at Whroo) --
 #     SITE_FORCING_VARS below prefers that over the lower/blended composite.
 #   Wallaby: no tower-top wind/temp sensor exists at all -- Ws_CSAT (= bare
 #     Ws) sits at only 5m, well below both canopy top and
@@ -126,7 +105,7 @@ const SITE_REFERENCE_HEIGHT_M = Dict(
 # height-mismatch and all) for any site not listed.
 const SITE_FORCING_VARS = Dict(
     "Calperum" => (ta="Ta_SONIC_Av", ws="Ws_SONIC_Av", ah="AH_IRGA_Av"),  # true 20m tower-top sensors
-    "Whroo"    => (ta="Ta_HMP_36m",  ws="Ws_CSAT",      ah="Ah"),          # true 36m; bare "Ah" is already 36m
+    "Whroo"    => (ta="Ta_HMP_36m",  ws="Ws_SONIC_Av",  ah="Ah"),          # true 36m (Ws_SONIC_Av is the CSAT3); bare "AH" is already 36m
 )
 
 # ── Per-site canopy leaf area index ──────────────────────────────────────────
@@ -339,13 +318,13 @@ const SITE_SOIL_SOURCE = Dict{String,Symbol}(
     #"CapeTribulation" => :clay_loam,
     # "Calperum" => :sandy_loam,
     # "Wallaby" => :clay_loam,
-    # "Whroo" => :clay_loam,
+    "Whroo" => :clay_loam,  # placeholder texture: SLGA needs MicroclimateMapper (mapper.jl)
     # "GWW" => :clay_loam,
     #"Longreach" => :clay,
     # "TiTreeEast" => :clay_loam,
     # "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
-soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)
+soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)  # :slga/:slga_uniform need mapper.jl
 
 # ── UTC offset (micropoint/ozflux forcing only -- comparisons/ozflux itself
 # stays in local time throughout). OzFlux records local STANDARD time
@@ -390,7 +369,7 @@ const SITE_HEIGHT_SERIES = Dict{String,Vector{Tuple{Float64,String}}}(
         (8.0,  "Ta_HMP_8m"),  (8.0,  "Ws_RMY_8m"),
         (16.0, "Ta_HMP_16m"), (16.0, "Ws_RMY_16m"),
         (32.0, "Ta_HMP_32m"), (32.0, "Ws_RMY_32m"),
-        (36.0, "Ta_HMP_36m"), (36.0, "Ws_CSAT"),  # no Ws_RMY_36m in the file; Ws_CSAT is the true top-of-tower sonic
+        (36.0, "Ta_HMP_36m"), (36.0, "Ws_SONIC_Av"),  # no Ws_RMY_36m in the file; Ws_SONIC_Av (CSAT3) is the true top-of-tower sonic
     ],
     # canopy_height 8-10m (attribute is a range; _parse_length_attr takes the
     # lower bound) -- single sub-canopy Ta sensor at 5m, no Ws at height here.

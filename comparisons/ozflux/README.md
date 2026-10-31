@@ -22,8 +22,13 @@ forcing (see "SILO forcing" below).
   NetCDF reader/aggregator (`read_ozflux_nc`, `discover_depth_series`,
   `discover_site_years`).
 - `pipeline.jl` — the mechanics: `resolve_site` (metadata) ->
-  `prepare_site`/`prepare_site_silo` (read/aggregate/build the
-  `MicroProblem`) -> `run_site`/`run_site_silo`/`run_site_gapfilled` (solve).
+  `prepare_site` (read/aggregate/build the `MicroProblem`) -> `run_site`
+  (solve). Tower forcing only; needs no MicroclimateMapper.
+- `mapper.jl` — everything that needs MicroclimateMapper: SILO forcing
+  (`run_site_silo`/`run_site_gapfilled`/`run_site_daily`) and live SLGA
+  soil (`soil_source` `:slga`/`:slga_uniform`). MicroclimateMapper still
+  builds Microclimate's old `MicroInputs(; site, soil_profile, ...)`, so
+  these paths don't run against the current Microclimate until it's ported.
 - `report.jl` — stats + plots for every comparison target
   (`report_site_results`).
 - `comparison.jl` — entry point: batch over a site x year(s) x forcing-mode x
@@ -33,10 +38,12 @@ forcing (see "SILO forcing" below).
 
 ## Data
 
-`<Site>_<Year>_L3.nc` files in `OZFLUX_DATA_DIR` (`data/` by default) — one
-OzFlux L3 NetCDF per site-year, downloaded from ozflux.org.au. Not committed
-(gitignored). `discover_site_years` scans this directory, so `comparison.jl`
-picks up whatever's actually on disk rather than a hand-maintained list.
+`<Site>[<n>]_L3.nc` files in `OZFLUX_DATA_DIR` (`data/` by default) — one
+OzFlux L3 NetCDF per site holding its whole record (TERN OzFlux releases,
+e.g. `Whroo1_L3.nc`). `read_ozflux_nc` reads only the requested years. Not
+committed (gitignored). `discover_site_years` scans this directory and each
+file's time axis, so `comparison.jl` picks up whatever's actually on disk
+rather than a hand-maintained list.
 
 Current sites: Cape Tribulation (tropical rainforest, canopy ~25 m, tower
 45 m), Calperum (mallee, canopy ~3 m, tower 20 m, multi-height Ta/AH/Ws),

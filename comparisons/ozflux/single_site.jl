@@ -23,6 +23,7 @@ using Serialization, Measures
 include("config.jl")
 include("utils.jl")
 include("pipeline.jl")
+include("mapper.jl")  # SILO/SLGA via MicroclimateMapper
 include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────

@@ -19,6 +19,7 @@ using Serialization
 include("config.jl")
 include("utils.jl")
 include("pipeline.jl")
+include("mapper.jl")  # SILO/SLGA via MicroclimateMapper
 include("report.jl")
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -28,16 +29,7 @@ include("report.jl")
 # Each entry: site name => one or more year-groups to run separately (each
 # group becomes one MicroProblem run + one report). :all_years runs every
 # available year for that site as a single combined run.
-const SITE_YEARS = Dict(
-    "CapeTribulation"    => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["CapeTribulation"]],
-    "Calperum"           => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["Calperum"]],
-    "Whroo"              => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["Whroo"]],
-    "Wallaby"            => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["Wallaby"]],
-    "GWW"                => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["GWW"]],
-    "Longreach"          => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["Longreach"]],
-    "TiTreeEast"         => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["TiTreeEast"]],
-    "AliceSpringsMulga"  => [[y] for y in discover_site_years(OZFLUX_DATA_DIR)["AliceSpringsMulga"]],
-)
+const SITE_YEARS = Dict(site => [[y] for y in years] for (site, years) in discover_site_years(OZFLUX_DATA_DIR))
 
 # Which forcing mode(s) to run per site-year -- :tower and :silo together
 # gives the gridded-vs-point-observed comparison directly; :gapfilled runs a

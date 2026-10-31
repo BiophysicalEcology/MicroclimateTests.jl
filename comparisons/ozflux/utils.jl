@@ -245,29 +245,40 @@ end
 
 # ── OzFlux NetCDF reading ─────────────────────────────────────────────────────
 
-# Scans `data_dir` for `<Site>_<Year>_L3.nc`, returns Dict{String,Vector{Int}}
-# of site name => sorted available years. Data-driven rather than a
-# hand-maintained site/year list, since files get added over time.
+# One OzFlux L3 NetCDF per site holding its whole record (TERN OzFlux
+# releases), named `<Site>[<n>]_L3.nc` (e.g. Whroo1_L3.nc). Site names carry
+# no digits, so a trailing number is the file's own suffix, not the site.
+const OZFLUX_FILE_PATTERN = r"^([A-Za-z]+)\d*_L3\.nc$"
+
+function ozflux_site_path(data_dir, site_name)
+    matches = filter(f -> (m = match(OZFLUX_FILE_PATTERN, f); m !== nothing && m.captures[1] == site_name), readdir(data_dir))
+    length(matches) == 1 || error("expected one OzFlux L3 file for $site_name in $data_dir, found $(length(matches)): $matches")
+    return joinpath(data_dir, only(matches))
+end
+
+# Calendar years with at least one record in an OzFlux file.
+ozflux_years(path) = NCDataset(ds -> sort(unique(Dates.year.(ds["time"][:]))), path)
+
+# Scans `data_dir` for OzFlux files, returns Dict{String,Vector{Int}} of site
+# name => sorted available years (from each file's own time axis).
+# Data-driven rather than a hand-maintained site/year list, since files get
+# added over time.
 function discover_site_years(data_dir)
     sites = Dict{String,Vector{Int}}()
     for f in readdir(data_dir)
-        m = match(r"^(.+)_(\d{4})_L3\.nc$", f)
+        m = match(OZFLUX_FILE_PATTERN, f)
         m === nothing && continue
-        push!(get!(sites, m.captures[1], Int[]), parse(Int, m.captures[2]))
-    end
-    for years in values(sites)
-        sort!(years)
+        sites[m.captures[1]] = ozflux_years(joinpath(data_dir, f))
     end
     return sites
 end
 
 const OZFLUX_MISSING = (-9999, -9999.0)
 
-# One OzFlux variable, missing-sentinel-replaced.
-function _read_var(ds, name::AbstractString)
-    sym = Symbol(name)
-    haskey(ds, sym) || return nothing
-    replace(vec(collect(ds[sym])), OZFLUX_MISSING[1] => missing, OZFLUX_MISSING[2] => missing)
+# One OzFlux variable over the record rows `rows`, missing-sentinel-replaced.
+function _read_var(ds, name::AbstractString, rows)
+    haskey(ds, name) || return nothing
+    replace(Vector{Union{Missing,Float64}}(ds[name][rows]), OZFLUX_MISSING[1] => missing, OZFLUX_MISSING[2] => missing)
 end
 
 # CapeTribulation's RH is a fraction (0-1) for some stretches of the file and
@@ -314,8 +325,8 @@ end
 # _read_var + RH scale fix + PLAUSIBLE_RANGE clip + flatline clip, in one
 # place so every read site (forcing/target vars, height series, Ah) gets the
 # same cleaning rather than only the main forcing loop.
-function _read_clean_var(ds, name::AbstractString)
-    vals = _read_var(ds, name)
+function _read_clean_var(ds, name::AbstractString, rows)
+    vals = _read_var(ds, name, rows)
     vals === nothing && return nothing
     name == "RH" && (vals = _fix_rh_scale(vals))
     return _clip_flatline(_clip_implausible(name, vals))
@@ -327,8 +338,8 @@ end
 # per-depth average and is used directly; when only replicates exist (e.g.
 # Calperum's Ts has no bare Ts_10cm, only Ts_10cma/b/c) they're averaged
 # here, element-wise, skipping missing.
-function discover_depth_series(ds, prefix::AbstractString)
-    varnames = String.(collect(names(ds)))
+function discover_depth_series(ds, prefix::AbstractString, rows)
+    varnames = keys(ds)
     pattern = Regex("^" * prefix * raw"_(\d+(?:\.\d+)?)(cm|m)([a-z]?)$")
     bare = Dict{Float64,String}()
     replicates = Dict{Float64,Vector{String}}()
@@ -346,9 +357,9 @@ function discover_depth_series(ds, prefix::AbstractString)
     result = NamedTuple{(:depth_m, :values),Tuple{Float64,Vector{Union{Float64,Missing}}}}[]
     for d in depths_m
         values = if haskey(bare, d)
-            _read_var(ds, bare[d])
+            _read_var(ds, bare[d], rows)
         else
-            cols = [_read_var(ds, name) for name in replicates[d]]
+            cols = [_read_var(ds, name, rows) for name in replicates[d]]
             _rowwise_mean(cols)
         end
         values === nothing || push!(result, (depth_m=d, values=values))
@@ -376,62 +387,56 @@ end
 # height) for the multi-height profile comparison. Site-specific naming (no
 # single convention across sites), so this takes an explicit list of
 # (height_m, variable_name) pairs rather than trying to auto-detect them.
-function read_height_series(ds, entries)
-    [(height_m=h, values=_read_clean_var(ds, name)) for (h, name) in entries if _read_clean_var(ds, name) !== nothing]
-end
+# Reads the records of `years` from one OzFlux L3 file's forcing + validation
+# variables, per-depth Ts/Sws series, and any requested multi-height series
+# into one DataFrame (one row per native timestep, missing-replaced,
+# `<name>_QCFlag` columns carried alongside each variable so
+# _aggregate_hourly's QC filtering applies to all of them uniformly). A
+# record belongs to the year of the hour it averages into
+# (_hour_group_start, pipeline.jl), so a year's last hour keeps its
+# end-labelled 00:00 record from the next year. `height_series`:
+# (height_m, variable_name) pairs from config.jl's SITE_HEIGHT_SERIES;
+# height_m itself isn't needed here, only the variable name.
+function read_ozflux_nc(path, years; height_series=Tuple{Float64,String}[])
+    NCDataset(path) do ds
+        all_time = ds["time"][:]
+        rows = findall(t -> Dates.year(_hour_group_start(t)) in years, all_time)
+        isempty(rows) && error("$path has no records in $years")
+        rows == first(rows):last(rows) || error("$path time axis is not sorted")
+        rows = first(rows):last(rows)
+        df = DataFrame(DateTime = all_time[rows])
 
-# Reads one OzFlux L3 file's forcing + validation variables, per-depth Ts/Sws
-# series, and any requested multi-height series into one DataFrame (one row
-# per native timestep, missing-replaced, `<name>_QCFlag` columns carried
-# alongside each variable so _aggregate_hourly's QC filtering applies to all
-# of them uniformly). `height_series`: (height_m, variable_name) pairs from
-# config.jl's SITE_HEIGHT_SERIES; height_m itself isn't needed here, only
-# the variable name.
-function read_ozflux_nc(path; height_series=Tuple{Float64,String}[])
-    ds = RasterStack(path)
-    time = DateTime.(lookup(ds, Ti))
-    df = DataFrame(DateTime = time)
-
-    forcing_vars = ("Ta", "RH", "Ws", "Fsd", "Fld", "Precip", "ps")
-    target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg")
-    for v in (forcing_vars..., target_vars..., last.(height_series)...)
-        vals = _read_clean_var(ds, v)
-        vals === nothing && continue
-        df[!, v] = vals
-        qc = _read_var(ds, v * "_QCFlag")
-        qc === nothing || (df[!, v * "_QCFlag"] = qc)
-    end
-
-    # minimum wind speed capped at 0.1 m/s (sensor limit)
-    wind_cols = filter(names(df)) do col
-        (col == "Ws" || startswith(col, "Ws_")) &&
-            !endswith(col, "_QCFlag") # reject QCFlag columns
-    end
-
-    for col in wind_cols
-        df[!, col] = map(x -> ismissing(x) ? missing : max(x, 0.1), df[!, col])
-    end 
-
-    # Absolute humidity, cased inconsistently across sites (Ah vs AH) --
-    # normalized to "Ah" (g/m^3). Used in pipeline.jl as an RH cross-check
-    # and secondary gap-fill source (same tower, different instrument).
-    ah_name = haskey(ds, :Ah) ? "Ah" : haskey(ds, :AH) ? "AH" : nothing
-    if ah_name !== nothing
-        df[!, "Ah"] = _read_clean_var(ds, ah_name)
-        ah_qc = _read_var(ds, ah_name * "_QCFlag")
-        ah_qc === nothing || (df[!, "Ah_QCFlag"] = ah_qc)
-    end
-
-    # Depth-suffixed soil series get renamed (Ts_10cma/b/c -> Ts_0.1m) since
-    # discover_depth_series already resolves replicates/units; no per-replicate
-    # QC filtering here (sentinel-missing only) -- see README caveats.
-    for prefix in ("Ts", "Sws")
-        for (depth_m, values) in discover_depth_series(ds, prefix)
-            df[!, "$(prefix)_$(depth_m)m"] = values
+        forcing_vars = ("Ta", "RH", "Ws", "Fsd", "Fld", "Precip", "ps")
+        target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg")
+        for v in (forcing_vars..., target_vars..., last.(height_series)...)
+            vals = _read_clean_var(ds, v, rows)
+            vals === nothing && continue
+            df[!, v] = vals
+            qc = _read_var(ds, v * "_QCFlag", rows)
+            qc === nothing || (df[!, v * "_QCFlag"] = qc)
         end
-    end
 
-    return df
+        # Absolute humidity, cased inconsistently across sites (Ah vs AH) --
+        # normalized to "Ah" (g/m^3). Used in pipeline.jl as an RH cross-check
+        # and secondary gap-fill source (same tower, different instrument).
+        ah_name = haskey(ds, "Ah") ? "Ah" : haskey(ds, "AH") ? "AH" : nothing
+        if ah_name !== nothing
+            df[!, "Ah"] = _read_clean_var(ds, ah_name, rows)
+            ah_qc = _read_var(ds, ah_name * "_QCFlag", rows)
+            ah_qc === nothing || (df[!, "Ah_QCFlag"] = ah_qc)
+        end
+
+        # Depth-suffixed soil series get renamed (Ts_10cma/b/c -> Ts_0.1m) since
+        # discover_depth_series already resolves replicates/units; no per-replicate
+        # QC filtering here (sentinel-missing only) -- see README caveats.
+        for prefix in ("Ts", "Sws")
+            for (depth_m, values) in discover_depth_series(ds, prefix, rows)
+                df[!, "$(prefix)_$(depth_m)m"] = values
+            end
+        end
+
+        return df
+    end
 end
 
 # Parses e.g. "25m" / "3.5 m" / "25" -> 25.0u"m". Range attributes (Wallaby's
@@ -453,33 +458,3 @@ function try_read(path, label)
         return nothing
     end
 end
-
-# output layers requested
-output_layers = (
-    LayerSpec(:soil_temperature, :soil),
-    LayerSpec(:soil_moisture, :soil),
-    LayerSpec(:soil_thermal_conductivity, :soil),
-    LayerSpec(:soil_humidity, :soil),
-    LayerSpec(:air_temperature, :profile),
-    LayerSpec(:relative_humidity, :profile),
-    LayerSpec(:wind_speed, :profile),
-    LayerSpec(:global_radiation, :scalar),
-    LayerSpec(:sky_temperature, :scalar),
-    LayerSpec(:diffuse_fraction, :scalar),
-    LayerSpec(:reference_temperature, :scalar),
-    LayerSpec(:pressure, :scalar),
-    LayerSpec(:zenith_angle, :solar),
-    LayerSpec(:leaf_temperature, :canopy),
-    LayerSpec(:canopy_air_temperature, :canopy, :air_temperature),
-    LayerSpec(:canopy_wind_speed, :canopy, :wind_speed),
-    LayerSpec(:canopy_relative_humidity, :canopy, :relative_humidity),
-    LayerSpec(:ground_dew, :scalar),
-    LayerSpec(:ground_frost, :scalar),
-    LayerSpec(:ground_standing_dew, :scalar),
-    LayerSpec(:ground_standing_frost, :scalar),
-    LayerSpec(:leaf_surface_water, :canopy),
-    LayerSpec(:leaf_dew, :canopy),
-    LayerSpec(:leaf_frost, :canopy),
-    LayerSpec(:leaf_standing_dew, :canopy),
-    LayerSpec(:leaf_standing_frost, :canopy),
-)
