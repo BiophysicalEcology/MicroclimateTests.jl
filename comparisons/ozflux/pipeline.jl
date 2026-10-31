@@ -321,11 +321,15 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
 
     println("  Reading $(resolved.path) for $site_name $years...")
     hourly = _aggregate_hourly(read_ozflux_nc(resolved.path, years; height_series))
+    # Without a donor, fill_gaps would hold a leading/trailing forcing gap
+    # flat at the nearest observation for days (sun-up Fsd all night, fixed
+    # Ta) -- start and end on whole observed days instead.
+    gap_fill_donor === nothing && (hourly = _trim_unforced_days(hourly, forcing_vars))
     ndays = nrow(hourly) ÷ 24
     max_days !== nothing && (ndays = min(ndays, max_days))
     hourly = hourly[1:(ndays * 24), :]
     n = ndays * 24
-    println("  $ndays days ($n hours) after 30-min -> hourly aggregation")
+    println("  $ndays days ($n hours) from $(first(hourly.DateTime)) after 30-min -> hourly aggregation")
 
     (; reference_temperature, reference_humidity, reference_wind_speed, global_radiation,
        longwave_radiation, rainfall_hourly, forcing_used, filled_mask) =
@@ -387,6 +391,18 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
 
     return (; site_name, years, resolved, hourly, t_model = hourly.DateTime, ndays, n, heights, depths, height_series,
               canopy_mode, forcing_used, filled_mask, problem)
+end
+
+# Hourly rows from the first midnight at or after the first hour with every
+# forcing variable observed, to the last 23:00 at or before the last such hour.
+function _trim_unforced_days(hourly, forcing_vars)
+    cols = [forcing_vars.ta, forcing_vars.ws, something(forcing_vars.ah, "RH"), "Fsd", "Fld", "ps"]
+    forced = [all(c -> !ismissing(hourly[i, c]), cols) for i in 1:nrow(hourly)]
+    i0, i1 = findfirst(forced), findlast(forced)
+    i0 === nothing && error("no hour with every forcing variable observed")
+    first_row = findfirst(i -> i >= i0 && Dates.hour(hourly.DateTime[i]) == 0, 1:nrow(hourly))
+    last_row = findlast(i -> i <= i1 && Dates.hour(hourly.DateTime[i]) == 23, 1:nrow(hourly))
+    return hourly[first_row:last_row, :]
 end
 
 # Day of year of each day in an hourly series starting at midnight -- the
