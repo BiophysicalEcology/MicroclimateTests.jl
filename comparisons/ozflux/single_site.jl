@@ -10,7 +10,7 @@
 # with comparison.jl) and config.jl (shared model parameters — change
 # leaf_convection_model_choice, soil_hydraulic_model, etc. there).
 
-using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation
+using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation, OrdinaryDiffEqSDIRK
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
 using Rasters, ArchGDAL, NCDatasets, RasterDataSources, PointDataSources
 using Rasters.Extents: Extent

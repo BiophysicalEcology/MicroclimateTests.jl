@@ -454,7 +454,8 @@ function canopy_model(site_name, resolved, heights, canopy_mode)
         longwave_model = longwave_model_choice, wind_model = canopy_wind_model_choice,
         air_profile_model = canopy_air_profile_model_choice, interception_model = interception_model_choice,
         leaf_parameters = leaf_parameters(site_name), stomatal_model = MoistureResponsiveStomatalConductance(),
-        leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice)
+        leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice,
+        ground_coupling = ground_coupling_choice)
 end
 
 # MicroModel from the config.jl model choices; `rainfall_schedule` differs by
@@ -462,9 +463,10 @@ end
 function micro_model(site_name, site, soil_profile, depths, heights, canopy, rainfall_schedule)
     soil = SoilModel(; depths, profile = soil_profile,
         properties_model = soil_properties_model_choice, hydraulic_model = soil_hydraulic_model(site_name),
-        moisture_strategy = soil_moisture_strategy_choice)
+        moisture_strategy = soil_moisture_strategy_choice, energy_model = soil_energy_model_choice)
     atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule)
+    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule,
+        canopy_soil_coupling = canopy_soil_coupling_choice)
     return MicroModel(; hours = 0:1:23, site, soil, atmosphere, canopy, config,
         vapour_pressure_equation = vapour_pressure_equation_choice)
 end

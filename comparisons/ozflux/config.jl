@@ -19,8 +19,16 @@ const OZFLUX_DATA_DIR = joinpath(@__DIR__, "data")
 soil_properties_model_choice = Microclimate.example_soil_properties_model()
 rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
+# Soil heat ODE: adaptive implicit Euler, steps up to an hour (fixed hourly steps fail Newton convergence on some hours)
+soil_energy_model_choice = SoilHeatTransport1D(; ode_solver=ImplicitEuler(),
+    ode_kwargs=(; dt=60.0u"minute", dtmax=60.0u"minute", abstol=0.05u"K", reltol=0.0))
 # MultilayerCanopy's hourly leaf/air/vapor/stability solve, with per-kind residual tolerances
-canopy_convergence_model_choice = AndersonCanopyConvergence()
+canopy_convergence_model_choice = AndersonCanopyConvergence(; leaf_balance_tolerance=1.5u"W/m^2",
+    air_temperature_tolerance=0.1u"K", vapor_density_tolerance=0.07u"g/m^3",
+    inverse_obukhov_length_tolerance=1e-2u"m^-1", on_failure=SmallestResidual())
+# One canopy solve per hour at the previous hour's ground temperature
+canopy_soil_coupling_choice = FullColumnCoupling(; convergence=FixedIterationConvergence(1))
+ground_coupling_choice = GroundTurbulence(; stability=GroundRichardson())
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
@@ -28,7 +36,8 @@ interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacit
 canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact)) # or Val(:bulk), or KTheoryAirProfile()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
-boundary_layer_model_choice = MoninObukhov()
+boundary_layer_model_choice = MoninObukhov(; stability_limit=Microclimate.MomentumCorrectionLimit(),
+    stability_functions=ChengBrutsaert(; momentum_dyer_constant=16.0, heat_dyer_constant=16.0))
 vapour_pressure_equation_choice = VapourPressureLookup()  # or GoffGratch()
 # canopy_wind_model_choice = MixingLengthCanopyWindAttenuation(;
 #                                         shelter_floor = 0.003,
