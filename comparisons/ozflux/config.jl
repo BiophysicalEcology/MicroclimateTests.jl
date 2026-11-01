@@ -123,7 +123,7 @@ const SITE_FORCING_BACKUPS = Dict(
 const SITE_LEAF_AREA_INDEX = Dict{String,Float64}(
     "CapeTribulation" => 8.0,
     "Calperum"        => 0.3,
-    "Whroo"           => 2.0,
+    "Whroo"           => 0.8,   # TERN hemispheric photography, core 1-ha plot: 0.79 (Dec 2015) to 1.23 (Jun 2016)
     "Wallaby"         => 2.0,   # fire in 2009
     "GWW"             => 0.5,   # semi-arid eucalypt woodland, canopy_height=18m per file metadata
     "Longreach"       => 0.5,   # grassland, canopy_height=0.5m per file metadata
