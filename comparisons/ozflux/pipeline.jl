@@ -217,6 +217,8 @@ function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attr
     haskey(_SOIL_CACHE, cache_key) && return _SOIL_CACHE[cache_key]
     soil_profile = if source === :slga || source === :slga_uniform
         _slga_soil_profile(latitude, longitude, depths, global_attrib)  # mapper.jl (needs MicroclimateMapper)
+    elseif source === :horizons
+        soil_profile_from_horizons(SITE_SOIL_HORIZONS[site_name], depths)
     else
         soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[source], depths)
     end

@@ -178,6 +178,37 @@ function soil_profile_from_texture(texture::NamedTuple, depths;
     )
 end
 
+# Campbell hydraulic parameters from texture percentages: Cosby et al. (1984)
+# Table 4 multivariate regressions, as in NicheMapR's pedotransfer.R.
+function cosby_multivariate(clay_percent, silt_percent, sand_percent)
+    campbell_b = log10(10^(0.1570 * clay_percent - 0.0030 * sand_percent + 3.10) / 10.2)
+    air_entry = 10^(-0.0095 * sand_percent + 0.0063 * silt_percent + 1.54) / 10.2 * u"J/kg"
+    Ksat = 10^(0.0126 * sand_percent - 0.0064 * clay_percent - 0.60) * 0.0007196666u"kg*s/m^3"
+    return (; campbell_b, air_entry, Ksat)
+end
+
+# SoilProfile from measured soil horizons (config.jl's SITE_SOIL_HORIZONS):
+# each node takes the bulk density of the horizon it sits in, and Campbell
+# hydraulics from that horizon's texture via cosby_multivariate. Nodes below
+# the deepest horizon take the deepest horizon's values.
+function soil_profile_from_horizons(horizons, depths;
+    mineral_density=2.560u"Mg/m^3", mineral_conductivity=1.25u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
+    root_density=_root_density_for_depths(depths),
+)
+    n = length(depths)
+    horizon = [min(searchsortedfirst(horizons.bottom, d), length(horizons.bottom)) for d in depths]
+    hydraulics = [cosby_multivariate(horizons.clay[k], horizons.silt[k], horizons.sand[k]) for k in horizon]
+    SoilProfile(;
+        bulk_density=[horizons.bulk_density[k] for k in horizon], mineral_density=fill(mineral_density, n),
+        mineral_conductivity=fill(mineral_conductivity, n), mineral_heat_capacity=fill(mineral_heat_capacity, n),
+        hydraulics=CampbellHydraulicProfile(;
+            air_entry_water_potential=[h.air_entry for h in hydraulics],
+            saturated_hydraulic_conductivity=[h.Ksat for h in hydraulics],
+            campbell_b_parameter=[h.campbell_b for h in hydraulics], root_density,
+        ),
+    )
+end
+
 # Layer thickness per node (m), from midpoint boundaries between neighbouring
 # depths, clipped to [0, totaldepth_m] at the ends -- used to depth-weight an
 # uneven depths grid (SIM_DEPTHS_M packs many nodes near the surface) rather

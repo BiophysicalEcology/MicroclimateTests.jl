@@ -337,13 +337,28 @@ const SITE_SOIL_SOURCE = Dict{String,Symbol}(
     #"CapeTribulation" => :clay_loam,
     # "Calperum" => :sandy_loam,
     # "Wallaby" => :clay_loam,
-    "Whroo" => :clay_loam,  # placeholder texture: SLGA needs MicroclimateMapper (mapper.jl)
+    "Whroo" => :horizons,  # measured soil pit, SITE_SOIL_HORIZONS
     # "GWW" => :clay_loam,
     #"Longreach" => :clay,
     # "TiTreeEast" => :clay_loam,
     # "AliceSpringsMulga" => :clay_loam,
 )  # e.g. "Whroo" => :sandy_loam
 soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)  # :slga/:slga_uniform need mapper.jl
+
+# Measured soil horizons for soil_source :horizons: horizon bottom depths, bulk
+# density and texture (USDA split: clay <2µm, silt 2-50µm, sand >50µm, %).
+# Whroo: TERN SuperSite soil pit 4m from the tower, 25 March 2015 (Drake 2015,
+# "Whroo Flux Tower Soil Profile Assessment", Table 3) -- a sodic clay
+# (Sodosol), silty clay loam topsoil over dense clay, bedrock at 160cm.
+const SITE_SOIL_HORIZONS = Dict(
+    "Whroo" => (;
+        bottom = [7.0, 38.0, 58.0, 112.0, 160.0]u"cm",
+        bulk_density = [1.2, 1.5, 1.8, 1.9, 1.9]u"Mg/m^3",
+        clay = [18.7, 42.5, 41.7, 46.2, 42.1],
+        silt = [45.0, 34.2, 34.8, 34.8, 34.7],
+        sand = [36.3, 23.2, 23.5, 19.0, 23.2],
+    ),
+)
 
 # ── UTC offset (micropoint/ozflux forcing only -- comparisons/ozflux itself
 # stays in local time throughout). OzFlux records local STANDARD time
