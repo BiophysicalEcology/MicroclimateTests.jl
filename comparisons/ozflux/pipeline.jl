@@ -469,7 +469,8 @@ function micro_model(site_name, site, soil_profile, depths, heights, canopy, rai
     atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
     config = MicroConfig(; convergence = convergence_choice, rainfall_schedule,
         canopy_soil_coupling = canopy_soil_coupling_choice)
-    return MicroModel(; hours = 0:1:23, site, soil, atmosphere, canopy, config,
+    surface = SurfaceModel(; litter_model = site_litter(site_name))
+    return MicroModel(; hours = 0:1:23, site, soil, surface, atmosphere, canopy, config,
         vapour_pressure_equation = vapour_pressure_equation_choice)
 end
 

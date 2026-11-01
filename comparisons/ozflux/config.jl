@@ -219,13 +219,23 @@ const DEFAULT_ALBEDO = 0.20
 const SITE_ALBEDO = Dict(
     "CapeTribulation"   => 0.20,  # dark, wet closed-canopy rainforest litter
     "Calperum"          => 0.35,  # pale sandy mallee soil, sparse cover
-    "Whroo"             => 0.20,  # box/ironbark woodland, leaf litter + some bare soil
+    "Whroo"             => 0.23,  # box woodland soil under its litter (SITE_LITTER)
     "Wallaby"           => 0.20,  # dense wet sclerophyll regrowth
     "GWW"               => 0.20,  # semi-arid eucalypt woodland, red sandy soil
     "Longreach"         => 0.20,  # dry grassland, pale soil/cured grass
     "TiTreeEast"        => 0.20,  # central Australian red sand, sparse mulga/spinifex
     "AliceSpringsMulga" => 0.20,
 )
+
+# Per-site litter over the soil (`site_albedo` is then the soil's own albedo). Whroo's ground
+# is mostly pale eucalypt leaf litter over bare patches of 7.5YR 5/3 topsoil (soil albedo ~0.23
+# from Post et al. 2000's Munsell value relation). Victorian dry sclerophyll litter loads are
+# 15-20 t/ha; 63.5 kg/m³ bulk density (Matthews 2006) gives its thickness. No measured
+# eucalypt litter albedo is in hand.
+const SITE_LITTER = Dict(
+    "Whroo" => ShawLitter(; dry_mass = 1.5u"kg/m^2", thickness = 2.4u"cm", cover_fraction = 0.7, albedo = 0.35),
+)
+site_litter(site_name) = get(SITE_LITTER, site_name, NoLitter())
 
 # Per-site critical soil (root) water potential at which stomata close --
 # drought tolerance varies by species/vegetation type across these sites, but
