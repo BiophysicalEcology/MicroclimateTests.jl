@@ -19,9 +19,8 @@ const OZFLUX_DATA_DIR = joinpath(@__DIR__, "data")
 soil_properties_model_choice = Microclimate.example_soil_properties_model()
 rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
-# MultilayerCanopy's hourly leaf/air/vapor/stability solve: NonlinearCanopyConvergence() (Newton)
-# or AndersonCanopyConvergence(), both with per-kind residual tolerances.
-canopy_convergence_model_choice = NonlinearCanopyConvergence()
+# MultilayerCanopy's hourly leaf/air/vapor/stability solve, with per-kind residual tolerances
+canopy_convergence_model_choice = AndersonCanopyConvergence()
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
@@ -30,6 +29,7 @@ canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
 boundary_layer_model_choice = MoninObukhov()
+vapour_pressure_equation_choice = VapourPressureLookup()  # or GoffGratch()
 # canopy_wind_model_choice = MixingLengthCanopyWindAttenuation(;
 #                                         shelter_floor = 0.003,
 #                                         shelter_pai_coefficient = 0.1,
@@ -106,6 +106,16 @@ const SITE_REFERENCE_HEIGHT_M = Dict(
 const SITE_FORCING_VARS = Dict(
     "Calperum" => (ta="Ta_SONIC_Av", ws="Ws_SONIC_Av", ah="AH_IRGA_Av"),  # true 20m tower-top sensors
     "Whroo"    => (ta="Ta_HMP_36m",  ws="Ws_SONIC_Av",  ah="Ah"),          # true 36m (Ws_SONIC_Av is the CSAT3); bare "AH" is already 36m
+)
+
+# Per-site backup instruments for forcing gaps: each entry names the variables
+# summed to stand in for the primary forcing variable when it is missing,
+# calibrated to it by a linear fit on hours where both report (pipeline.jl's
+# _fill_from_backup). Whroo: the 32m HMP probe for 36m air temperature and
+# humidity (one logger outage takes out the 36m sensors and the CNR4), the SPN1's
+# direct + diffuse for the CNR4's downwelling shortwave.
+const SITE_FORCING_BACKUPS = Dict(
+    "Whroo" => (ta=["Ta_HMP_32m"], ah=["AH_HMP_32m"], fsd=["Fsd_Direct", "Fsd_Diffuse"]),
 )
 
 # ── Per-site canopy leaf area index ──────────────────────────────────────────

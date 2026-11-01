@@ -396,8 +396,9 @@ end
 # (_hour_group_start, pipeline.jl), so a year's last hour keeps its
 # end-labelled 00:00 record from the next year. `height_series`:
 # (height_m, variable_name) pairs from config.jl's SITE_HEIGHT_SERIES;
-# height_m itself isn't needed here, only the variable name.
-function read_ozflux_nc(path, years; height_series=Tuple{Float64,String}[])
+# height_m itself isn't needed here, only the variable name. `extra_vars`:
+# further variable names to read, e.g. config.jl's SITE_FORCING_BACKUPS.
+function read_ozflux_nc(path, years; height_series=Tuple{Float64,String}[], extra_vars=String[])
     NCDataset(path) do ds
         all_time = ds["time"][:]
         rows = findall(t -> Dates.year(_hour_group_start(t)) in years, all_time)
@@ -408,7 +409,7 @@ function read_ozflux_nc(path, years; height_series=Tuple{Float64,String}[])
 
         forcing_vars = ("Ta", "RH", "Ws", "Fsd", "Fld", "Precip", "ps")
         target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg")
-        for v in (forcing_vars..., target_vars..., last.(height_series)...)
+        for v in unique((forcing_vars..., target_vars..., last.(height_series)..., extra_vars...))
             vals = _read_clean_var(ds, v, rows)
             vals === nothing && continue
             df[!, v] = vals

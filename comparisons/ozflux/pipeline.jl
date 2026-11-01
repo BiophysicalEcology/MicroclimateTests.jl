@@ -44,6 +44,7 @@ function resolve_site(site_name, years)
     # for sites where the bare merged composite's real height doesn't match.
     reference_height = get(SITE_REFERENCE_HEIGHT_M, site_name, ustrip(u"m", tower_height)) * u"m"
     forcing_vars = get(SITE_FORCING_VARS, site_name, (ta="Ta", ws="Ws", ah=nothing))
+    forcing_backups = get(SITE_FORCING_BACKUPS, site_name, (;))
 
     # canopy_height can never legitimately exceed reference_height --
     # Microclimate.jl always sets reference_height=last(heights), and
@@ -59,7 +60,7 @@ function resolve_site(site_name, years)
         @warn "canopy_height clamped to reference_height for $site_name" raw_canopy_height reference_height
     end
 
-    return (; site_name, years, path, canopy_height, tower_height, reference_height, forcing_vars,
+    return (; site_name, years, path, canopy_height, tower_height, reference_height, forcing_vars, forcing_backups,
               latitude, longitude, global_attrib,
               leaf_area_index = SITE_LEAF_AREA_INDEX[site_name], leaf_reflectance = SITE_LEAF_REFLECTANCE[site_name],
               leaf_transmittance = SITE_LEAF_TRANSMITTANCE[site_name],
@@ -237,6 +238,30 @@ end
 # own radiative transfer and doesn't use `shade` at all.
 _legacy_shade(leaf_area_index, extinction_coefficient) = 1.0 - exp(-extinction_coefficient * leaf_area_index)
 
+# Fills `primary`'s missing hours from `backup`, mapped onto the primary
+# instrument by a least-squares line fitted on hours where both report.
+function _fill_from_backup(primary, backup)
+    both = .!ismissing.(primary) .& .!ismissing.(backup)
+    x = Float64.(backup[both])
+    y = Float64.(primary[both])
+    slope = cov(x, y) / var(x)
+    intercept = mean(y) - slope * mean(x)
+    return [ismissing(p) && !ismissing(b) ? intercept + slope * b : p for (p, b) in zip(primary, backup)]
+end
+
+# Forcing columns with gaps filled from config.jl's SITE_FORCING_BACKUPS, before
+# any donor or interpolation, so the gap masks downstream mark only hours no
+# tower instrument covers. Backup variables are summed (missing if any is).
+function _fill_forcing_from_backups(hourly, forcing_vars, forcing_backups)
+    primary_name = (; ta=forcing_vars.ta, ah=forcing_vars.ah, fsd="Fsd")
+    for (key, backup_names) in pairs(forcing_backups)
+        name = primary_name[key]
+        backup = sum(hourly[!, b] for b in backup_names)
+        hourly[!, name] = _fill_from_backup(hourly[!, name], backup)
+    end
+    return hourly
+end
+
 # Real, gap-filled hourly forcing: tower obs, SILO-donor-filled (see
 # silo_gapfill_donor) wherever the tower itself is missing, then fill_gaps
 # for any remainder. Shared by prepare_site (consumed hourly) and
@@ -320,7 +345,9 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
     (; canopy_height, reference_height, forcing_vars, latitude, longitude, leaf_area_index, height_series) = resolved
 
     println("  Reading $(resolved.path) for $site_name $years...")
-    hourly = _aggregate_hourly(read_ozflux_nc(resolved.path, years; height_series))
+    extra_vars = collect(String, Iterators.flatten(values(resolved.forcing_backups)))
+    hourly = _fill_forcing_from_backups(_aggregate_hourly(read_ozflux_nc(resolved.path, years; height_series, extra_vars)),
+        forcing_vars, resolved.forcing_backups)
     # Without a donor, fill_gaps would hold a leading/trailing forcing gap
     # flat at the nearest observation for days (sun-up Fsd all night, fixed
     # Ta) -- start and end on whole observed days instead.
@@ -438,7 +465,8 @@ function micro_model(site_name, site, soil_profile, depths, heights, canopy, rai
         moisture_strategy = soil_moisture_strategy_choice)
     atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
     config = MicroConfig(; convergence = convergence_choice, rainfall_schedule)
-    return MicroModel(; hours = 0:1:23, site, soil, atmosphere, canopy, config)
+    return MicroModel(; hours = 0:1:23, site, soil, atmosphere, canopy, config,
+        vapour_pressure_equation = vapour_pressure_equation_choice)
 end
 
 # Depth-series NamedTuples (matching discover_depth_series's format) from the
