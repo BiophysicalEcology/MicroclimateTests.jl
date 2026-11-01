@@ -380,14 +380,17 @@ const SITE_HEIGHT_SERIES = Dict{String,Vector{Tuple{Float64,String}}}(
     ],
     # canopy_height=28m, tower=35m -- 1/2/4/8/16m are sub-canopy, 32/36m above.
     # The best available real in-canopy profile test (Calperum only has one
-    # below-canopy height).
+    # below-canopy height). Left out as faulty: Ta_HMP_16m (2016 mean 2.7 K
+    # above both the 8m and 32m sensors) and AH_HMP_1m (drier than every other
+    # height, r=0.32 with the model where the rest are 0.83-0.91).
     "Whroo" => [
         (1.0,  "Ta_HMP_1m"),  (1.0,  "Ws_RMY_1m"),
         (2.0,  "Ta_HMP_2m"),  (2.0,  "Ws_RMY_2m"),
         (4.0,  "Ta_HMP_4m"),  (4.0,  "Ws_RMY_4m"),
         (8.0,  "Ta_HMP_8m"),  (8.0,  "Ws_RMY_8m"),
-        (16.0, "Ta_HMP_16m"), (16.0, "Ws_RMY_16m"),
+        (16.0, "Ws_RMY_16m"),
         (32.0, "Ta_HMP_32m"), (32.0, "Ws_RMY_32m"),
+        (2.0, "AH_HMP_2m"), (4.0, "AH_HMP_4m"), (8.0, "AH_HMP_8m"), (16.0, "AH_HMP_16m"), (32.0, "AH_HMP_32m"),
         (36.0, "Ta_HMP_36m"), (36.0, "Ws_SONIC_Av"),  # no Ws_RMY_36m in the file; Ws_SONIC_Av (CSAT3) is the true top-of-tower sonic
     ],
     # canopy_height 8-10m (attribute is a range; _parse_length_attr takes the

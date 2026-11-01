@@ -408,7 +408,7 @@ function read_ozflux_nc(path, years; height_series=Tuple{Float64,String}[], extr
         df = DataFrame(DateTime = all_time[rows])
 
         forcing_vars = ("Ta", "RH", "Ws", "Fsd", "Fld", "Precip", "ps")
-        target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg")
+        target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg", "ustar")
         for v in unique((forcing_vars..., target_vars..., last.(height_series)..., extra_vars...))
             vals = _read_clean_var(ds, v, rows)
             vals === nothing && continue
