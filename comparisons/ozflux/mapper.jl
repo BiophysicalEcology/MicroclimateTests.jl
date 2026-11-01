@@ -25,7 +25,8 @@ weather_cache_dir = joinpath(@__DIR__, "weather_cache")
 # ── Soil texture (live SLGA fetch + pedotransfer, like oznet) ───────────────
 # SLGA has no point-query API -- a uniform profile is derived from a small
 # bounding box around each site's coordinates (same approach as oznet).
-pedotransfer_model_choice = CosbyMultivariate()
+# MicroclimateMapper still carries its own pedotransfer types until it uses Microclimate.jl's
+slga_pedotransfer_model_choice = MicroclimateMapper.CosbyMultivariate()
 soil_area_buffer_deg = 0.05
 
 # Live SLGA fetch + pedotransfer (same as oznet/pipeline.jl) for
@@ -36,7 +37,7 @@ function _slga_soil_profile(latitude, longitude, depths, global_attrib)
     b = soil_area_buffer_deg
     lon_dd, lat_dd = ustrip(u"°", longitude), ustrip(u"°", latitude)
     area = Extent(X = (lon_dd - b, lon_dd + b), Y = (lat_dd - b, lat_dd + b))
-    soil_profile = build_soil_profile(SLGA, area; depths, pedotransfer_model = pedotransfer_model_choice).soil_profile
+    soil_profile = build_soil_profile(SLGA, area; depths, pedotransfer_model = slga_pedotransfer_model_choice).soil_profile
     if haskey(global_attrib, "BulkDensity")
         # Metadata value is a real point measurement (assumed near-surface) vs
         # SLGA's 90 m-grid mean -- rescale the whole profile by their ratio at
