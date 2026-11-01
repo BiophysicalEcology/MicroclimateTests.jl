@@ -163,7 +163,7 @@ end
 # air_entry_water_potential stored positive (matches SLGA's sign convention).
 function soil_profile_from_texture(texture::NamedTuple, depths;
     bulk_density=1.3u"Mg/m^3", mineral_density=2.560u"Mg/m^3",
-    mineral_conductivity=1.25u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
+    mineral_conductivity=2.5u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
     root_density=_root_density_for_depths(depths),
 )
     n = length(depths)
@@ -183,7 +183,7 @@ end
 # Campbell hydraulics from `pedotransfer_model`. Nodes below the deepest horizon
 # take the deepest horizon's values.
 function soil_profile_from_horizons(horizons, depths, pedotransfer_model;
-    mineral_density=2.560u"Mg/m^3", mineral_conductivity=1.25u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
+    mineral_density=2.560u"Mg/m^3", mineral_conductivity=2.5u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
     root_density=_root_density_for_depths(depths),
 )
     n = length(depths)

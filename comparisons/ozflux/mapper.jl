@@ -97,7 +97,7 @@ function fetch_silo_forcing(site_name, latitude, longitude, sim_start::Date, sim
         vec_problem = MicroVectorProblem(;
             model = mapper_model, points = [point], dates = sim_start:Day(1):sim_end,
             soil_profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
-                mineral_density = fill(2.56u"Mg/m^3", length(depths)), mineral_conductivity = fill(1.25u"W/m/K", length(depths)),
+                mineral_density = fill(2.56u"Mg/m^3", length(depths)), mineral_conductivity = fill(2.5u"W/m/K", length(depths)),
                 mineral_heat_capacity = fill(870.0u"J/kg/K", length(depths)),
                 hydraulics = CampbellHydraulicProfile(; air_entry_water_potential = fill(1.0u"J/kg", length(depths)),
                     saturated_hydraulic_conductivity = fill(0.001u"kg*s/m^3", length(depths)),
