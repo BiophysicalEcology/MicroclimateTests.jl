@@ -366,6 +366,10 @@ function discover_depth_series(ds, prefix::AbstractString, rows)
         m = match(pattern, name)
         m === nothing && continue
         depth_m = parse(Float64, m.captures[1]) * (m.captures[2] == "cm" ? 0.01 : 1.0)
+        # A TCAV averaging thermocouple is named for the heat flux plate depth (8 cm) but
+        # its junctions sit at 2 and 6 cm above the plates (Campbell Scientific HFT3/TCAV
+        # installation), so it measures the 2-6 cm mean, ~4 cm.
+        occursin("TCAV", get(ds[name].attrib, "instrument", "")) && (depth_m = 0.04)
         if m.captures[3] == ""
             bare[depth_m] = name
         else
