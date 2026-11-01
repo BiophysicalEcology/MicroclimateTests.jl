@@ -350,7 +350,7 @@ soil_source(site_name) = get(SITE_SOIL_SOURCE, site_name, :slga)  # :slga/:slga_
 # Whroo: TERN SuperSite soil pit 4m from the tower, 25 March 2015 (Drake 2015,
 # "Whroo Flux Tower Soil Profile Assessment", Table 3) -- a sodic clay
 # (Sodosol), silty clay loam topsoil over dense clay, bedrock at 160cm.
-pedotransfer_model_choice = CosbyMultivariate()  # or CosbyUnivariate(), CampbellParticleSize()
+pedotransfer_model_choice = CampbellParticleSize()  # or CosbyMultivariate(), CosbyUnivariate(); the only one scaling conductivity with bulk density
 const SITE_SOIL_HORIZONS = Dict(
     "Whroo" => (;
         bottom = [7.0, 38.0, 58.0, 112.0, 160.0]u"cm",
