@@ -93,6 +93,9 @@ soil_source = "horizons"
 # TERN SuperSite soil pit 4 m from the tower, 25 March 2015 (Drake 2015, "Whroo Flux Tower Soil
 # Profile Assessment", Table 3): a sodic clay (Sodosol), silty clay loam topsoil over dense
 # clay, bedrock at 160 cm. Texture is the USDA split: clay <2 µm, silt 2-50 µm, sand >50 µm, %.
+# Report: https://geonetwork.tern.org.au/geonetwork/srv/api/records/74a074fe-16ac-4c67-95e4-e46a2535fba7
+# Data: Beringer, McHugh & Cunningham (2023), Whroo Dry Eucalypt Soil Characteristic Data 2015,
+# v1.0, TERN, doi:10.25901/v6q8-pp54
 [sites.Whroo.soil_horizons]
 bottom = ["7 cm", "38 cm", "58 cm", "112 cm", "160 cm"]
 bulk_density = ["1.2 Mg/m^3", "1.5 Mg/m^3", "1.8 Mg/m^3", "1.9 Mg/m^3", "1.9 Mg/m^3"]
