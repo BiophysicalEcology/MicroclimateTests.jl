@@ -5,9 +5,6 @@
 # PointDataSources, GeoInterface and Serialization loaded. The tower-forced
 # run_site path doesn't need it.
 #
-# MicroclimateMapper still builds Microclimate's old MicroModel/MicroInputs
-# (site and soil_profile on MicroInputs), so the fetches here need it ported
-# before they run against the current Microclimate.
 
 ENV["RASTERDATASOURCES_PATH"] = get(ENV, "RASTERDATASOURCES_PATH", joinpath(homedir(), "Spatial_Data"))
 
@@ -59,25 +56,19 @@ function _slga_soil_profile(latitude, longitude, depths, global_attrib)
 end
 
 # ── SILO gridded-forcing fetch (secondary comparison) ───────────────────────
-# Mirrors oznet/pipeline.jl's weather-fetch block (MicroVectorProblem +
-# MicroclimateMapper.init): a single-point fetch/synthesis returning
-# .site/.environment_hourly/.environment_daily/.environment_minmax, ready to
-# hand straight to MicroInputs. Cached on disk (weather_cache_dir) since a
-# fetch is a live network call.
+# A single-point MicroVectorProblem on the site's own model: MicroclimateMapper builds the
+# point's MicroProblem, and its forcing (environment_minmax/daily/hourly) is kept. Cached on
+# disk (weather_cache_dir) since a fetch is a live network call.
 if use_opendap_points
     MicroclimateMapper.loader(::Type{<:SILO}) = MicroclimateMapper.PointQuery()
 end
 
 const _SILO_CACHE = Dict{Tuple{String,Date,Date,Float64},Any}()
 
-# reference_height: the real site model's last(heights) -- MicroclimateMapper's
-# assemble_weather! power-law-corrects SILO's native 10m wind to
-# maximum(micro_model.heights), so the throwaway model built here must top out
-# at the SAME height the actual site model will treat as its reference height,
-# or the SILO-run wind ends up scaled to the wrong height (silently
-# defaults to 2m otherwise -- see DEFAULT_HEIGHTS_M).
-function fetch_silo_forcing(site_name, latitude, longitude, sim_start::Date, sim_end::Date, depths, reference_height)
-    ref_m = ustrip(u"m", reference_height)
+# The forcing depends on the model only through its reference height: MicroclimateMapper
+# power-law-corrects SILO's 10 m wind to maximum(model.atmosphere.heights)
+function fetch_silo_forcing(site_name, model, latitude, longitude, sim_start::Date, sim_end::Date, initial_soil_moisture)
+    ref_m = ustrip(u"m", maximum(model.atmosphere.heights))
     wc_key = (site_name, sim_start, sim_end, ref_m)
     disk_path = joinpath(weather_cache_dir, "SILO_$(site_name)_$(sim_start)_$(sim_end)_ref$(ref_m)m.jls")
     if !haskey(_SILO_CACHE, wc_key) && reuse_weather && isfile(disk_path)
@@ -86,28 +77,19 @@ function fetch_silo_forcing(site_name, latitude, longitude, sim_start::Date, sim
     end
     if !haskey(_SILO_CACHE, wc_key)
         println("  Fetching SILO forcing ($sim_start to $sim_end, wind reference height $(ref_m) m)...")
-        micro_model = MicroModel(; hours = collect(0.0:1:23.0), depths, heights = [0.01, ref_m] .* u"m",
-            soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-            snow_model = NoSnow())
-        mapper_model = MicroMapModel(; micro_model, dem_source = dem_source_choice, weather_source = weather_source_choice,
-            surface_albedo_source = site_albedo(site_name), roughness_height_source = 0.004u"m", compute_terrain = compute_terrain_choice)
+        mapper_model = MicroMapModel(; micro_model = model, dem_source = dem_source_choice,
+            weather_source = weather_source_choice, compute_terrain = compute_terrain_choice,
+            surface_albedo_source = site_albedo(site_name), roughness_height_source = site_ground_roughness_height(site_name))
         point = GIW.Point((ustrip(u"°", longitude), ustrip(u"°", latitude)))
-        # Placeholder soil_profile/init -- only sizes the fetch, doesn't inform
-        # it (weather forcing doesn't depend on soil properties).
-        vec_problem = MicroVectorProblem(;
-            model = mapper_model, points = [point], dates = sim_start:Day(1):sim_end,
-            soil_profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
-                mineral_density = fill(2.56u"Mg/m^3", length(depths)), mineral_conductivity = fill(2.5u"W/m/K", length(depths)),
-                mineral_heat_capacity = fill(870.0u"J/kg/K", length(depths)),
-                hydraulics = CampbellHydraulicProfile(; air_entry_water_potential = fill(1.0u"J/kg", length(depths)),
-                    saturated_hydraulic_conductivity = fill(0.001u"kg*s/m^3", length(depths)),
-                    campbell_b_parameter = fill(4.5, length(depths)), root_density = fill(1.0u"m/m^3", length(depths)))),
-            init = (; soil_moisture = fill(0.2, length(depths))),
-        )
-        weather_result = MicroclimateMapper.init(vec_problem)
-        worker = take!(weather_result.cache_pool)
-        fetched = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
-        put!(weather_result.cache_pool, worker)
+        vec_problem = MicroVectorProblem(; model = mapper_model, points = [point], dates = sim_start:Day(1):sim_end,
+            init = (; soil_moisture = initial_soil_moisture))
+        cache = MicroclimateMapper.init(vec_problem)
+        worker = take!(cache.cache_pool)
+        problem = cache.init_inputs.build_problem(worker.scratch, (Dim{:point}(1),))
+        # The inputs alias the worker's scratch buffers: copy before handing the worker back
+        (; environment_minmax, environment_daily, environment_hourly) = problem.inputs
+        fetched = deepcopy((; environment_minmax, environment_daily, environment_hourly))
+        put!(cache.cache_pool, worker)
         if cache_weather
             mkpath(weather_cache_dir)
             serialize(disk_path, fetched)
@@ -121,27 +103,30 @@ end
 # sizes its annual deep-soil climatology off a full Jan1-Dec31 span).
 _year_span(years) = Date(minimum(years), 1, 1), Date(maximum(years), 12, 31)
 
-# SILO-forced alternative to prepare_site: same site metadata, soil profile,
-# canopy model and initial conditions (from the tower's own obs, so the two
-# runs differ only in forcing), but environment_hourly/daily/minmax come from
-# a live SILO fetch instead of the tower file.
-function prepare_site_silo(site_name, years; max_days=nothing)
+# SILO-forced alternative to prepare_site: the same site, model and initial conditions (from
+# the tower's own obs, so the two runs differ only in forcing), with environment_minmax/daily/
+# hourly from a live SILO fetch instead of the tower file.
+function prepare_site_silo(site_name, years; max_days=nothing, litter_model=site_litter(site_name))
     resolved = resolve_site(site_name, years)
     (; canopy_height, reference_height, latitude, longitude, height_series) = resolved
     sim_start, sim_end = _year_span(years)
 
-    # Tower obs read first -- needed for observed depths (_build_depths) and
-    # initial soil state before the SILO fetch/soil-texture fetch below.
     hourly = _aggregate_hourly(read_ozflux_nc(resolved.path, years, site_corrections(site_name); height_series))
     depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
-
-    # heights computed before the fetch (not just below, alongside canopy_model)
-    # so fetch_silo_forcing can power-law-correct SILO's 10m wind to the SAME
-    # reference height (last(heights)) the real model will assume it's at --
-    # otherwise the fetch's own throwaway model silently defaults to 2m.
     heights = _build_heights(canopy_height, reference_height)
 
-    fetched = fetch_silo_forcing(site_name, latitude, longitude, sim_start, sim_end, depths, last(heights))
+    site = Site(;
+        latitude, longitude, resolved.elevation, slope = 0.0u"°", aspect = 0.0u"°",
+        horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
+    )
+    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
+    canopy = canopy_model(site_name, resolved, heights)
+    model = micro_model(site_name, site, soil_profile, depths, heights, canopy, DailyRainfall(); litter_model)  # SILO rainfall is a daily total
+
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
+    initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
+
+    fetched = fetch_silo_forcing(site_name, model, latitude, longitude, sim_start, sim_end, initial_soil_moisture)
 
     ndays = length(sim_start:Day(1):sim_end)
     max_days !== nothing && (ndays = min(ndays, max_days))
@@ -152,31 +137,16 @@ function prepare_site_silo(site_name, years; max_days=nothing)
     mean_air_temperature = mean((ustrip.(u"°C", reference_temperature_min) .+ ustrip.(u"°C", reference_temperature_max)) ./ 2) * u"°C"
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
 
-    site = Site(;
-        latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
-        horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height = 0.004u"m",
-        atmospheric_pressure = fetched.site.atmospheric_pressure,
-    )
-    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
-    initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
-
-    canopy = canopy_model(site_name, resolved, heights)
-    model = micro_model(site_name, site, soil_profile, depths, heights, canopy, DailyRainfall())  # SILO rainfall is a daily total
-
     # max_days truncates the solve to `ndays` days, but fetch_silo_forcing
-    # above is deliberately full-year -- truncate environment_minmax/
-    # environment_hourly's own arrays to match (a no-op when max_days is
-    # nothing).
+    # above is deliberately full-year -- truncate the forcing to match (a no-op
+    # when max_days is nothing).
     environment_minmax = max_days === nothing ? fetched.environment_minmax :
         truncate_environment_minmax(fetched.environment_minmax, ndays)
     environment_hourly = max_days === nothing ? fetched.environment_hourly :
         truncate_environment_hourly(fetched.environment_hourly, n)
 
     inputs = MicroInputs(;
-        environment_minmax, environment_daily = fetched.environment_daily,
-        environment_hourly,
+        environment_minmax, fetched.environment_daily, environment_hourly,
         initial_soil_temperature, initial_soil_moisture,
     )
     # Model spans the full sim_start:sim_end calendar range (SILO forcing);
@@ -185,7 +155,7 @@ function prepare_site_silo(site_name, years; max_days=nothing)
     t_model = [DateTime(sim_start) + Day(d) + Hour(h) for d in 0:(ndays - 1) for h in 0:23]
     problem = MicroProblem(model, inputs; days = days_of_year(t_model), time_mode = ConsecutiveDayMode(; spinup_first_day = false))
     return (; site_name, years, resolved, hourly, t_model, ndays, n, heights, depths, height_series,
-              sim_start, environment_daily = fetched.environment_daily, problem)
+              sim_start, fetched.environment_daily, problem)
 end
 
 function run_site_silo(site_name, years; max_days=nothing)

@@ -66,7 +66,7 @@ end
 _hour_group_start(t) = Dates.minute(t) == 30 ? floor(t, Dates.Hour) : floor(t, Dates.Hour) - Dates.Hour(1)
 
 function _aggregate_hourly(df)
-    n_per_hour = Minute(60) ÷ metadata(df, "time_step")
+    n_per_hour = Minute(60) ÷ DataFrames.metadata(df, "time_step")
     groups = Dict{DateTime,Vector{Int}}()
     for (i, t) in enumerate(df.DateTime)
         push!(get!(groups, _hour_group_start(t), Int[]), i)
@@ -294,7 +294,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
         deep_soil_temperature = fill(mean_air_temperature, ndays),  # no borehole climatology available; site-year mean air temp as a stand-in
         leaf_area_index = fill(leaf_area_index, ndays),  # only read by NoCanopy's ET partitioning; MultilayerCanopy uses its own plant_area_index
         albedo = fill(site_albedo(site_name), ndays),
-        roughness_height = fill(site_setting(site_name, is_woody(site_name) ? "woody_ground_roughness_height" : "pasture_roughness_height"), ndays),
+        roughness_height = fill(site_ground_roughness_height(site_name), ndays),
     )
 
     site = Site(;

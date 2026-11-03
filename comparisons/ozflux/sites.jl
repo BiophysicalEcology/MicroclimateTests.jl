@@ -154,3 +154,5 @@ end
 # Woody sites get a canopy and litter; grass, crops and pasture neither
 is_woody(site_name) = site_canopy_height(site_name) >= site_setting(site_name, "woody_canopy_height")
 site_litter(site_name) = is_woody(site_name) ? LitterLayer(; site_setting(site_name, "woody_litter")...) : NoLitter()
+site_ground_roughness_height(site_name) =
+    site_setting(site_name, is_woody(site_name) ? "woody_ground_roughness_height" : "pasture_roughness_height")

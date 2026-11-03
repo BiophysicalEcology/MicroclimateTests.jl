@@ -23,9 +23,7 @@ per site-year (`run_site_silo`) as its own comparison against the tower obs.
   (solve). Tower forcing only; needs no MicroclimateMapper.
 - `mapper.jl` — everything that needs MicroclimateMapper: SILO forcing
   (`run_site_silo`) and live SLGA
-  soil (`soil_source` `:slga`/`:slga_uniform`). MicroclimateMapper still
-  builds Microclimate's old `MicroInputs(; site, soil_profile, ...)`, so
-  these paths don't run against the current Microclimate until it's ported.
+  soil (`soil_source` `:slga`/`:slga_uniform`).
 - `report.jl` — stats + plots for every comparison target
   (`report_site_results`).
 - `comparison.jl` — entry point: every site's best year (or whole record

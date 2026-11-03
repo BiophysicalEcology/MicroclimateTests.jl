@@ -391,7 +391,7 @@ function read_ozflux_nc(path, years, corrections; height_series=Tuple{Float64,St
         rows == first(rows):last(rows) || error("$path time axis is not sorted")
         rows = first(rows):last(rows)
         df = DataFrame(DateTime = all_time[rows])
-        metadata!(df, "time_step", _time_step(ds); style=:note)
+        DataFrames.metadata!(df, "time_step", _time_step(ds); style=:note)
 
         target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg", "ustar")
         for v in unique((target_vars..., last.(height_series)..., extra_vars...))
