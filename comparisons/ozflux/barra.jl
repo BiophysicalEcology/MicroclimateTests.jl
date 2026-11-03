@@ -72,23 +72,27 @@ function barra_forcing(site_name, latitude, longitude, elevation, years, utc_off
     Δz = ustrip(u"m", elevation - grid_height)
 
     hours = first_hour:Hour(1):last_hour - Hour(1)
-    # States are instants on the hour: an hour's mean is the mean of its two ends
-    state(name, t) = (series[name][t] + series[name][t + Hour(1)]) / 2
-    # Fluxes are hour means, labelled at the half hour
-    flux(name, t) = series[name][t + Minute(30)]
+    # An hour's mean: the series at the hour's midpoint, else the mean of the samples half an hour
+    # either side. States are instants on the hour and fluxes hour means at the half hour, and
+    # local hours start on the hour or, at half-hour UTC offsets, at the half hour.
+    function hour_mean(name, t)
+        midpoint = t + Minute(30)
+        values = series[name]
+        return haskey(values, midpoint) ? values[midpoint] : (values[midpoint - Minute(30)] + values[midpoint + Minute(30)]) / 2
+    end
     rows = map(hours) do t
-        T_grid = state("ta100m", t)                                  # K, 100 m above the grid cell
-        ps_grid = state("ps", t)                                     # Pa
+        T_grid = hour_mean("ta100m", t)                              # K, 100 m above the grid cell
+        ps_grid = hour_mean("ps", t)                                 # Pa
         p_grid = ps_grid * exp(-GRAVITY * ustrip(u"m", BARRA_REFERENCE_HEIGHT) / (DRY_AIR_GAS_CONSTANT * T_grid))
-        q = _humidity_at_pressure(p_grid / 100, ps_grid / 100, state("huss", t),
-            [(level, state(name, t)) for (level, name) in zip(BARRA_HUMIDITY_LEVELS_HPA, level_names)])
+        q = _humidity_at_pressure(p_grid / 100, ps_grid / 100, hour_mean("huss", t),
+            [(level, hour_mean(name, t)) for (level, name) in zip(BARRA_HUMIDITY_LEVELS_HPA, level_names)])
         T = T_grid - STANDARD_LAPSE_RATE * Δz                        # at the same height above the site
         ps = ps_grid * exp(-GRAVITY * Δz / (DRY_AIR_GAS_CONSTANT * T_grid))
         p = ps * exp(-GRAVITY * ustrip(u"m", BARRA_REFERENCE_HEIGHT) / (DRY_AIR_GAS_CONSTANT * T))
         vapour_density = q * p / (DRY_AIR_GAS_CONSTANT * T * (1 + 0.608q))  # kg/m³
-        (DateTime = t + utc_offset, air_temperature = T - 273.15, wind_speed = hypot(state("ua100m", t), state("va100m", t)),
-         absolute_humidity = 1000vapour_density, downwelling_shortwave = flux("rsds", t), downwelling_longwave = flux("rlds", t),
-         rainfall = 3600flux("pr", t), air_pressure = ps / 1000)
+        (DateTime = t + utc_offset, air_temperature = T - 273.15, wind_speed = hypot(hour_mean("ua100m", t), hour_mean("va100m", t)),
+         absolute_humidity = 1000vapour_density, downwelling_shortwave = hour_mean("rsds", t), downwelling_longwave = hour_mean("rlds", t),
+         rainfall = 3600hour_mean("pr", t), air_pressure = ps / 1000)
     end
     forcing = DataFrame(rows)
     CSV.write(path, forcing)
