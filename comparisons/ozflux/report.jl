@@ -436,7 +436,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
 
     site_rows = NamedTuple[]
     record!(label, kind, units, s) = push!(site_rows,
-        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, r=s.r, rmse=s.rmse, bias=s.bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, n=s.n))
+        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, r=s.r, rmse=s.rmse, bias=s.bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, wetting_ratio=s.wetting_ratio, drying_ratio=s.drying_ratio, n=s.n))
     # `plot_variable`: nothing plots every variable (default); a String
     # restricts plotting to the one variable matching that short key (Fsu,
     # Flu, Fn, Fh, Fe, Fg, Ts, Sws, or a height-series name like
@@ -454,7 +454,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         sc_panels = []
         for (label, model_vec, obs_vec, units, key, panel_title) in vars
             obs_vec === nothing && continue
-            s = compute_stats(obs_vec, model_vec, t_model)
+            s = compute_stats(obs_vec, model_vec, t_model, kind)
             println(rpad(label, 32) * fmt_stat(s))
             record!(label, kind, units, s)
             make_plots && (plot_variable === nothing || plot_variable == key) || continue

@@ -3,36 +3,51 @@
 
 # ── Reused verbatim from oznet/utils.jl ──────────────────────────────────────
 
+# The cycle a comparison is judged on besides the hourly fit: soil moisture changes by storage
+# over days (wetting and drying ratios), everything else by its daily cycle (daily range ratio).
+# The ratios that don't apply are NaN.
 struct ModelStats
     r    :: Float64
     rmse :: Float64
     bias :: Float64   # mean(pred − obs)
     n    :: Int
     std_ratio :: Float64          # std(pred) / std(obs): the variability (Taylor 2001, doi:10.1029/2000JD900719)
-    daily_range_ratio :: Float64  # mean daily (max - min) of pred / of obs, over days with all 24 hours paired
+    daily_range_ratio :: Float64  # mean daily (max - min) of pred / of obs
+    wetting_ratio :: Float64      # sum of day-to-day rises of the daily mean, pred / obs
+    drying_ratio :: Float64       # sum of day-to-day falls of the daily mean, pred / obs
 end
 
-# `times`: the hour of each value
-function compute_stats(obs_vec, pred_vec, times)
+const STORAGE_KINDS = ("soil_moisture",)
+
+# `times`: the hour of each value. Daily statistics use the days with all 24 hours paired.
+function compute_stats(obs_vec, pred_vec, times, kind)
     valid = [!ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))
              for (o, p) in zip(obs_vec, pred_vec)]
-    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, 0, NaN, NaN)
+    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, 0, NaN, NaN, NaN, NaN)
     o = Float64.(obs_vec[valid]);  p = Float64.(pred_vec[valid]);  days = Date.(times[valid])
-    obs_ranges, pred_ranges = Float64[], Float64[]
-    for day in unique(days)
-        i = findall(==(day), days)
-        length(i) == 24 || continue
-        push!(obs_ranges, -(reverse(extrema(o[i]))...))
-        push!(pred_ranges, -(reverse(extrema(p[i]))...))
+    complete_days = [(day, i) for day in unique(days) for i in (findall(==(day), days),) if length(i) == 24]
+    daily_range_ratio = wetting_ratio = drying_ratio = NaN
+    if kind in STORAGE_KINDS
+        obs_change, pred_change = Float64[], Float64[]
+        for ((day1, i1), (day2, i2)) in zip(complete_days, complete_days[2:end])
+            day2 == day1 + Day(1) || continue
+            push!(obs_change, mean(o[i2]) - mean(o[i1]))
+            push!(pred_change, mean(p[i2]) - mean(p[i1]))
+        end
+        wetting_ratio = sum(max.(pred_change, 0.0); init=0.0) / sum(max.(obs_change, 0.0); init=0.0)
+        drying_ratio = sum(min.(pred_change, 0.0); init=0.0) / sum(min.(obs_change, 0.0); init=0.0)
+    elseif !isempty(complete_days)
+        daily_range(x) = mean(-(reverse(extrema(x[i]))...) for (_, i) in complete_days)
+        daily_range_ratio = daily_range(p) / daily_range(o)
     end
-    daily_range_ratio = isempty(obs_ranges) ? NaN : mean(pred_ranges) / mean(obs_ranges)
-    ModelStats(cor(o, p), sqrt(mean((p .- o).^2)), mean(p .- o), count(valid), std(p) / std(o), daily_range_ratio)
+    ModelStats(cor(o, p), sqrt(mean((p .- o).^2)), mean(p .- o), count(valid), std(p) / std(o),
+        daily_range_ratio, wetting_ratio, drying_ratio)
 end
 
 fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
-    @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  std ratio=%.2f  daily range ratio=%.2f  (n=%d)",
-        s.r, s.rmse, s.bias, s.std_ratio, s.daily_range_ratio, s.n)
+    @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  std ratio=%.2f  daily range ratio=%.2f  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
+        s.r, s.rmse, s.bias, s.std_ratio, s.daily_range_ratio, s.wetting_ratio, s.drying_ratio, s.n)
 
 # Factor taking a site's observed Sws to volumetric water content: the top layer's porosity
 # where data_corrections.jl's SaturationFraction says it is a fraction of saturation. Applied
