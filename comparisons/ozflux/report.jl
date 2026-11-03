@@ -42,10 +42,10 @@ function _with_absolute_humidity(output)
     return merge(_as_namedtuple(output), (; canopy = add_ah(output.canopy), profile = add_ah(output.profile)))
 end
 
-# Scored heights are inside the canopy (resolve_site), so this reads the
-# canopy-resolved output (output.canopy.*), interpolating linearly between
-# the two canopy layers bracketing h_m. NoCanopy (grass, crop, pasture) has
-# no canopy-resolved output (output.canopy.* is zero-column).
+# The model at height h_m (m) over every hour: inside a canopy, the canopy-resolved output
+# (output.canopy.*) interpolated linearly between the two layers bracketing h_m; above it, or
+# without a canopy, output.profile at its node (_build_heights puts every sensor height above
+# the canopy on one).
 #
 # output.canopy's columns are top-to-bottom (canopy_layer_heights sorts
 # descending, matching leaf_temperature's canopy-top-is-index-1 convention),
@@ -55,9 +55,12 @@ end
 _canopy_col(j, n_canopy) = n_canopy - j + 1
 
 function _profile_series(output, heights, canopy_height, h_m, field, canopy)
-    canopy isa NoCanopy && return nothing
+    if canopy isa NoCanopy || h_m * u"m" > canopy_height
+        k = findfirst(h -> ustrip(u"m", h) == h_m, heights)
+        k === nothing && error("No model height at $h_m m")
+        return getproperty(output.profile, field)[:, k]
+    end
     below_idx = findall(h -> h <= canopy_height, heights)
-    isempty(below_idx) && return nothing
     n_canopy = length(below_idx)
     below_heights_m = ustrip.(u"m", heights[below_idx])
     mat = getproperty(output.canopy, field)
@@ -73,21 +76,24 @@ function _profile_series(output, heights, canopy_height, h_m, field, canopy)
     end
 end
 
-_height_field(name) = startswith(name, "Ta") ? :air_temperature :
-                       startswith(name, "Ws") ? :wind_speed : nothing  # AH needs conversion to RH -- not implemented, see README
+# The model field a height series (discover_height_series) is compared with
+function _height_field(name)
+    codes = OZFLUX_QUANTITY_CODES
+    measures(name, codes.air_temperature) && return :air_temperature
+    measures(name, codes.wind_speed) && return :wind_speed
+    measures(name, codes.absolute_humidity) && return :absolute_humidity
+    error("$name is not an air temperature, wind speed or absolute humidity")
+end
 
 # Model value at every height, for one hour (`i` into t_model) -- the
 # vertical counterpart of _profile_series (which slices one height across
-# every hour). `missing` for below-canopy heights under NoCanopy
-# (no canopy-resolved output there, same guard as _profile_series). See
+# every hour), from output.profile without a canopy. See
 # _canopy_col for why below-canopy heights need a reversed column index.
 function _vertical_profile(output, heights, canopy_height, i, field, canopy, convert)
     n_canopy = count(h -> h <= canopy_height, heights)
     vals = Vector{Union{Float64,Missing}}(missing, length(heights))
     for k in eachindex(heights)
-        below_canopy = heights[k] <= canopy_height
-        below_canopy && canopy isa NoCanopy && continue
-        if below_canopy
+        if heights[k] <= canopy_height && !(canopy isa NoCanopy)
             vals[k] = convert(getproperty(output.canopy, field)[i, _canopy_col(k, n_canopy)])
         else
             vals[k] = convert(getproperty(output.profile, field)[i, k])
@@ -340,13 +346,9 @@ function plot_plant_area_index(prep; save_dir=nothing, tag="", display_plots=fal
     return p
 end
 
-# Ta + Ws + RH profile grids for every hour in `profile_times` -- call this
-# directly from single_site.jl. Most meaningful at sites with real sub-canopy
-# sensors (Whroo, WallabyCreek); harmless (just model-only panels, no obs points)
-# at sites without profile sensors -- true for every site for RH
-# specifically, since no site has a height-resolved RH/AH series wired into
-# _height_field (AH->RH conversion not implemented, see README), so the RH
-# panels are always model-only.
+# Air temperature, wind speed and absolute humidity profile grids for every hour in
+# `profile_times`, with the sensors (discover_height_series) as points -- call this
+# directly from single_site.jl.
 function plot_canopy_profiles_all(prep, output, profile_times; save_to_disk=save_outputs, display_plots=true)
     tag = "$(prep.site_name)_$(join(prep.years, '-'))"
     save_dir = save_to_disk ? joinpath(outputs_dir, "profiles_vertical") : nothing
@@ -619,25 +621,23 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         _depth_panels!(prefix, kind, model_mat, units, convert, ylims; obs_scale)
     end
 
-    # ── Multi-height Ta/Ws profiles -- routed to canopy- or profile-output
-    # per height, to check the vertical shape (not just tower-height flux).
-    # Ta and Ws grouped into their own panel grid (not one figure per
-    # height). ─────────────────────────────────────────────────────────────
-    ta_vars = []
-    ws_vars = []
+    # ── Air temperature, wind speed and absolute humidity at every sensor height
+    # (discover_height_series), one panel grid per quantity. ─────────────────
+    output_ah = _with_absolute_humidity(output)
+    profile_vars = (air_temperature=[], wind_speed=[], absolute_humidity=[])
     for (height_m, name) in height_series
         field = _height_field(name)
-        field === nothing && continue
         obs_vec = _col(hourly, t_model, name)
         obs_vec === nothing && continue
-        raw = _profile_series(output, heights, canopy_height, height_m, field, canopy)
-        raw === nothing && continue
-        model_vec, units = field == :air_temperature ? (ustrip.(u"°C", u"°C".(raw)), "°C") : (ustrip.(u"m/s", raw), "m/s")
+        raw = _profile_series(output_ah, heights, canopy_height, height_m, field, canopy)
+        model_vec, units = field == :air_temperature ? (ustrip.(u"°C", u"°C".(raw)), "°C") :
+            field == :wind_speed ? (ustrip.(u"m/s", raw), "m/s") : (raw, "g/m^3")
         label = "$field $(height_m) m"
-        push!(field == :air_temperature ? ta_vars : ws_vars, (label, model_vec, obs_vec, units, name, label))
+        push!(profile_vars[field], (label, model_vec, obs_vec, units, name, label))
     end
-    _panel_grids!("profile_air_temperature", ta_vars)
-    _panel_grids!("profile_wind_speed", ws_vars)
+    for (field, vars) in pairs(profile_vars)
+        _panel_grids!("profile_$field", vars)
+    end
 
     stats_df = DataFrame(site_rows)
     if save_outputs

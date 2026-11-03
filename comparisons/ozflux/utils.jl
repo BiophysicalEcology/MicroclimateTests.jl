@@ -86,7 +86,7 @@ const N_ABOVE_CANOPY_POINTS = 6  # graded points from canopy_height up to refere
 # Full height grid: N_CANOPY_LAYERS evenly-spaced canopy points up to
 # canopy_height, then N_ABOVE_CANOPY_POINTS graded up to reference_height
 # (reference_height inserted exactly -- Microclimate.jl treats last(heights)
-# as reference height).
+# as reference height), plus each of `sensor_heights_m` above the canopy.
 const NEAR_ZERO_FLOOR_M = 0.01  # mm-scale spacing has crashed micropoint's solver before
 
 # Forward-floors an ascending grid to a minimum step, starting from pts[1]
@@ -109,13 +109,13 @@ function _floor_ascending!(pts, floor_m)
     return pts
 end
 
-function _build_heights(canopy_height, reference_height)
+function _build_heights(canopy_height, reference_height, sensor_heights_m)
     canopy_m = ustrip(u"m", canopy_height)
     reference_m = ustrip(u"m", reference_height)
     canopy_pts = _floor_ascending!([(i / N_CANOPY_LAYERS) * canopy_m for i in 1:N_CANOPY_LAYERS], NEAR_ZERO_FLOOR_M)
     graded_above = canopy_m < reference_m ?
         collect(range(canopy_m, reference_m; length=N_ABOVE_CANOPY_POINTS + 1)[2:end]) : Float64[]
-    above_pts = filter(>(canopy_m), unique(vcat(graded_above, reference_m)))
+    above_pts = filter(>(canopy_m), unique(vcat(graded_above, sensor_heights_m, reference_m)))
     return sort(vcat(canopy_pts, above_pts)) .* u"m"
 end
 

@@ -26,6 +26,12 @@ end
 
 is_site_composite(name) = !occursin('_', name)
 
+# Whether variable `name` has a good reading in `rows`
+function has_data(ds, name, rows, corrections)
+    values = _read_clean_var(ds, name, rows, corrections)
+    return values !== nothing && any(!ismissing, values)
+end
+
 # Ordering among sensors of one quantity at one height: a single sensor before the site's
 # composite, then by name
 preference(name) = (is_site_composite(name), name)
@@ -73,9 +79,8 @@ function forcing_sources(site_name, years, canopy_height)
     codes = OZFLUX_QUANTITY_CODES
     NCDataset(ozflux_site_path(OZFLUX_DATA_DIR, site_name)) do ds
         rows = findall(t -> Dates.year(t) in years, ds["time"][:])
-        has_data(name) = (values = _read_clean_var(ds, name, rows, corrections); values !== nothing && any(!ismissing, values))
         readings(code) = sort(filter(name -> measures(name, code) && !has_correction(corrections, FaultySensor, name) &&
-            has_data(name), collect(keys(ds))); by=preference)
+            has_data(ds, name, rows, corrections), collect(keys(ds))); by=preference)
         # (name, height) of every reading above the canopy, best first at each height
         above_canopy(code) = [(; name, height) for name in readings(code) for height in sensor_heights(ds, name)
                               if height * u"m" > canopy_height]

@@ -16,18 +16,30 @@ end
 
 site_canopy_height(site_name) = _parse_length_attr(site_attributes(site_name)["canopy_height"])
 
-# (height_m, name) of every single-height Ta, Ws and AH sensor in an OzFlux file, less
-# data_corrections.jl's FaultySensor ones: the profile the model is compared against. Variance
-# and standard deviation series (_Vr, _Sd) are statistics of a sensor, not sensors.
-function discover_height_series(site_name)
+# (height_m, name) of the air temperature, wind speed and absolute humidity sensors the model is
+# compared against: one per quantity and height (forcing_selection.jl's preference), each with a
+# single height below the reference height and data in `years`, less the forcing and its backups, sonic
+# temperatures (virtual, not air, temperature) and data_corrections.jl's FaultySensor ones
+function discover_height_series(site_name, years, forcing, backups)
     corrections = site_corrections(site_name)
+    codes = OZFLUX_QUANTITY_CODES
+    forcing_names = Set(String[forcing.air_temperature, forcing.humidity, forcing.wind_speed,
+        (String(n) for names in values(backups) for n in names)...])
     NCDataset(ozflux_site_path(OZFLUX_DATA_DIR, site_name)) do ds
+        rows = findall(t -> Dates.year(t) in years, ds["time"][:])
         series = Tuple{Float64,String}[]
-        for name in keys(ds)
-            occursin(r"^(Ta|Ws|AH)_\w+$", name) && !occursin(r"_(QCFlag|Vr|Sd)$", name) &&
-                !has_correction(corrections, FaultySensor, name) || continue
-            heights = sensor_heights(ds, name)
-            length(heights) == 1 && push!(series, (only(heights), name))
+        for code in (codes.air_temperature, codes.wind_speed, codes.absolute_humidity)
+            candidates = sort(filter(name -> measures(name, code) && !(name in forcing_names) &&
+                !measures_sonic_temperature(name) && !has_correction(corrections, FaultySensor, name) && has_data(ds, name, rows, corrections),
+                collect(keys(ds))); by=preference)
+            taken = Float64[]
+            for name in candidates
+                heights = sensor_heights(ds, name)
+                length(heights) == 1 && only(heights) * u"m" < forcing.reference_height &&
+                    !(only(heights) in taken) || continue
+                push!(taken, only(heights))
+                push!(series, (only(heights), name))
+            end
         end
         sort(series)
     end

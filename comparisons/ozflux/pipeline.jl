@@ -46,9 +46,7 @@ function resolve_site(site_name, years)
               leaf_area_index = site_leaf_area_index(site_name, latitude, longitude, years),
               leaf_reflectance = site_setting(site_name, "leaf_reflectance"),
               leaf_transmittance = site_setting(site_name, "leaf_transmittance"),
-              # Only sensors inside the canopy test the model: above it, the profile is the
-              # reference-height forcing carried down a log profile
-              height_series = filter(((h, _),) -> h * u"m" <= canopy_height, discover_height_series(site_name)))
+              height_series = discover_height_series(site_name, years, forcing, forcing_backups(site_name)))
 end
 
 # 30-min -> hourly: mean of the QC-good sub-hourly readings; `missing` if none
@@ -295,7 +293,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
     depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
     soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths)
 
-    heights = _build_heights(canopy_height, reference_height)
+    heights = _build_heights(canopy_height, reference_height, first.(height_series))
 
     canopy = canopy_model(site_name, resolved, heights)
     model = micro_model(site_name, site, soil_profile, depths, heights, canopy, rainfall_schedule_choice; litter_model)
