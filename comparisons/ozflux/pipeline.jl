@@ -434,14 +434,19 @@ function initial_moisture_profile(sws_depths, depths, fallback_fraction; scale=1
     return [clamp(_interp_flat(known_d, known_v, ustrip(u"m", d)), 0.02, 0.5) for d in depths]
 end
 
-function run_site(site_name, years; max_days=nothing, litter_model=site_litter(site_name))
+function announce_and_prepare_site(site_name, years; max_days=nothing, litter_model=site_litter(site_name))
     println("\n" * "="^72)
     println("Site $site_name  years=$years  litter=$(nameof(typeof(litter_model)))")
     println("="^72)
     print_corrections(site_name)
-    prep = prepare_site(site_name, years; max_days, litter_model)
-    println("  Solving MicroProblem ($(prep.n) hours)...")
+    return prepare_site(site_name, years; max_days, litter_model)
+end
+
+# Thread-safe: prepare_site does the file and network reads
+function solve_site(prep)
     solve_time = @elapsed output = Microclimate.solve(prep.problem)
-    println("  Solved in $(round(solve_time, digits=1)) s")
+    println("  $(prep.site_name): $(prep.n) hours solved in $(round(solve_time, digits=1)) s")
     return (; prep..., output, solve_time)
 end
+
+run_site(site_name, years; kw...) = solve_site(announce_and_prepare_site(site_name, years; kw...))
