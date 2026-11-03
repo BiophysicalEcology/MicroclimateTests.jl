@@ -80,6 +80,11 @@ type = "FaultySensor"
 variable = "Ts"
 reason = "a copy of Ts_30cma"
 
+[[sites.DigbyPlantation]]
+type = "FaultySensor"
+variable = "Fg"
+reason = "median -84 W/m^2 against -4.0 and -2.9 from its two plates (Fg_8cma, Fg_8cmb), and clipped at its ±300 valid range; its storage term likely comes from the CS650's percent moisture and near-surface temperature taken as 30 cm"
+
 [[sites.LongreachMitchellGrassRangeland]]
 type = "SaturationFraction"
 variable = "Sws"

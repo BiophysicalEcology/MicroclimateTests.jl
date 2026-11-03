@@ -450,3 +450,9 @@ function save_site_result(result, source)
     serialize(path, result)
 end
 load_site_result(site_name, years, source) = deserialize(site_result_path(site_name, years, source))
+# A saved site's model output with its observations prepared again, under the current corrections:
+# to report on after changing a correction, without solving
+function prepare_saved_site(site_name, years, source)
+    saved = load_site_result(site_name, years, source)
+    return (; announce_and_prepare_site(site_name, years)..., saved.output, saved.solve_time)
+end
