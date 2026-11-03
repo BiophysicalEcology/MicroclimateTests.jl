@@ -406,15 +406,14 @@ function _timeseries_panel(t_model, model_vec, obs_vec; title, units, plot_start
     return p
 end
 
-# Obs-vs-model 1:1 scatter with stats in the title, one panel.
+# Obs-vs-model 1:1 scatter with stats `s` (compute_stats) in the title, one panel.
 # `title_prefix` lets grid callers prepend a per-panel label (depth, height).
-function _scatter_panel(model_vec, obs_vec; units, ylims=nothing, title_prefix="")
+function _scatter_panel(model_vec, obs_vec, s; units, ylims=nothing, title_prefix="")
     pairs = [(Float64(o), Float64(mv)) for (o, mv) in zip(obs_vec, model_vec)
              if !ismissing(o) && isfinite(Float64(o)) && isfinite(Float64(mv))]
     isempty(pairs) && return plot(; title="$(title_prefix)(no valid pairs)", titlefontsize=9, framestyle=:none)
     o = first.(pairs); mv = last.(pairs)
     lo, hi = ylims === nothing ? extrema(vcat(o, mv)) : ylims
-    s = compute_stats(o, mv)
     p = scatter(o, mv; label=nothing, xlabel="obs ($units)", ylabel="model ($units)",
         title=title_prefix * @sprintf("r=%.3f  RMSE=%.3g\nbias=%+.3g  n=%d", s.r, s.rmse, s.bias, s.n),
         titlefontsize=9, ms=2, alpha=0.35, xlims=(lo, hi), ylims=(lo, hi))
@@ -437,7 +436,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
 
     site_rows = NamedTuple[]
     record!(label, kind, units, s) = push!(site_rows,
-        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, r=s.r, rmse=s.rmse, bias=s.bias, n=s.n))
+        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, r=s.r, rmse=s.rmse, bias=s.bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, n=s.n))
     # `plot_variable`: nothing plots every variable (default); a String
     # restricts plotting to the one variable matching that short key (Fsu,
     # Flu, Fn, Fh, Fe, Fg, Ts, Sws, or a height-series name like
@@ -455,13 +454,13 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         sc_panels = []
         for (label, model_vec, obs_vec, units, key, panel_title) in vars
             obs_vec === nothing && continue
-            s = compute_stats(obs_vec, model_vec)
+            s = compute_stats(obs_vec, model_vec, t_model)
             println(rpad(label, 32) * fmt_stat(s))
             record!(label, kind, units, s)
             make_plots && (plot_variable === nothing || plot_variable == key) || continue
             push!(ts_panels, _timeseries_panel(t_model, model_vec, obs_vec; title=panel_title, units,
                 plot_start, plot_end, ylims, legend=false))
-            push!(sc_panels, _scatter_panel(model_vec, obs_vec; units, ylims, title_prefix="$panel_title\n"))
+            push!(sc_panels, _scatter_panel(model_vec, obs_vec, s; units, ylims, title_prefix="$panel_title\n"))
         end
         isempty(ts_panels) && return nothing
         ncols = min(4, length(ts_panels))

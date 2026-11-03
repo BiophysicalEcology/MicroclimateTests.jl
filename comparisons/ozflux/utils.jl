@@ -8,20 +8,31 @@ struct ModelStats
     rmse :: Float64
     bias :: Float64   # mean(pred − obs)
     n    :: Int
+    std_ratio :: Float64          # std(pred) / std(obs): the variability (Taylor 2001, doi:10.1029/2000JD900719)
+    daily_range_ratio :: Float64  # mean daily (max - min) of pred / of obs, over days with all 24 hours paired
 end
 
-function compute_stats(obs_vec, pred_vec)
-    pairs = [(Float64(o), Float64(p))
-             for (o, p) in zip(obs_vec, pred_vec)
-             if !ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))]
-    length(pairs) < 2 && return ModelStats(NaN, NaN, NaN, 0)
-    o = first.(pairs);  p = last.(pairs)
-    ModelStats(cor(o, p), sqrt(mean((p .- o).^2)), mean(p .- o), length(pairs))
+# `times`: the hour of each value
+function compute_stats(obs_vec, pred_vec, times)
+    valid = [!ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))
+             for (o, p) in zip(obs_vec, pred_vec)]
+    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, 0, NaN, NaN)
+    o = Float64.(obs_vec[valid]);  p = Float64.(pred_vec[valid]);  days = Date.(times[valid])
+    obs_ranges, pred_ranges = Float64[], Float64[]
+    for day in unique(days)
+        i = findall(==(day), days)
+        length(i) == 24 || continue
+        push!(obs_ranges, -(reverse(extrema(o[i]))...))
+        push!(pred_ranges, -(reverse(extrema(p[i]))...))
+    end
+    daily_range_ratio = isempty(obs_ranges) ? NaN : mean(pred_ranges) / mean(obs_ranges)
+    ModelStats(cor(o, p), sqrt(mean((p .- o).^2)), mean(p .- o), count(valid), std(p) / std(o), daily_range_ratio)
 end
 
 fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
-    @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  (n=%d)", s.r, s.rmse, s.bias, s.n)
+    @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  std ratio=%.2f  daily range ratio=%.2f  (n=%d)",
+        s.r, s.rmse, s.bias, s.std_ratio, s.daily_range_ratio, s.n)
 
 # Factor taking a site's observed Sws to volumetric water content: the top layer's porosity
 # where data_corrections.jl's SaturationFraction says it is a fraction of saturation. Applied
