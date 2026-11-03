@@ -312,57 +312,94 @@ function attribute_heights(ds, name)
     return [parse(Float64, m[1]) * (m[2] == "cm" ? 0.01 : 1.0) for m in eachmatch(r"(\d+(?:\.\d*)?|\.\d+)\s*(cm|m)?", text)]
 end
 
-# The single height (m) of an OzFlux variable; nothing when its attribute gives none or several
-function variable_height(ds, name)
-    heights = attribute_heights(ds, name)
-    return length(heights) == 1 ? only(heights) : nothing
+# The depth ranges (top, bottom), in m below the surface, an OzFlux soil variable's `height`
+# attribute gives: one per comma-separated entry, repeats dropped. "-0.08m" is a point,
+# "0 to -0.1 m", "-0.06--0.02m" and "-0.02 and -0.06m" are ranges over which the sensor
+# integrates, and CumberlandPlain's "-<.08m" is above 8 cm. A unit applies to the numbers
+# of its entry that carry none ("0 to -15 cm").
+function attribute_depth_ranges(ds, name)
+    haskey(ds, name) || return Tuple{Float64,Float64}[]
+    ranges = Tuple{Float64,Float64}[]
+    for entry in split(string(get(ds[name].attrib, "height", "")), ",")
+        numbers = collect(eachmatch(r"(\d+(?:\.\d*)?|\.\d+)\s*(cm|m)?", entry))
+        isempty(numbers) && continue
+        units = [m[2] for m in numbers if m[2] !== nothing]
+        entry_unit = isempty(units) ? "m" : last(units)
+        depths = [parse(Float64, m[1]) * (something(m[2], entry_unit) == "cm" ? 0.01 : 1.0) for m in numbers]
+        range = occursin('<', entry) ? (0.0, maximum(depths)) : extrema(depths)
+        any(r -> all(isapprox.(r, range; atol=1e-9)), ranges) || push!(ranges, range)
+    end
+    return ranges
 end
 
-# Depth (m) a soil sensor measures at, given the depth it is named or labelled for. A TCAV
-# averaging thermocouple is named for the heat flux plate depth (8 cm) but its junctions sit
-# at 2 and 6 cm above the plates (Campbell Scientific HFT3/TCAV installation), so it measures
-# the 2-6 cm mean, ~4 cm.
-_sensor_depth(ds, name, depth_m) = occursin("TCAV", get(ds[name].attrib, "instrument", "")) ? 0.04 : depth_m
+# The depth range a soil sensor measures over, given the range it is labelled for. A TCAV
+# averaging thermocouple labelled at the heat flux plate depth, 8 cm, has its junctions at
+# 2 and 6 cm (Campbell Scientific HFT3/TCAV installation), so it measures 2-6 cm.
+_sensor_depth_range(ds, name, range) =
+    occursin("TCAV", get(ds[name].attrib, "instrument", "")) && all(isapprox.(range, 0.08)) ? (0.02, 0.06) : range
 
-# Depth-suffixed series for `prefix` (e.g. "Sws", "Ts"): variable names
-# `<prefix>_<depth>(cm|m)`, optionally followed by a single replicate letter
-# (a/b/c, ...). A bare (no-letter) variable is the site's own official
-# per-depth average and is used directly; when only replicates exist (e.g.
-# Calperum's Ts has no bare Ts_10cm, only Ts_10cma/b/c) they're averaged
-# here, element-wise, skipping missing. Files with no depth-suffixed series
-# (most current TERN releases) give the bare `<prefix>` composite at its
-# `height` attribute's depth.
+# The depth range of soil variable `name`: its height attribute's, when it gives one, else
+# the depth its name carries (`named_depth`); nothing, with a warning, when the attribute
+# gives several different ones (sensors moved within the record, which the file doesn't date)
+function soil_variable_depth_range(ds, name, named_depth)
+    ranges = attribute_depth_ranges(ds, name)
+    range = if length(ranges) == 1
+        only(ranges)
+    elseif isempty(ranges) && named_depth !== nothing
+        (named_depth, named_depth)
+    else
+        isempty(ranges) || @warn "$name's height \"$(ds[name].attrib["height"])\" gives several depths; not compared"
+        return nothing
+    end
+    return _sensor_depth_range(ds, name, range)
+end
+
+# Depth series for `prefix` (e.g. "Sws", "Ts") as (; top_m, bottom_m, values): variables
+# named `<prefix>_<depth>(cm|m)`, optionally followed by a single replicate letter (a/b/c,
+# ...). A variable without the letter is the site's own per-depth average and is used
+# directly; when only replicates exist (e.g. Calperum's Ts_10cma/b/c) they're averaged,
+# element-wise, skipping missing. Files with no depth-named series (most current TERN
+# releases) give the bare `<prefix>` composite.
 function discover_depth_series(ds, prefix::AbstractString, rows, corrections)
-    varnames = keys(ds)
     pattern = Regex("^" * prefix * raw"_(\d+(?:\.\d+)?)(cm|m)([a-z]?)$")
-    bare = Dict{Float64,String}()
-    replicates = Dict{Float64,Vector{String}}()
-    for name in varnames
+    averages = Dict{Tuple{Float64,Float64},String}()
+    replicates = Dict{Tuple{Float64,Float64},Vector{String}}()
+    for name in keys(ds)
         m = match(pattern, name)
         m === nothing && continue
-        depth_m = _sensor_depth(ds, name, parse(Float64, m.captures[1]) * (m.captures[2] == "cm" ? 0.01 : 1.0))
-        if m.captures[3] == ""
-            bare[depth_m] = name
-        else
-            push!(get!(replicates, depth_m, String[]), name)
-        end
+        range = soil_variable_depth_range(ds, name, parse(Float64, m[1]) * (m[2] == "cm" ? 0.01 : 1.0))
+        range === nothing && continue
+        m[3] == "" ? (averages[range] = name) : push!(get!(replicates, range, String[]), name)
     end
-    if isempty(bare) && isempty(replicates)
-        depth_m = variable_height(ds, prefix)
-        depth_m === nothing || (bare[_sensor_depth(ds, prefix, depth_m)] = prefix)
+    if isempty(averages) && isempty(replicates) && haskey(ds, prefix)
+        range = soil_variable_depth_range(ds, prefix, nothing)
+        range === nothing || (averages[range] = prefix)
     end
-    depths_m = sort(collect(union(keys(bare), keys(replicates))))
-    result = NamedTuple{(:depth_m, :values),Tuple{Float64,Vector{Union{Float64,Missing}}}}[]
-    for d in depths_m
-        values = if haskey(bare, d)
-            _read_clean_var(ds, bare[d], rows, corrections)
-        else
-            cols = [_read_clean_var(ds, name, rows, corrections) for name in replicates[d]]
-            _rowwise_mean(cols)
-        end
-        values === nothing || push!(result, (depth_m=d, values=values))
+    result = NamedTuple{(:top_m, :bottom_m, :values),Tuple{Float64,Float64,Vector{Union{Float64,Missing}}}}[]
+    for range in sort(collect(union(keys(averages), keys(replicates))))
+        values = haskey(averages, range) ? _read_clean_var(ds, averages[range], rows, corrections) :
+            _rowwise_mean([_read_clean_var(ds, name, rows, corrections) for name in replicates[range]])
+        values === nothing || push!(result, (top_m=first(range), bottom_m=last(range), values))
     end
     return result
+end
+
+# A depth series' column name in the hourly table, and its label: "Ts_0.1m", or
+# "Sws_0.0-0.1m" for a range
+depth_name(top_m, bottom_m) = top_m == bottom_m ? "$(top_m)m" : "$(top_m)-$(bottom_m)m"
+depth_label(r) = r.top_m == r.bottom_m ? "$(r.top_m) m" : "$(r.top_m)-$(r.bottom_m) m"
+
+# The model's mean over a depth series' range (hours × depths `model_mat`), linear between
+# nodes; every range end is a node (_observed_depths_m), so a point series takes its node
+function depth_range_mean(model_mat, depths, r)
+    depths_m = ustrip.(u"m", depths)
+    i = findfirst(==(r.top_m), depths_m)
+    j = findfirst(==(r.bottom_m), depths_m)
+    (i === nothing || j === nothing) && error("No model node at the ends of $(depth_label(r))")
+    i == j && return model_mat[:, i]
+    d = depths_m[i:j]
+    weights = ([diff(d); 0.0] .+ [0.0; diff(d)]) ./ (2 * (d[end] - d[1]))
+    return model_mat[:, i:j] * weights
 end
 
 # Element-wise mean across columns, skipping missing (NaN if all missing at a row).
@@ -412,12 +449,12 @@ function read_ozflux_nc(path, years, corrections; height_series=Tuple{Float64,St
             qc === nothing || (df[!, v * "_QCFlag"] = qc)
         end
 
-        # Depth-suffixed soil series get renamed (Ts_10cma/b/c -> Ts_0.1m) since
-        # discover_depth_series already resolves replicates/units; no per-replicate
-        # QC filtering here (sentinel-missing only) -- see README caveats.
+        # Soil series by depth range (Ts_10cma/b/c -> Ts_0.1m, Sws over 0-10 cm -> Sws_0.0-0.1m),
+        # discover_depth_series having resolved replicates and units; no per-replicate QC
+        # filtering here (sentinel-missing only) -- see README caveats.
         for prefix in ("Ts", "Sws")
-            for (depth_m, values) in discover_depth_series(ds, prefix, rows, corrections)
-                df[!, "$(prefix)_$(depth_m)m"] = values
+            for r in discover_depth_series(ds, prefix, rows, corrections)
+                df[!, "$(prefix)_$(depth_name(r.top_m, r.bottom_m))"] = r.values
             end
         end
 

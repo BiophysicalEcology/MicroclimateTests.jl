@@ -131,10 +131,8 @@ end
 # _build_heights/_build_depths/plant_area_index_profile: see utils.jl
 # (generic grid + PAI construction, not site-specific).
 
-# Depth-m values from _hourly_depth_series's (depth_m, values) pairs, for
-# both Ts and Sws -- the set of depths _build_depths should land nodes on.
-_observed_depths_m(hourly) = vcat([r.depth_m for r in _hourly_depth_series(hourly, "Ts")],
-                                   [r.depth_m for r in _hourly_depth_series(hourly, "Sws")])
+# Both ends of every Ts and Sws depth range: the depths _build_depths lands nodes on
+_observed_depths_m(hourly) = [d for prefix in ("Ts", "Sws") for r in _hourly_depth_series(hourly, prefix) for d in (r.top_m, r.bottom_m)]
 
 # Soil profile from soil_source(site_name): SLGA at the site's cell (:slga, _slga_soil_profile
 # in mapper.jl), measured horizons (:horizons), peat (:peat, tables/peat.toml), or a fixed
@@ -306,7 +304,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
     # back to the mean air temperature / a mid-range moisture guess for any
     # depth with no observation to anchor to).
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2, soil_profile; scale=sws_obs_scale(site_name, soil_profile))
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     inputs = MicroInputs(;
@@ -374,29 +372,30 @@ function micro_model(site_name, site, soil_profile, depths, heights, canopy, rai
         vapour_pressure_equation = vapour_pressure_equation_choice)
 end
 
-# Depth-series NamedTuples (matching discover_depth_series's format) from the
-# hourly-aggregated frame's renamed `<prefix>_<depth>m` columns.
+# Depth series (matching discover_depth_series's (; top_m, bottom_m, values)) from the hourly
+# table's `<prefix>_<depth_name>` columns, with the column name
 function _hourly_depth_series(hourly, prefix)
-    pattern = Regex("^" * prefix * raw"_([\d.]+)m$")
-    result = NamedTuple{(:depth_m, :values),Tuple{Float64,Vector{Union{Float64,Missing}}}}[]
+    pattern = Regex("^" * prefix * raw"_([\d.]+)(?:-([\d.]+))?m$")
+    result = NamedTuple{(:top_m, :bottom_m, :column, :values),Tuple{Float64,Float64,String,Vector{Union{Float64,Missing}}}}[]
     for name in names(hourly)
         m = match(pattern, name)
         m === nothing && continue
-        push!(result, (depth_m=parse(Float64, m.captures[1]), values=hourly[!, name]))
+        top_m = parse(Float64, m[1])
+        push!(result, (; top_m, bottom_m=m[2] === nothing ? top_m : parse(Float64, m[2]), column=name, values=hourly[!, name]))
     end
-    return sort(result; by=r -> r.depth_m)
+    return sort(result; by=r -> (r.top_m, r.bottom_m))
 end
 
-# First available (depth_m, value) pair from each series in `depth_series`,
+# First available value of each series in `depth_series`, at the middle of its depth range,
 # sorted by depth.
 function _known_depth_points(depth_series)
     known_d = Float64[]
     known_v = Float64[]
-    for (depth_m, values) in depth_series
-        idx = findfirst(!ismissing, values)
+    for r in depth_series
+        idx = findfirst(!ismissing, r.values)
         idx === nothing && continue
-        push!(known_d, depth_m)
-        push!(known_v, values[idx])
+        push!(known_d, (r.top_m + r.bottom_m) / 2)
+        push!(known_v, r.values[idx])
     end
     order = sortperm(known_d)
     return known_d[order], known_v[order]
@@ -419,11 +418,13 @@ function initial_temperature_profile(ts_depths, depths, fallback_temperature)
     return [u"K"(_interp_flat(known_d, known_v_C, ustrip(u"m", d)) * u"°C") for d in depths]
 end
 
-function initial_moisture_profile(sws_depths, depths, fallback_fraction; scale=1.0)
+# Clamped to each depth's saturation, 1 - bulk density / solid density
+function initial_moisture_profile(sws_depths, depths, fallback_fraction, soil_profile; scale=1.0)
+    saturation = 1 .- soil_profile.bulk_density ./ soil_profile.mineral_density
     known_d, known_v = _known_depth_points(sws_depths)
-    isempty(known_d) && return fill(fallback_fraction, length(depths))
+    isempty(known_d) && return min.(fallback_fraction, saturation)
     known_v = known_v .* scale  # before clamping -- see sws_obs_scale (utils.jl)
-    return [clamp(_interp_flat(known_d, known_v, ustrip(u"m", d)), 0.02, 0.5) for d in depths]
+    return [clamp(_interp_flat(known_d, known_v, ustrip(u"m", d)), 0.02, s) for (d, s) in zip(depths, saturation)]
 end
 
 function announce_and_prepare_site(site_name, years; max_days=nothing, litter_model=site_litter(site_name))

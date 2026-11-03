@@ -221,7 +221,7 @@ function _soil_profile_panel(prep, output, dt; xlims=:auto)
     if row !== nothing
         for r in _hourly_depth_series(hourly, "Ts")
             v = r.values[row]
-            ismissing(v) || scatter!(p, [Float64(v)], [-r.depth_m]; label=nothing, color=:red, ms=6,
+            ismissing(v) || scatter!(p, [Float64(v)], [-(r.top_m + r.bottom_m) / 2]; label=nothing, color=:red, ms=6,
                 markerstrokewidth=1.5, markerstrokecolor=:white)
         end
     end
@@ -482,8 +482,8 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         return nothing
     end
     _depth_panels!(prefix, kind, model_mat, units, convert, ylims; obs_scale=1.0) = _panel_grids!(kind,
-        [("$kind $(r.depth_m) m", convert(model_mat[:, argmin(abs.(ustrip.(u"m", depths) .- r.depth_m))]),
-          _scale_obs(_col(hourly, t_model, "$(prefix)_$(r.depth_m)m"), obs_scale), units, prefix, "$(r.depth_m) m")
+        [("$kind $(depth_label(r))", convert(depth_range_mean(model_mat, depths, r)),
+          _scale_obs(_col(hourly, t_model, r.column), obs_scale), units, prefix, depth_label(r))
          for r in _hourly_depth_series(hourly, prefix)];
         ylims)
 
@@ -596,10 +596,9 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     ts_ylims = if isempty(ts_series)
         nothing
     else
-        shallow_depth_m = minimum(r.depth_m for r in ts_series)
-        i = argmin(abs.(ustrip.(u"m", depths) .- shallow_depth_m))
-        vals = collect(skipmissing(ustrip.(u"°C", output.soil_temperature[:, i])))
-        obs_vec = _col(hourly, t_model, "Ts_$(shallow_depth_m)m")
+        shallow = first(ts_series)
+        vals = collect(skipmissing(ustrip.(u"°C", depth_range_mean(output.soil_temperature, depths, shallow))))
+        obs_vec = _col(hourly, t_model, shallow.column)
         obs_vec === nothing || append!(vals, collect(skipmissing(obs_vec)))
         if isempty(vals)
             nothing

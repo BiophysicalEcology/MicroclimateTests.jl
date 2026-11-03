@@ -85,7 +85,7 @@ function prepare_site_silo(site_name, years; max_days=nothing, litter_model=site
     canopy = canopy_model(site_name, resolved, heights)
     model = micro_model(site_name, site, soil_profile, depths, heights, canopy, DailyRainfall(); litter_model)  # SILO rainfall is a daily total
 
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2, soil_profile; scale=sws_obs_scale(site_name, soil_profile))
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     fetched = fetch_silo_forcing(site_name, model, latitude, longitude, sim_start, sim_end, initial_soil_moisture)
