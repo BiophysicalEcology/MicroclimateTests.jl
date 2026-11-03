@@ -415,7 +415,7 @@ function _scatter_panel(model_vec, obs_vec, s; units, ylims=nothing, title_prefi
     o = first.(pairs); mv = last.(pairs)
     lo, hi = ylims === nothing ? extrema(vcat(o, mv)) : ylims
     p = scatter(o, mv; label=nothing, xlabel="obs ($units)", ylabel="model ($units)",
-        title=title_prefix * @sprintf("r=%.3f  RMSE=%.3g\nbias=%+.3g  n=%d", s.r, s.rmse, s.bias, s.n),
+        title=title_prefix * @sprintf("pearson correlation=%.3f  RMSE=%.3g\nbias=%+.3g  n=%d", s.pearson_correlation, s.rmse, s.bias, s.n),
         titlefontsize=9, ms=2, alpha=0.35, xlims=(lo, hi), ylims=(lo, hi))
     plot!(p, [lo, hi], [lo, hi]; label="1:1", color=:red, lw=1)
     return p
@@ -436,7 +436,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
 
     site_rows = NamedTuple[]
     record!(label, kind, units, s) = push!(site_rows,
-        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, r=s.r, rmse=s.rmse, bias=s.bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, wetting_ratio=s.wetting_ratio, drying_ratio=s.drying_ratio, n=s.n))
+        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, pearson_correlation=s.pearson_correlation, rmse=s.rmse, bias=s.bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, wetting_ratio=s.wetting_ratio, drying_ratio=s.drying_ratio, n=s.n))
     # `plot_variable`: nothing plots every variable (default); a String
     # restricts plotting to the one variable matching that short key (Fsu,
     # Flu, Fn, Fh, Fe, Fg, Ts, Sws, or a height-series name like

@@ -7,7 +7,7 @@
 # over days (wetting and drying ratios), everything else by its daily cycle (daily range ratio).
 # The ratios that don't apply are NaN.
 struct ModelStats
-    r    :: Float64
+    pearson_correlation :: Float64
     rmse :: Float64
     bias :: Float64   # mean(pred − obs)
     n    :: Int
@@ -46,8 +46,8 @@ end
 
 fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
-    @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  std ratio=%.2f  daily range ratio=%.2f  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
-        s.r, s.rmse, s.bias, s.std_ratio, s.daily_range_ratio, s.wetting_ratio, s.drying_ratio, s.n)
+    @sprintf("pearson correlation=%+.3f  RMSE=%6.3f  bias=%+7.4f  std ratio=%.2f  daily range ratio=%.2f  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
+        s.pearson_correlation, s.rmse, s.bias, s.std_ratio, s.daily_range_ratio, s.wetting_ratio, s.drying_ratio, s.n)
 
 # Factor taking a site's observed Sws to volumetric water content: the top layer's porosity
 # where data_corrections.jl's SaturationFraction says it is a fraction of saturation. Applied
