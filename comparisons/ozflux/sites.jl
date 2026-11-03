@@ -79,18 +79,34 @@ function run_years(site_name)
     end
 end
 
-# Median MODIS MCD15A3H leaf area index (500 m, 4-day composites) over `years` at a site, from
-# the ORNL DAAC subset service, cached in MODIS_LAI_DIR. The service returns at most 10
-# composites (40 days) per request, so a year's requests run concurrently, retried with
+# First and last day of the site's record within `years`
+function record_period(site_name, years)
+    NCDataset(ozflux_site_path(OZFLUX_DATA_DIR, site_name)) do ds
+        days = filter(d -> Dates.year(d) in years, Date.(ds["time"][:] .- Minute(30)))
+        return first(days), last(days)
+    end
+end
+
+# MODIS date code for the subset service: A, the year, then the day of year
+_modis_date(date) = "A$(Dates.year(date))$(lpad(dayofyear(date), 3, '0'))"
+
+# Median MODIS MCD15A3H leaf area index (500 m, 4-day composites) over the site's record within
+# `years`, from the ORNL DAAC subset service, cached in MODIS_LAI_DIR. The service returns at
+# most 10 composites (40 days) per request, so the requests run concurrently, retried with
 # backoff since the service stalls at times; values above 10 m²/m² are fill flags.
 function modis_leaf_area_index(site_name, latitude, longitude, years)
-    path = joinpath(MODIS_LAI_DIR, "$(site_name)_$(join(years, '-')).csv")
+    first_day, last_day = record_period(site_name, years)
+    path = joinpath(MODIS_LAI_DIR, "$(site_name)_$(first_day)_$(last_day).csv")
     if !isfile(path)
         mkpath(MODIS_LAI_DIR)
         lat, lon = ustrip(u"°", latitude), ustrip(u"°", longitude)
-        windows = [(year, start, min(start + 39, daysinyear(year))) for year in years for start in 1:40:daysinyear(year)]
-        rows = reduce(vcat, asyncmap(windows; ntasks=length(windows)) do (year, start, stop)
-            window = "startDate=A$(year)$(lpad(start, 3, '0'))&endDate=A$(year)$(lpad(stop, 3, '0'))"
+        # A request can't span two years
+        windows = [(start, min(start + Day(39), year_end))
+            for y in years
+            for (year_start, year_end) in ((max(first_day, Date(y, 1, 1)), min(last_day, Date(y, 12, 31))),)
+            for start in year_start:Day(40):year_end]
+        rows = reduce(vcat, asyncmap(windows; ntasks=length(windows)) do (start, stop)
+            window = "startDate=$(_modis_date(start))&endDate=$(_modis_date(stop))"
             url = "https://modis.ornl.gov/rst/api/v1/MCD15A3H/subset?latitude=$lat&longitude=$lon&$window&kmAboveBelow=0&kmLeftRight=0&band=Lai_500m"
             fetch() = String(take!(Downloads.download(url, IOBuffer(); headers=["Accept" => "text/csv"])))
             body = retry(fetch; delays=ExponentialBackOff(n=4, first_delay=5.0))()
