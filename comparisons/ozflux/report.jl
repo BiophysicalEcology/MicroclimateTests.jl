@@ -434,8 +434,8 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     println("="^72)
 
     site_rows = NamedTuple[]
-    record!(label, kind, s) = push!(site_rows,
-        (site=site_name, years=join(years, '-'), source, variable=label, kind, r=s.r, rmse=s.rmse, bias=s.bias, n=s.n))
+    record!(label, kind, units, s) = push!(site_rows,
+        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, r=s.r, rmse=s.rmse, bias=s.bias, n=s.n))
     # `plot_variable`: nothing plots every variable (default); a String
     # restricts plotting to the one variable matching that short key (Fsu,
     # Flu, Fn, Fh, Fe, Fg, Ts, Sws, or a height-series name like
@@ -455,7 +455,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
             obs_vec === nothing && continue
             s = compute_stats(obs_vec, model_vec)
             println(rpad(label, 32) * fmt_stat(s))
-            record!(label, kind, s)
+            record!(label, kind, units, s)
             make_plots && (plot_variable === nothing || plot_variable == key) || continue
             push!(ts_panels, _timeseries_panel(t_model, model_vec, obs_vec; title=panel_title, units,
                 plot_start, plot_end, ylims, legend=false))
@@ -615,7 +615,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     # applied to the initial-condition read (pipeline.jl), same raw column.
     for (prefix, kind, model_mat, units, convert, ylims, obs_scale) in (
         ("Ts", "soil_temperature", output.soil_temperature, "°C", d -> ustrip.(u"°C", d), ts_ylims, 1.0),
-        ("Sws", "soil_moisture", output.soil_moisture, "frac", identity, (0.0, 0.6), sws_obs_scale(site_name, prep.problem.model.soil.profile)),
+        ("Sws", "soil_moisture", output.soil_moisture, "m^3/m^3", identity, (0.0, 0.6), sws_obs_scale(site_name, prep.problem.model.soil.profile)),
     )
         _depth_panels!(prefix, kind, model_mat, units, convert, ylims; obs_scale)
     end

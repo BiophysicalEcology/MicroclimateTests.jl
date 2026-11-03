@@ -68,10 +68,10 @@ if nrow(all_stats) > 0
     println("SUMMARY — $(length(unique(all_stats.site))) site(s) run, $(length(failures)) failed")
     println("="^72)
     sub = filter(r -> isfinite(r.rmse), all_stats)
-    println(rpad("Variable", 34) * "  sites   bias / RMSE")
+    println(rpad("Variable", 34) * "  sites   bias / RMSE    units")
     for v in unique(sub.variable)
         rows = filter(r -> r.variable == v, sub)
-        @printf("  %-32s  %5d   %+8.3f / %7.3f\n", v, nrow(rows), mean(rows.bias), mean(rows.rmse))
+        @printf("  %-32s  %5d   %+8.3f / %7.3f  %s\n", v, nrow(rows), mean(rows.bias), mean(rows.rmse), only(unique(rows.units)))
     end
     isempty(failures) || (println("\nFailed:"); foreach(((s, e),) -> println("  $s: ", first(split(e, '\n'))), failures))
 end
