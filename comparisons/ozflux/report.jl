@@ -550,7 +550,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     _panel_grids!("radiation", [
         (label, model_vec, _col(hourly, t_model, obscol), "W/m^2", obscol, obscol)
         for (label, model_vec, obscol) in
-            (("Upward shortwave (Fsu)", fsu, "Fsu"), ("Upward longwave (Flu)", flu, "Flu"), ("Net radiation (Fn)", fn, "Fn"))
+            (("upward_shortwave", fsu, "Fsu"), ("upward_longwave", flu, "Flu"), ("net_radiation", fn, "Fn"))
     ])
 
     make_plots && _plot_leaf_vs_air(heights, canopy_height, canopy, t_model, output; plot_start, plot_end,
@@ -577,8 +577,8 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
     fe = ustrip.(u"W/m^2", output.canopy.canopy_latent_heat_flux)
     fg = ustrip.(u"W/m^2", output.ground_heat_flux)
     flux_vars = canopy isa NoCanopy ?
-        (("Sensible heat (Fh)", fh, "Fh"), ("Ground heat flux (Fg)", fg, "Fg")) :
-        (("Sensible heat (Fh)", fh, "Fh"), ("Latent heat (Fe)", fe, "Fe"), ("Ground heat flux (Fg)", fg, "Fg"))
+        (("sensible_heat_flux", fh, "Fh"), ("ground_heat_flux", fg, "Fg")) :
+        (("sensible_heat_flux", fh, "Fh"), ("latent_heat_flux", fe, "Fe"), ("ground_heat_flux", fg, "Fg"))
     _panel_grids!("flux", [
         (label, model_vec, _col(hourly, t_model, obscol), "W/m^2", obscol, obscol)
         for (label, model_vec, obscol) in flux_vars
@@ -634,7 +634,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         raw = _profile_series(output, heights, canopy_height, height_m, field, canopy)
         raw === nothing && continue
         model_vec, units = field == :air_temperature ? (ustrip.(u"°C", u"°C".(raw)), "°C") : (ustrip.(u"m/s", raw), "m/s")
-        label = "$name @ $(height_m) m"
+        label = "$field $(height_m) m"
         push!(field == :air_temperature ? ta_vars : ws_vars, (label, model_vec, obs_vec, units, name, label))
     end
     _panel_grids!("profile_air_temperature", ta_vars)
