@@ -7,7 +7,7 @@
 #   - elevation from SRTM when the file names none (sites.jl's site_elevation)
 #   - pressure from elevation when the file has none (sites.jl's site_pressure)
 #   - forcing gaps from backup instruments (sites.toml's forcing_backups)
-#   - a TCAV averaging thermocouple's depth, ~4 cm not its 8 cm label (utils.jl's _sensor_depth)
+#   - a TCAV averaging thermocouple's depths, its 2-6 cm junctions not its 8 cm plate depth (utils.jl's _sensor_depth_range)
 
 [[all_sites]]
 type = "RescaleBelow"
@@ -61,7 +61,24 @@ reason = "four hours of identical readings is a stuck sensor; zero is exempt (ca
 type = "Rescale"
 variable = "Sws_30cma"
 factor = 0.01
-reason = "labelled m^3/m^3 but a percentage: 2018 median 18.5, 95th percentile 41"
+reason = "labelled m^3/m^3 but a percentage: 2018 median 18.5, 95th percentile 41, valid_range 0-55"
+
+[[sites.DigbyPlantation]]
+type = "SensorDepth"
+variable = "Sws_30cma"
+top_m = 0.0
+bottom_m = 0.3
+reason = "a CS650, whose water content is the average over its 30 cm rods (Campbell Scientific CS650 manual), installed vertically from the surface: its temperature (Ts_30cma) peaks at 16:00, an hour after the air, not near midnight as at 30 cm"
+
+[[sites.DigbyPlantation]]
+type = "FaultySensor"
+variable = "Ts_30cma"
+reason = "the vertical CS650's thermistor, by the rods' entry into its head (Campbell Scientific CS650 manual): near the surface at an unknown depth, not at the 30 cm labelled"
+
+[[sites.DigbyPlantation]]
+type = "FaultySensor"
+variable = "Ts"
+reason = "a copy of Ts_30cma"
 
 [[sites.LongreachMitchellGrassRangeland]]
 type = "SaturationFraction"

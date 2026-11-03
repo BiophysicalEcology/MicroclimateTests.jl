@@ -56,6 +56,7 @@ Threads.@threads :dynamic for i in eachindex(prepared)
 end
 for (prep, result) in zip(prepared, results)
     result isa Exception && (fail!(prep.site_name, result); continue)
+    save_site_result(result, "tower")
     try
         stats = report_site_results(result, result.output; make_plots, display_plots=false, plot_forcing, plot_variable)
         stats.solve_time .= result.solve_time

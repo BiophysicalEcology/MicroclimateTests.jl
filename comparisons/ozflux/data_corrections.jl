@@ -49,6 +49,14 @@ end
     reason::String
 end
 
+"`variable`'s depth range (m), in place of its file's height"
+@kwdef struct SensorDepth <: DataCorrection
+    variable::String
+    top_m::Float64
+    bottom_m::Float64
+    reason::String
+end
+
 "`variable` dropped wherever it is read, forcing or comparison: a faulty sensor"
 @kwdef struct FaultySensor <: DataCorrection
     variable::String
@@ -61,7 +69,7 @@ end
 end
 
 const CORRECTION_KINDS = Dict(string(nameof(T)) => T for T in
-    (Rescale, RescaleBelow, ImplausibleRange, Flatline, SaturationFraction, AttributeOverride, FaultySensor, ExcludedSite))
+    (Rescale, RescaleBelow, ImplausibleRange, Flatline, SaturationFraction, AttributeOverride, SensorDepth, FaultySensor, ExcludedSite))
 
 # A table entry as its correction
 correction(entry) = CORRECTION_KINDS[entry["type"]](; (Symbol(k) => v for (k, v) in entry if k != "type")...)

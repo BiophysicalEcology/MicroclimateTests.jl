@@ -393,7 +393,10 @@ function discover_depth_series(ds, prefix::AbstractString, rows, corrections)
     for name in keys(ds)
         m = match(pattern, name)
         m === nothing && continue
-        range = soil_variable_depth_range(ds, name, parse(Float64, m[1]) * (m[2] == "cm" ? 0.01 : 1.0))
+        override = findfirst(c -> c isa SensorDepth && c.variable == name, corrections)
+        range = override === nothing ?
+            soil_variable_depth_range(ds, name, parse(Float64, m[1]) * (m[2] == "cm" ? 0.01 : 1.0)) :
+            (corrections[override].top_m, corrections[override].bottom_m)
         range === nothing && continue
         m[3] == "" ? (averages[range] = name) : push!(get!(replicates, range, String[]), name)
     end
@@ -405,7 +408,8 @@ function discover_depth_series(ds, prefix::AbstractString, rows, corrections)
     for range in sort(collect(union(keys(averages), keys(replicates))))
         values = haskey(averages, range) ? _read_clean_var(ds, averages[range], rows, corrections) :
             _rowwise_mean([_read_clean_var(ds, name, rows, corrections) for name in replicates[range]])
-        values === nothing || push!(result, (top_m=first(range), bottom_m=last(range), values))
+        # None when every reading is dropped (a FaultySensor)
+        values === nothing || all(ismissing, values) || push!(result, (top_m=first(range), bottom_m=last(range), values))
     end
     return result
 end

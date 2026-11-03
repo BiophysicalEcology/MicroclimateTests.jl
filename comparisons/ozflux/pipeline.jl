@@ -441,3 +441,12 @@ function solve_site(prep)
 end
 
 run_site(site_name, years; kw...) = solve_site(announce_and_prepare_site(site_name, years; kw...))
+
+# A solved site (solve_site) on disk, to report on again without solving
+site_result_path(site_name, years, source) = joinpath(outputs_dir, "results", "$(site_name)_$(join(years, '-'))_$(source).jls")
+function save_site_result(result, source)
+    path = site_result_path(result.site_name, result.years, source)
+    mkpath(dirname(path))
+    serialize(path, result)
+end
+load_site_result(site_name, years, source) = deserialize(site_result_path(site_name, years, source))
