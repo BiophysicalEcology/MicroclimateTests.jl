@@ -16,8 +16,6 @@ leaf_transmittance = 0.25
 pai_shape = "uniform"
 # Soil (root) water potential at which stomata close; no site-specific literature values yet
 stomatal_closure_potential = "-1500 J/kg"
-# Soil texture when the file's `soil` attribute names no Campbell & Norman class
-unnamed_soil_texture = "loam"
 # Canopy and litter only at woody sites, at least this tall: every grass, crop and pasture site
 # is under 1.2 m, every woody one 3 m or more
 woody_canopy_height = "2 m"

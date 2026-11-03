@@ -158,14 +158,10 @@ end
 
 # air_entry_water_potential stored positive (matches SLGA's sign convention).
 function soil_profile_from_texture(texture::NamedTuple, depths;
-    bulk_density=1.3u"Mg/m^3", mineral_density=2.560u"Mg/m^3",
-    mineral_conductivity=2.5u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
-    root_density=_root_density_for_depths(depths),
+    bulk_density=1.3u"Mg/m^3", root_density=_root_density_for_depths(depths),
 )
     n = length(depths)
-    SoilProfile(;
-        bulk_density=fill(bulk_density, n), mineral_density=fill(mineral_density, n),
-        mineral_conductivity=fill(mineral_conductivity, n), mineral_heat_capacity=fill(mineral_heat_capacity, n),
+    Microclimate.example_soil_profile(depths; bulk_density,
         hydraulics=CampbellHydraulicProfile(;
             air_entry_water_potential=fill(texture.air_entry, n),
             saturated_hydraulic_conductivity=fill(texture.Ksat, n),
@@ -179,17 +175,30 @@ end
 # Campbell hydraulics from `pedotransfer_model`. Nodes below the deepest horizon
 # take the deepest horizon's values.
 function soil_profile_from_horizons(horizons, depths, pedotransfer_model;
-    mineral_density=2.560u"Mg/m^3", mineral_conductivity=2.5u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
     root_density=_root_density_for_depths(depths),
 )
-    n = length(depths)
     horizon = [min(searchsortedfirst(horizons.bottom, d), length(horizons.bottom)) for d in depths]
     bulk_density = horizons.bulk_density[horizon]
-    SoilProfile(;
-        bulk_density, mineral_density=fill(mineral_density, n),
-        mineral_conductivity=fill(mineral_conductivity, n), mineral_heat_capacity=fill(mineral_heat_capacity, n),
+    Microclimate.example_soil_profile(depths; bulk_density,
         hydraulics=CampbellHydraulicProfile(pedotransfer_model; clay_percent=horizons.clay[horizon],
             silt_percent=horizons.silt[horizon], sand_percent=horizons.sand[horizon], bulk_density, root_density),
+    )
+end
+
+# SoilProfile of peat (tables/peat.toml): each node takes the class of the layer it sits in,
+# its bulk density from the class porosity and the organic solid density
+function soil_profile_from_peat(peat, depths; root_density=_root_density_for_depths(depths))
+    class = [searchsortedfirst(peat.bottom, d) for d in depths]
+    water_density = 1000.0u"kg/m^3"
+    Microclimate.example_soil_profile(depths;
+        bulk_density=(1 .- peat.porosity[class]) .* peat.solid_density,
+        mineral_density=peat.solid_density, mineral_conductivity=peat.solid_conductivity,
+        mineral_heat_capacity=peat.solid_heat_capacity, de_vries_shape_factor=peat.de_vries_shape_factor,
+        hydraulics=CampbellHydraulicProfile(;
+            air_entry_water_potential=uconvert.(u"J/kg", peat.air_entry_head[class] .* Unitful.gn),
+            saturated_hydraulic_conductivity=uconvert.(u"kg*s/m^3", peat.saturated_conductivity[class] .* water_density ./ Unitful.gn),
+            campbell_b_parameter=peat.campbell_b[class], root_density,
+        ),
     )
 end
 
@@ -236,6 +245,7 @@ function flatten_soil_profile(soil_profile, depths; active_depth=0.3u"m")
         mineral_density = fillrep(_wmean(soil_profile.mineral_density[nodes], weights)),
         mineral_conductivity = fillrep(_wmean(soil_profile.mineral_conductivity[nodes], weights)),
         mineral_heat_capacity = fillrep(_wmean(soil_profile.mineral_heat_capacity[nodes], weights)),
+        de_vries_shape_factor = fillrep(_wmean(soil_profile.de_vries_shape_factor[nodes], weights)),
         hydraulics = CampbellHydraulicProfile(;
             air_entry_water_potential = fillrep(_wmean(soil_profile.hydraulics.air_entry_water_potential[nodes], weights)),
             saturated_hydraulic_conductivity = fillrep(_wgeomean(soil_profile.hydraulics.saturated_hydraulic_conductivity[nodes], weights)),

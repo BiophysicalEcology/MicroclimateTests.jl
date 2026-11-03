@@ -21,7 +21,6 @@ using Serialization, Measures
 #Microclimate._DEBUG_GROUND_RESISTANCE[] = true
 
 include("ozflux.jl")
-include("mapper.jl")  # SILO/SLGA via MicroclimateMapper
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
 site_name = "LongreachMitchellGrassRangeland"  # any site in data/, e.g. "CapeTribulation", "CalperumChowilla", "Whroo", "WallabyCreek", "GreatWesternWoodlands", "TiTreeEast", "AliceSpringsMulga"

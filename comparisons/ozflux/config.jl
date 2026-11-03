@@ -9,8 +9,7 @@ const BARRA_DIR = joinpath(OZFLUX_DATA_DIR, "barra")
 const MODIS_LAI_DIR = joinpath(OZFLUX_DATA_DIR, "modis_lai")
 const FIRST_MODIS_YEAR = 2003
 
-# SILO forcing and SLGA soil choices (MicroclimateMapper) live in mapper.jl,
-# which only the entry points that load MicroclimateMapper include.
+# SILO forcing choices (MicroclimateMapper) live in mapper.jl.
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  MODEL ALGORITHM CHOICES — change the model setup here, in one place     ║
@@ -46,7 +45,7 @@ vapour_pressure_equation_choice = VapourPressureLookup()  # or GoffGratch()
 #                                         )
 #canopy_wind_model_choice = ExponentialCanopyWindAttenuation(max_attenuation_coefficient = 2.879) #or MixingLengthCanopyWindAttenuation(; shelter_floor=..., ...)
 canopy_wind_model_choice = ExponentialCanopyWindAttenuation(; thermal_roughness_model=ScalarRoughnessRatio(; ratio=0.5))
-# Soil from measured horizons (sites.toml's soil_horizons)
+# Soil texture to Campbell hydraulics, for SLGA and measured horizons (sites.toml.s soil_horizons)
 pedotransfer_model_choice = CampbellParticleSize()  # or CosbyMultivariate(), CosbyUnivariate(); the only one scaling conductivity with bulk density
 
 # Depth/height grid constants (NMR_DEP_CM, SIM_DEPTHS_M, N_CANOPY_LAYERS):

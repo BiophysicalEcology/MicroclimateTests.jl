@@ -20,10 +20,9 @@ per site-year (`run_site_silo`) as its own comparison against the tower obs.
   `discover_site_years`).
 - `pipeline.jl` — the mechanics: `resolve_site` (metadata) ->
   `prepare_site` (read/aggregate/build the `MicroProblem`) -> `run_site`
-  (solve). Tower forcing only; needs no MicroclimateMapper.
+  (solve).
 - `mapper.jl` — everything that needs MicroclimateMapper: SILO forcing
-  (`run_site_silo`) and live SLGA
-  soil (`soil_source` `:slga`/`:slga_uniform`).
+  (`run_site_silo`) and SLGA soil (`soil_source` `:slga`/`:slga_uniform`).
 - `report.jl` — stats + plots for every comparison target
   (`report_site_results`).
 - `comparison.jl` — entry point: every site's best year (or whole record
@@ -55,7 +54,7 @@ relies on are data, in `tables/ozflux_conventions.toml`.
 
 Every fact about the datasets and sites is data in `tables/`, never code:
 OzFlux naming conventions, data corrections (mistakes only, each with its
-evidence), per-site settings with their defaults, and soil texture classes.
+evidence), per-site settings with their defaults, soil texture classes and peat (`peat.toml`).
 
 ### Leaf area index
 
@@ -106,10 +105,10 @@ Wallaby (1); saved under `outputs_dir/profiles_vertical/`.
   construction, so a residual mismatch against the tower's *unclosed*
   observations isn't necessarily model error.
 - **No CO2/photosynthesis module** — `Fc` isn't usable.
-- **Soil profile is a literature default** (`Microclimate.example_soil_profile`),
-  not a per-site texture fetch — unlike `oznet`'s live SLGA pull, since this
-  pipeline doesn't otherwise need `MicroclimateMapper`'s gridded machinery for
-  the primary (tower-forced) run.
+- **Soil is SLGA at the site's 90 m cell** (texture converted to USDA classes),
+  except at sites whose file names a peat or Organosol, which SLGA misses (cited
+  values in `tables/peat.toml`), and Whroo, with measured horizons. Downloads need
+  a TERN API key in `ENV["RASTERDATASOURCES_SLGA_TERN_API_KEY"]`.
 - **30-min OzFlux data is paired-averaged to hourly**; sub-hourly dynamics
   are lost. `MultilayerCanopy`/`MicroModel` are hourly-only in any case.
 

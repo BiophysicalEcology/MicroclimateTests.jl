@@ -136,34 +136,26 @@ end
 _observed_depths_m(hourly) = vcat([r.depth_m for r in _hourly_depth_series(hourly, "Ts")],
                                    [r.depth_m for r in _hourly_depth_series(hourly, "Sws")])
 
-# Soil profile from soil_source(site_name): a fixed CAMPBELL_NORMAN_TEXTURES
-# texture, or a live SLGA fetch (:slga, _slga_soil_profile in mapper.jl,
-# needs MicroclimateMapper).
+# Soil profile from soil_source(site_name): SLGA at the site's cell (:slga, _slga_soil_profile
+# in mapper.jl), measured horizons (:horizons), peat (:peat, tables/peat.toml), or a fixed
+# CAMPBELL_NORMAN_TEXTURES texture. :slga_uniform is the SLGA profile collapsed to one
+# depth-weighted-mean slab (flatten_soil_profile, utils.jl), so micropoint can run the same
+# flat numbers.
 #
-# soil_source can also be :slga_uniform -- the real per-depth SLGA profile
-# (with the same BulkDensity correction as :slga), collapsed to
-# one depth-weighted-mean slab via flatten_soil_profile (utils.jl). Real
-# per-depth SLGA data previously made micropoint's RunModelFull hang
-# indefinitely (see micropoint/ozflux/README), and even flattening it
-# per-model let the two models silently average it differently --
-# :slga_uniform lets both Microclimate.jl and micropoint run on the exact
-# same flat numbers for a like-for-like comparison, while plain
-# :slga (full depth resolution) stays available for Microclimate.jl-only runs.
-#
-# Cached per (site_name, depths, source) -- prepare_site/prepare_site_silo
-# both fetch the same site's same depth grid, no need to hit SLGA twice; the
-# source is part of the key since :slga and :slga_uniform must not share a
-# cached result for the same (site_name, depths).
+# Cached per (site_name, depths, source): prepare_site/prepare_site_silo fetch the same site's
+# same depth grid.
 const _SOIL_CACHE = Dict{Tuple{String,Vector{Float64},Symbol},Any}()
 
-function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attrib)
+function _fetch_soil_profile(site_name, latitude, longitude, depths)
     source = soil_source(site_name)
     cache_key = (site_name, ustrip.(u"m", depths), source)
     haskey(_SOIL_CACHE, cache_key) && return _SOIL_CACHE[cache_key]
     soil_profile = if source === :slga || source === :slga_uniform
-        _slga_soil_profile(latitude, longitude, depths, global_attrib)  # mapper.jl (needs MicroclimateMapper)
+        _slga_soil_profile(latitude, longitude, depths)
     elseif source === :horizons
         soil_profile_from_horizons(soil_horizons(site_name), depths, pedotransfer_model_choice)
+    elseif source === :peat
+        soil_profile_from_peat(PEAT, depths)
     else
         soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[source], depths)
     end
@@ -303,7 +295,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
     )
 
     depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
-    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
+    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths)
 
     heights = _build_heights(canopy_height, reference_height)
 

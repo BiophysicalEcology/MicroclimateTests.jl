@@ -1,12 +1,5 @@
-# mapper.jl — everything that needs MicroclimateMapper: SILO gridded forcing
-# (run_site_silo) and live SLGA soil
-# (soil_source :slga/:slga_uniform). Include after config.jl/utils.jl/
-# pipeline.jl, with MicroclimateMapper, Rasters, RasterDataSources,
-# PointDataSources, GeoInterface and Serialization loaded. The tower-forced
-# run_site path doesn't need it.
-#
-
-ENV["RASTERDATASOURCES_PATH"] = get(ENV, "RASTERDATASOURCES_PATH", joinpath(homedir(), "Spatial_Data"))
+# mapper.jl — everything that needs MicroclimateMapper: SILO gridded forcing (run_site_silo)
+# and SLGA soil (soil_source :slga/:slga_uniform). ozflux.jl includes it last.
 
 # ── SILO weather source (secondary comparison) ──────────────────────────────
 weather_source_choice = SILO
@@ -19,41 +12,10 @@ reuse_weather     = true
 cache_weather     = true
 weather_cache_dir = joinpath(@__DIR__, "weather_cache")
 
-# ── Soil texture (live SLGA fetch + pedotransfer, like oznet) ───────────────
-# SLGA has no point-query API -- a uniform profile is derived from a small
-# bounding box around each site's coordinates (same approach as oznet).
-# MicroclimateMapper still carries its own pedotransfer types until it uses Microclimate.jl's
-slga_pedotransfer_model_choice = MicroclimateMapper.CosbyMultivariate()
-soil_area_buffer_deg = 0.05
-
-# Live SLGA fetch + pedotransfer (same as oznet/pipeline.jl) for
-# _fetch_soil_profile (pipeline.jl). Rescales to the site's own metadata
-# BulkDensity attribute when present -- SLGA vs a real point measurement, not
-# a substitute for it (SLGA is a 90 m grid mean).
-function _slga_soil_profile(latitude, longitude, depths, global_attrib)
-    b = soil_area_buffer_deg
-    lon_dd, lat_dd = ustrip(u"°", longitude), ustrip(u"°", latitude)
-    area = Extent(X = (lon_dd - b, lon_dd + b), Y = (lat_dd - b, lat_dd + b))
-    soil_profile = build_soil_profile(SLGA, area; depths, pedotransfer_model = slga_pedotransfer_model_choice).soil_profile
-    if haskey(global_attrib, "BulkDensity")
-        # Metadata value is a real point measurement (assumed near-surface) vs
-        # SLGA's 90 m-grid mean -- rescale the whole profile by their ratio at
-        # the surface node rather than overwrite it outright, preserving
-        # SLGA's own depth trend. Doesn't touch the hydraulic parameters
-        # already derived from the pre-scaled bulk density via pedotransfer
-        # (texture, not bulk density, dominates those) -- bulk density itself
-        # (thermal capacity/conductivity) is the only thing this corrects.
-        meta_bd = parse(Float64, string(global_attrib["BulkDensity"])) * u"kg/m^3"
-        if meta_bd > 500.0u"kg/m^3" # at least one site has erroneous value
-            slga_bd = soil_profile.bulk_density[5]
-            scale = meta_bd / slga_bd
-            @printf("  BulkDensity: metadata=%.0f kg/m^3  SLGA(surface)=%.0f kg/m^3  (scaling profile by %.2fx)\n",
-                ustrip(u"kg/m^3", meta_bd), ustrip(u"kg/m^3", slga_bd), scale)
-            soil_profile.bulk_density .*= scale
-        end
-    end
-    return soil_profile
-end
+# ── SLGA soil at the site's cell, for _fetch_soil_profile (pipeline.jl) ─────
+_slga_soil_profile(latitude, longitude, depths) =
+    build_soil_profile(SLGA, (ustrip(u"°", longitude), ustrip(u"°", latitude));
+        depths, pedotransfer_model = pedotransfer_model_choice).soil_profile
 
 # ── SILO gridded-forcing fetch (secondary comparison) ───────────────────────
 # A single-point MicroVectorProblem on the site's own model: MicroclimateMapper builds the
@@ -119,7 +81,7 @@ function prepare_site_silo(site_name, years; max_days=nothing, litter_model=site
         latitude, longitude, resolved.elevation, slope = 0.0u"°", aspect = 0.0u"°",
         horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
     )
-    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
+    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths)
     canopy = canopy_model(site_name, resolved, heights)
     model = micro_model(site_name, site, soil_profile, depths, heights, canopy, DailyRainfall(); litter_model)  # SILO rainfall is a daily total
 

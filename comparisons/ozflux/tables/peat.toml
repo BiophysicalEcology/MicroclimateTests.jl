@@ -1,0 +1,31 @@
+# Peat, for sites whose file names a peat or an Organosol (sites.jl's soil_source), which
+# SLGA's 90 m grid misses. Organosols are soils of organic materials, suborders fibric, hemic
+# and sapric (Isbell & NCST 2021, The Australian Soil Classification, 3rd ed., CSIRO).
+#
+# Hydraulics: Letts, Roulet, Comer, Skarupa & Verseghy (2000), Parametrization of peatland
+# hydraulic properties for the Canadian Land Surface Scheme, Atmosphere-Ocean 38(1):141-160,
+# doi:10.1080/07055900.2000.9649643, as reproduced in Wu, Verseghy & Melton (2016),
+# GMD 9:2639-2663, Table 1, doi:10.5194/gmd-9-2639-2016, and in CLASSIC's
+# configurationFiles/model_parameters.json (THPORG, BORG, PSISORG, GRKSORG). Air entry is the
+# published saturated matric head, Ksat the published hydraulic conductivity.
+#
+# Organic solids: density, thermal conductivity and specific heat of Campbell & Norman (1998),
+# An Introduction to Environmental Biophysics, Table 8.2 (as reproduced in METER Group's
+# "Thermal properties" application note, Table 1), the same as CLASSIC's RHOOM, TCOM, HCPOM.
+# de Vries shape factor 0.33 for organic soils (Campbell & Norman 1998, ch. 8).
+#
+# Layering: fibric over hemic over sapric, as CLASSIC (src/base/soilProperties.f90) and Wu et
+# al. (2016) order them; Letts et al. parameterise the top 0.5 m. bottom is each class's
+# lowest depth, sapric below the last.
+
+bottom = ["10 cm", "50 cm"]
+class = ["fibric", "hemic", "sapric"]
+porosity = [0.93, 0.88, 0.83]
+campbell_b = [2.7, 6.1, 12.0]
+air_entry_head = ["0.0103 m", "0.0102 m", "0.0101 m"]
+saturated_conductivity = ["2.8e-4 m/s", "2.0e-6 m/s", "1.0e-7 m/s"]
+
+solid_density = "1.30 Mg/m^3"
+solid_conductivity = "0.25 W/m/K"
+solid_heat_capacity = "1920.0 J/kg/K"
+de_vries_shape_factor = 0.33

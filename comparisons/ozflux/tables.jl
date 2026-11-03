@@ -28,6 +28,7 @@ const OZFLUX_INSTRUMENT_CODES = Dict(code => table_value(instrument) for (code, 
 # ── Soil textures ─────────────────────────────────────────────────────────────
 const CAMPBELL_NORMAN_TEXTURES = Dict(Symbol(name) => table_value(texture) for (name, texture) in read_table("soil_textures"))
 const CAMPBELL_NORMAN_MICROPOINT_NAME = Dict(name => texture.micropoint_name for (name, texture) in CAMPBELL_NORMAN_TEXTURES)
+const PEAT = table_value(read_table("peat"))
 
 # ── Site settings ─────────────────────────────────────────────────────────────
 const SITE_SETTINGS = read_table("sites")

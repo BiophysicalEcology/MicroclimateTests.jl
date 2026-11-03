@@ -33,24 +33,16 @@ function discover_height_series(site_name)
     end
 end
 
-# Campbell & Norman texture class named first in a site's `soil` description ("red kandosol,
-# sandy loam" → :sandy_loam), the longest name at the same place; the site's
-# unnamed_soil_texture setting, with a warning, when it names none
-function file_soil_texture(site_name)
-    text = lowercase(string(get(site_attributes(site_name), "soil", "")))
-    found = [(first(r), -length(name), texture) for texture in keys(CAMPBELL_NORMAN_TEXTURES)
-             for name in (replace(string(texture), "_" => " "),) for r in (findfirst(name, text),) if r !== nothing]
-    isempty(found) || return last(minimum(found))
-    fallback = Symbol(site_setting(site_name, "unnamed_soil_texture"))
-    @warn "$site_name soil \"$text\" names no texture class; using $fallback"
-    return fallback
-end
+# Whether a site's `soil` description names a peat: "peat", or the Australian Soil
+# Classification's Organosol order
+file_names_peat(site_name) = occursin(r"\b(peat|organosol)"i, string(get(site_attributes(site_name), "soil", "")))
 
-# Where a site's soil comes from: its soil_source setting (:horizons), else the texture class
-# its file names
+# Where a site's soil comes from: its soil_source setting (:horizons), else :peat where its
+# file names a peat, which SLGA's 90 m grid misses, else :slga
 function soil_source(site_name)
     source = site_setting(site_name, "soil_source")
-    return source === nothing ? file_soil_texture(site_name) : Symbol(source)
+    source === nothing || return Symbol(source)
+    return file_names_peat(site_name) ? :peat : :slga
 end
 
 # Minutes the site's local standard time is ahead of UTC, from its file's time_zone

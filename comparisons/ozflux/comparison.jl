@@ -4,14 +4,18 @@
 # data/, over each site's best-covered year or, where shorter, its whole record
 # (sites.jl's run_years). Writes per-site stats (report.jl) to all_stats.csv and prints a cross-site summary. All model
 # setup and per-site logic lives in pipeline.jl/sites.jl/report.jl (shared
-# with single_site.jl) and config.jl. SILO forcing runs need mapper.jl (single_site.jl).
+# with single_site.jl) and config.jl. SILO forcing runs are single_site.jl.
 #
 # Usage:
 #   julia comparison.jl              ← every site in data/
 #   include("comparison.jl")         ← from a Julia REPL
 
-using Microclimate, Unitful, FluidProperties, OrdinaryDiffEqSDIRK
-using CSV, DataFrames, Dates, Statistics, Printf, Plots, NCDatasets
+using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation, OrdinaryDiffEqSDIRK
+using CSV, DataFrames, Dates, Statistics, Printf, Plots
+using Rasters, ArchGDAL, NCDatasets, RasterDataSources, PointDataSources
+using Rasters.Extents: Extent
+using GeoInterface: Wrappers as GIW
+using Serialization
 
 include("ozflux.jl")
 
