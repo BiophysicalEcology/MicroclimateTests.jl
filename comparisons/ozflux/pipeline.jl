@@ -293,14 +293,13 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
         rainfall = daily_rainfall,
         deep_soil_temperature = fill(mean_air_temperature, ndays),  # no borehole climatology available; site-year mean air temp as a stand-in
         leaf_area_index = fill(leaf_area_index, ndays),  # only read by NoCanopy's ET partitioning; MultilayerCanopy uses its own plant_area_index
+        albedo = fill(site_albedo(site_name), ndays),
+        roughness_height = fill(site_setting(site_name, is_woody(site_name) ? "woody_ground_roughness_height" : "pasture_roughness_height"), ndays),
     )
 
-    roughness_height = site_setting(site_name, is_woody(site_name) ? "woody_ground_roughness_height" : "pasture_roughness_height")
     site = Site(;
         latitude, longitude, resolved.elevation, slope = 0.0u"°", aspect = 0.0u"°",
         horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height,
-        atmospheric_pressure = mean(pressure),
     )
 
     depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
