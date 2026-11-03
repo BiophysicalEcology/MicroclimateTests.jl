@@ -28,8 +28,8 @@ per site-year (`run_site_silo`) as its own comparison against the tower obs.
   these paths don't run against the current Microclimate until it's ported.
 - `report.jl` — stats + plots for every comparison target
   (`report_site_results`).
-- `comparison.jl` — entry point: every site's best year, with and without
-  litter at woody sites, writes stats/plots, prints a cross-site summary.
+- `comparison.jl` — entry point: every site's best year (or whole record
+  where shorter), writes stats/plots, prints a cross-site summary.
 - `single_site.jl` — entry point: one site-year, no try/catch, for stepping
   through in the debugger.
 

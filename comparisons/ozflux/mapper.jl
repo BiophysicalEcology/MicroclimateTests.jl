@@ -139,8 +139,7 @@ function prepare_site_silo(site_name, years; max_days=nothing)
     # so fetch_silo_forcing can power-law-correct SILO's 10m wind to the SAME
     # reference height (last(heights)) the real model will assume it's at --
     # otherwise the fetch's own throwaway model silently defaults to 2m.
-    extra_heights_m = [h for (h, _) in height_series]
-    heights = _build_heights(canopy_height, reference_height, extra_heights_m)
+    heights = _build_heights(canopy_height, reference_height)
 
     fetched = fetch_silo_forcing(site_name, latitude, longitude, sim_start, sim_end, depths, last(heights))
 

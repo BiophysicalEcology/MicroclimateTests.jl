@@ -20,10 +20,6 @@ end
 _scale_obs(obs_vec::Nothing, scale) = nothing
 _scale_obs(obs_vec, scale) = scale == 1.0 ? obs_vec : [ismissing(v) ? v : v * scale for v in obs_vec]
 
-function _height_index(heights, h_m; atol=0.05)
-    findfirst(x -> abs(ustrip(u"m", x) - h_m) <= atol, heights)
-end
-
 # RH (0-1) + air temperature -> absolute humidity (g/m^3) -- inverse of
 # pipeline.jl's _rh_from_ah. Absolute humidity isolates moisture transport
 # from the temperature profile's own shape (unlike RH = e/e_sat(T), which
@@ -46,15 +42,10 @@ function _with_absolute_humidity(output)
     return merge(_as_namedtuple(output), (; canopy = add_ah(output.canopy), profile = add_ah(output.profile)))
 end
 
-# Above-canopy heights use the canopy-blind MOST profile (output.profile.*)
-# and match exactly (that grid does include the exact tower/sensor heights,
-# see _build_heights). Below-canopy heights use the canopy-resolved output
-# (output.canopy.*) but the physics grid there is deliberately kept uniform
-# (not sensor-height-injected, see _build_heights), so this interpolates
-# linearly between the two nearest canopy layers bracketing h_m instead of
-# requiring an exact match. NoCanopy (grass, crop, pasture) has no
-# below-canopy resolution at all (output.canopy.* is zero-column) -- that's
-# the whole point of comparing it.
+# Scored heights are inside the canopy (resolve_site), so this reads the
+# canopy-resolved output (output.canopy.*), interpolating linearly between
+# the two canopy layers bracketing h_m. NoCanopy (grass, crop, pasture) has
+# no canopy-resolved output (output.canopy.* is zero-column).
 #
 # output.canopy's columns are top-to-bottom (canopy_layer_heights sorts
 # descending, matching leaf_temperature's canopy-top-is-index-1 convention),
@@ -64,11 +55,6 @@ end
 _canopy_col(j, n_canopy) = n_canopy - j + 1
 
 function _profile_series(output, heights, canopy_height, h_m, field, canopy)
-    if h_m * u"m" > canopy_height
-        k = _height_index(heights, h_m)
-        k === nothing && return nothing
-        return getproperty(output.profile, field)[:, k]
-    end
     canopy isa NoCanopy && return nothing
     below_idx = findall(h -> h <= canopy_height, heights)
     isempty(below_idx) && return nothing

@@ -57,22 +57,25 @@ end
 site_utc_offset(site_name) =
     Minute(OZFLUX_CONVENTIONS["time_zone_utc_offset_minutes"][site_attributes(site_name)["time_zone"]])
 
-# Calendar year with the most half-hours of good tower forcing and soil temperature (the latest
-# on ties), among those the record spans whole and from FIRST_MODIS_YEAR, so MODIS gives its
-# leaf area index
-function best_year(site_name)
+# Calendar years a site runs over, from FIRST_MODIS_YEAR so MODIS gives its leaf area index:
+# the whole year with the most half-hours of good tower forcing and soil temperature (the
+# latest on ties), else every year the record touches, for records shorter than any whole year.
+# Times label each half-hour's end, so a year's last record is 00:00 on 1 January.
+function run_years(site_name)
     NCDataset(ozflux_site_path(OZFLUX_DATA_DIR, site_name)) do ds
         times = ds["time"][:]
-        years = Dates.year.(times)
+        years = Dates.year.(times .- Minute(30))
         good = trues(length(years))
         for name in BEST_YEAR_VARIABLES
             good .&= haskey(ds, name * "_QCFlag") ? in.(ds[name * "_QCFlag"][:], Ref(OZFLUX_GOOD_QC_FLAGS)) : false
         end
         whole(y) = first(times) <= DateTime(y, 1, 1, 0, 30) && last(times) >= DateTime(y + 1, 1, 1)
-        candidates = filter(y -> y >= FIRST_MODIS_YEAR && whole(y), unique(years))
-        isempty(candidates) && error("$site_name has no whole year from $FIRST_MODIS_YEAR")
+        recorded = filter(>=(FIRST_MODIS_YEAR), unique(years))
+        isempty(recorded) && error("$site_name has no record from $FIRST_MODIS_YEAR")
+        candidates = filter(whole, recorded)
+        isempty(candidates) && return recorded
         counts = [count(good[years .== y]) for y in candidates]
-        candidates[findlast(==(maximum(counts)), counts)]
+        [candidates[findlast(==(maximum(counts)), counts)]]
     end
 end
 
