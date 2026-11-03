@@ -1,0 +1,108 @@
+# Site settings. Every site takes [defaults], with any key its own [sites.<Site>] table sets
+# replacing the default (key by key within a sub-table). Dimensional values are written
+# "<number> <unit>".
+
+[defaults]
+# Ground (soil, or litter at woody sites) shortwave albedo
+albedo = 0.20
+# Guessed, no empirical data
+leaf_reflectance = 0.25
+leaf_transmittance = 0.25
+# Vertical shape of the plant area index profile (utils.jl's PAI_SHAPES):
+#   top_heavy    dense near the canopy top, sparse near the ground (closed rainforest crown)
+#   bottom_heavy sparse emergent crowns over a dense midstorey and understorey
+#   mid_crown    a distinct crown layer, open above and below
+#   uniform      flat density
+pai_shape = "uniform"
+# Soil (root) water potential at which stomata close; no site-specific literature values yet
+stomatal_closure_potential = "-1500 J/kg"
+# Soil texture when the file's `soil` attribute names no Campbell & Norman class
+unnamed_soil_texture = "loam"
+# Canopy and litter only at woody sites, at least this tall: every grass, crop and pasture site
+# is under 1.2 m, every woody one 3 m or more
+woody_canopy_height = "2 m"
+# Roughness height of grazed grass, crop and pasture, not 0.13× the files' nominal sward heights
+pasture_roughness_height = "0.02 m"
+# Roughness height of the ground under a woody canopy, whose own roughness the canopy air
+# profile carries
+woody_ground_roughness_height = "0.004 m"
+# Optional per-site keys, absent by default:
+#   measured_leaf_area_index  replaces MODIS's
+#   soil_source               "horizons" (soil_horizons below) instead of the file's texture
+#   soil_horizons             measured horizons: bottom depths, bulk density, clay/silt/sand %
+#   forcing_backups           variables summed to stand in for a chosen forcing sensor when it
+#                             is missing, calibrated by a linear fit where both report
+
+# Leaf structural and physiological traits (Microclimate.jl's LeafParameters); leaf length and
+# width set boundary-layer convection, canopy_projection_ratio is Campbell's ellipsoidal x
+# (1 spherical, 0 vertical, Inf horizontal). LeafParameters' own defaults; none site-specific yet.
+[defaults.leaf]
+leaf_length = "0.05 m"
+leaf_width = "0.02 m"
+leaf_emissivity = 0.97
+leaf_water_potential = "0 J/kg"
+canopy_projection_ratio = 1.0
+
+# Litter at woody sites: mostly pale eucalypt leaf litter over bare patches. Victorian dry
+# sclerophyll litter loads are 15-20 t/ha, and 63.5 kg/m³ bulk density (Matthews 2006) gives its
+# thickness. No measured eucalypt litter albedo is in hand.
+[defaults.woody_litter]
+dry_mass = "1.5 kg/m^2"
+thickness = "2.4 cm"
+cover_fraction = 0.7
+albedo = 0.35
+
+[sites.AliceSpringsMulga]
+pai_shape = "top_heavy"
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m" }
+
+# Pale sandy mallee soil, sparse cover
+[sites.CalperumChowilla]
+albedo = 0.35
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m", canopy_projection_ratio = 0.0 }
+
+# Closed tropical rainforest canopy
+[sites.CapeTribulation]
+pai_shape = "top_heavy"
+
+[sites.LongreachMitchellGrassRangeland]
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m", canopy_projection_ratio = 0.0 }
+
+# Sparse mulga/spinifex woodland, simple shrub and small-tree structure
+[sites.TiTreeEast]
+pai_shape = "top_heavy"
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m" }
+
+# Mountain ash: sparse emergent crowns over a dense midstorey and understorey
+[sites.WallabyCreek]
+pai_shape = "bottom_heavy"
+
+# Box-ironbark crowns over very little understorey
+[sites.Whroo]
+pai_shape = "top_heavy"
+# 7.5YR 5/3 topsoil under its litter (Post et al. 2000's Munsell value relation)
+albedo = 0.23
+# TERN hemispheric photography, core 1-ha plot: 0.79 (Dec 2015) to 1.23 (Jun 2016)
+measured_leaf_area_index = 0.8
+soil_source = "horizons"
+
+# TERN SuperSite soil pit 4 m from the tower, 25 March 2015 (Drake 2015, "Whroo Flux Tower Soil
+# Profile Assessment", Table 3): a sodic clay (Sodosol), silty clay loam topsoil over dense
+# clay, bedrock at 160 cm. Texture is the USDA split: clay <2 µm, silt 2-50 µm, sand >50 µm, %.
+[sites.Whroo.soil_horizons]
+bottom = ["7 cm", "38 cm", "58 cm", "112 cm", "160 cm"]
+bulk_density = ["1.2 Mg/m^3", "1.5 Mg/m^3", "1.8 Mg/m^3", "1.9 Mg/m^3", "1.9 Mg/m^3"]
+clay = [18.7, 42.5, 41.7, 46.2, 42.1]
+silt = [45.0, 34.2, 34.8, 34.8, 34.7]
+sand = [36.3, 23.2, 23.5, 19.0, 23.2]
+
+# The 32 m probe for 36 m air temperature and humidity (one logger outage takes out the 36 m
+# sensors and the CNR4), the SPN1's direct + diffuse for the CNR4's downwelling shortwave
+[sites.Whroo.forcing_backups]
+air_temperature = ["Ta_HMP_32m"]
+humidity = ["AH_HMP_32m"]
+downwelling_shortwave = ["Fsd_Direct", "Fsd_Diffuse"]

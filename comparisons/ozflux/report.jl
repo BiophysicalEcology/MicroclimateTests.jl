@@ -52,7 +52,7 @@ end
 # (output.canopy.*) but the physics grid there is deliberately kept uniform
 # (not sensor-height-injected, see _build_heights), so this interpolates
 # linearly between the two nearest canopy layers bracketing h_m instead of
-# requiring an exact match. NoCanopy (canopy_mode=:legacy) has no
+# requiring an exact match. NoCanopy (grass, crop, pasture) has no
 # below-canopy resolution at all (output.canopy.* is zero-column) -- that's
 # the whole point of comparing it.
 #
@@ -63,13 +63,13 @@ end
 # (reversed) output.canopy column.
 _canopy_col(j, n_canopy) = n_canopy - j + 1
 
-function _profile_series(output, heights, canopy_height, h_m, field, canopy_mode)
+function _profile_series(output, heights, canopy_height, h_m, field, canopy)
     if h_m * u"m" > canopy_height
         k = _height_index(heights, h_m)
         k === nothing && return nothing
         return getproperty(output.profile, field)[:, k]
     end
-    canopy_mode == :legacy && return nothing
+    canopy isa NoCanopy && return nothing
     below_idx = findall(h -> h <= canopy_height, heights)
     isempty(below_idx) && return nothing
     n_canopy = length(below_idx)
@@ -92,15 +92,15 @@ _height_field(name) = startswith(name, "Ta") ? :air_temperature :
 
 # Model value at every height, for one hour (`i` into t_model) -- the
 # vertical counterpart of _profile_series (which slices one height across
-# every hour). `missing` for below-canopy heights under canopy_mode=:legacy
+# every hour). `missing` for below-canopy heights under NoCanopy
 # (no canopy-resolved output there, same guard as _profile_series). See
 # _canopy_col for why below-canopy heights need a reversed column index.
-function _vertical_profile(output, heights, canopy_height, i, field, canopy_mode, convert)
+function _vertical_profile(output, heights, canopy_height, i, field, canopy, convert)
     n_canopy = count(h -> h <= canopy_height, heights)
     vals = Vector{Union{Float64,Missing}}(missing, length(heights))
     for k in eachindex(heights)
         below_canopy = heights[k] <= canopy_height
-        below_canopy && canopy_mode == :legacy && continue
+        below_canopy && canopy isa NoCanopy && continue
         if below_canopy
             vals[k] = convert(getproperty(output.canopy, field)[i, _canopy_col(k, n_canopy)])
         else
@@ -113,10 +113,11 @@ end
 # One vertical profile (value vs height) at a single hour: the model's full
 # height-grid profile (canopy-resolved below canopy_height, free-atmosphere
 # MOST above -- see _profile_series) as a line, tower obs at each configured
-# sensor height (SITE_HEIGHT_SERIES) as points. The sharpest available test
+# sensor height (discover_height_series) as points. The sharpest available test
 # of whether the *shape* of the profile is right, not just an aggregate flux.
 function _profile_panel(prep, output, dt; field, units, convert, xlims=:auto)
-    (; heights, resolved, hourly, height_series, canopy_mode, t_model, depths) = prep
+    (; heights, resolved, hourly, height_series, t_model, depths) = prep
+    canopy = prep.problem.model.canopy
     canopy_height = resolved.canopy_height
     title = Dates.format(dt, "yyyy-mm-dd HH:MM")
     i = findfirst(==(dt), t_model)
@@ -125,7 +126,7 @@ function _profile_panel(prep, output, dt; field, units, convert, xlims=:auto)
         return plot(; title="$title\noutside solved range\n($range_str)", titlefontsize=7, framestyle=:none)
     end
 
-    model_vals = _vertical_profile(output, heights, canopy_height, i, field, canopy_mode, convert)
+    model_vals = _vertical_profile(output, heights, canopy_height, i, field, canopy, convert)
     heights_m = ustrip.(u"m", heights)
     order = sortperm(heights_m)
     keep = [k for k in order if !ismissing(model_vals[k])]
@@ -159,13 +160,14 @@ end
 # (model line + any obs scatter) -- panels default to independent auto-ranges
 # otherwise, making the shape across hours hard to compare by eye.
 function _shared_profile_xlims(prep, output, profile_times; field, convert)
-    (; heights, resolved, hourly, height_series, canopy_mode, t_model, depths) = prep
+    (; heights, resolved, hourly, height_series, t_model, depths) = prep
+    canopy = prep.problem.model.canopy
     canopy_height = resolved.canopy_height
     vals = Float64[]
     for dt in profile_times
         i = findfirst(==(dt), t_model)
         i === nothing && continue
-        append!(vals, Iterators.filter(isfinite, skipmissing(_vertical_profile(output, heights, canopy_height, i, field, canopy_mode, convert))))
+        append!(vals, Iterators.filter(isfinite, skipmissing(_vertical_profile(output, heights, canopy_height, i, field, canopy, convert))))
         if field == :air_temperature
             v = convert(output.soil_temperature[i, argmin(ustrip.(u"m", depths))])
             isfinite(v) && push!(vals, v)
@@ -213,7 +215,8 @@ end
 # across sites even when extra depth nodes are added for a deep observed
 # sensor.
 function _soil_profile_panel(prep, output, dt; xlims=:auto)
-    (; hourly, t_model, depths, heights, resolved, canopy_mode, height_series) = prep
+    (; hourly, t_model, depths, heights, resolved, height_series) = prep
+    canopy = prep.problem.model.canopy
     canopy_height = resolved.canopy_height
     title = Dates.format(dt, "yyyy-mm-dd HH:MM")
     i = findfirst(==(dt), t_model)
@@ -237,7 +240,7 @@ function _soil_profile_panel(prep, output, dt; xlims=:auto)
         end
     end
 
-    _plot_near_ground_air!(p, output, heights, canopy_height, i, canopy_mode, :black)
+    _plot_near_ground_air!(p, output, heights, canopy_height, i, canopy, :black)
     row !== nothing && _scatter_near_ground_obs!(p, hourly, row, height_series)
     return p
 end
@@ -255,8 +258,8 @@ function _near_ground_indices(z_m, top_m)
     keep = findall(<=(top_m), z_m)
     return isempty(keep) ? [argmin(z_m)] : keep
 end
-function _plot_near_ground_air!(p, output, heights, canopy_height, i, canopy_mode, color)
-    air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, canopy_mode, t -> ustrip(u"°C", t))
+function _plot_near_ground_air!(p, output, heights, canopy_height, i, canopy, color)
+    air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, canopy, t -> ustrip(u"°C", t))
     heights_m = ustrip.(u"m", heights)
     valid = [k for k in eachindex(heights_m) if !ismissing(air_vals[k])]
     isempty(valid) && return nothing
@@ -282,14 +285,15 @@ end
 # Shared x-axis range for a plot_soil_profiles grid, mirroring
 # _shared_profile_xlims.
 function _shared_soil_profile_xlims(prep, output, profile_times)
-    (; hourly, t_model, heights, resolved, canopy_mode, height_series) = prep
+    (; hourly, t_model, heights, resolved, height_series) = prep
+    canopy = prep.problem.model.canopy
     canopy_height = resolved.canopy_height
     vals = Float64[]
     for dt in profile_times
         i = findfirst(==(dt), t_model)
         i === nothing && continue
         append!(vals, Iterators.filter(isfinite, ustrip.(u"°C", output.soil_temperature[i, :])))
-        air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, canopy_mode, t -> ustrip(u"°C", t))
+        air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, canopy, t -> ustrip(u"°C", t))
         heights_m = ustrip.(u"m", heights)
         for k in eachindex(heights_m)
             (heights_m[k] <= NEAR_GROUND_TOP_M && !ismissing(air_vals[k]) && isfinite(air_vals[k])) && push!(vals, air_vals[k])
@@ -330,7 +334,7 @@ end
 
 # Per-layer plant area index vs height -- the canopy structure the solve
 # actually used, not time-varying (unlike the other profile plots), so a
-# single panel rather than a profile_times grid. :legacy (NoCanopy) has no
+# single panel rather than a profile_times grid. NoCanopy has no
 # per-layer PAI -- skipped.
 function plot_plant_area_index(prep; save_dir=nothing, tag="", display_plots=false)
     canopy = prep.problem.model.canopy
@@ -352,8 +356,8 @@ end
 
 # Ta + Ws + RH profile grids for every hour in `profile_times` -- call this
 # directly from single_site.jl. Most meaningful at sites with real sub-canopy
-# sensors (Whroo, Wallaby); harmless (just model-only panels, no obs points)
-# at sites without SITE_HEIGHT_SERIES entries -- true for every site for RH
+# sensors (Whroo, WallabyCreek); harmless (just model-only panels, no obs points)
+# at sites without profile sensors -- true for every site for RH
 # specifically, since no site has a height-resolved RH/AH series wired into
 # _height_field (AH->RH conversion not implemented, see README), so the RH
 # panels are always model-only.
@@ -376,11 +380,11 @@ end
 # direct diagnostic for how far leaves run from air, independent of any tower
 # obs. Useful when tuning canopy_convergence_model_choice:
 # a converged equilibrium that's still far from air temperature is a real
-# physics/parameter issue, not a convergence one. NoCanopy (canopy_mode=
-# :legacy) has no leaf temperature at all -- skipped there.
-function _plot_leaf_vs_air(heights, canopy_height, canopy_mode, t_model, output;
+# physics/parameter issue, not a convergence one. NoCanopy has no leaf
+# temperature at all -- skipped there.
+function _plot_leaf_vs_air(heights, canopy_height, canopy, t_model, output;
                             plot_start=nothing, plot_end=nothing, save_dir=nothing, tag="", display_plots=false)
-    canopy_mode == :legacy && return nothing
+    canopy isa NoCanopy && return nothing
     count(h -> h <= canopy_height, heights) == 0 && return nothing
     # output.canopy's columns are top-to-bottom -- column 1 is canopy top.
     leaf_c = ustrip.(u"°C", u"°C".(output.canopy.leaf_temperature[:, 1]))
@@ -433,7 +437,8 @@ end
 function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
                               make_plots=save_outputs, display_plots=false, source="tower", plot_forcing=true,
                               plot_variable=nothing)
-    (; site_name, years, hourly, t_model, heights, depths, height_series, resolved, canopy_mode) = prep
+    (; site_name, years, hourly, t_model, heights, depths, height_series, resolved) = prep
+    canopy = prep.problem.model.canopy
     canopy_height = resolved.canopy_height
     tag = "$(site_name)_$(join(years, '-'))_$(source)"
     site_dir(sub) = joinpath(outputs_dir, sub)
@@ -497,12 +502,12 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         ylims)
 
     # ── Forcing sanity: what actually drove the model, real-obs hours in black,
-    # gap-filled hours (donor- or interpolation-filled) in orange -- confirms
+    # interpolated hours in orange -- confirms
     # both the read/aggregation pipeline and how much of the record is filled.
     # forcing_used/filled_mask are absent from a SILO-forced prep (tower
     # forcing isn't used there at all) -- falls back to what SILO's own model
     # actually consumed (output.reference_*/global_radiation, Fld backed out
-    # of sky_temperature same as silo_gapfill_donor, environment_daily's
+    # of sky_temperature, environment_daily's
     # daily rainfall total) instead of the tower's raw columns, which a SILO
     # run never reads.
     forcing_used = get(prep, :forcing_used, nothing)
@@ -550,46 +555,42 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         end
     end
 
-    # ── Fsu, Flu, Fn: canopy-top boundary (column 1 = canopy top -> ground).
-    # NoCanopy (canopy_mode=:legacy) has zero boundary columns -- no two-stream
-    # radiative transfer to compare, skip. ───────────────────────────────────
-    if canopy_mode != :legacy
-        fsu = ustrip.(u"W/m^2", output.canopy.boundary_upward_shortwave[:, 1])
-        flu = ustrip.(u"W/m^2", output.canopy.boundary_upward_longwave[:, 1])
-        fn = ustrip.(u"W/m^2",
-            output.canopy.boundary_downward_shortwave[:, 1] .- output.canopy.boundary_upward_shortwave[:, 1] .+
-            output.canopy.boundary_downward_longwave[:, 1] .- output.canopy.boundary_upward_longwave[:, 1])
-        _panel_grids!("radiation", [
-            (label, model_vec, _col(hourly, t_model, obscol), "W/m^2", obscol, obscol)
-            for (label, model_vec, obscol) in
-                (("Upward shortwave (Fsu)", fsu, "Fsu"), ("Upward longwave (Flu)", flu, "Flu"), ("Net radiation (Fn)", fn, "Fn"))
-        ])
-    end
+    # ── Fsu, Flu, Fn at the top of the surface (canopy top, or the ground without one); the
+    # downward longwave is the sky's, σ T_sky⁴ ──────────────────────────────────────────────
+    fsu = ustrip.(u"W/m^2", output.upward_shortwave)
+    flu = ustrip.(u"W/m^2", output.upward_longwave)
+    fn = ustrip.(u"W/m^2", output.global_radiation .- output.upward_shortwave .+
+        Microclimate.σ .* output.sky_temperature .^ 4 .- output.upward_longwave)
+    _panel_grids!("radiation", [
+        (label, model_vec, _col(hourly, t_model, obscol), "W/m^2", obscol, obscol)
+        for (label, model_vec, obscol) in
+            (("Upward shortwave (Fsu)", fsu, "Fsu"), ("Upward longwave (Flu)", flu, "Flu"), ("Net radiation (Fn)", fn, "Fn"))
+    ])
 
-    make_plots && _plot_leaf_vs_air(heights, canopy_height, canopy_mode, t_model, output; plot_start, plot_end,
+    make_plots && _plot_leaf_vs_air(heights, canopy_height, canopy, t_model, output; plot_start, plot_end,
         save_dir=(save_outputs ? site_dir("leaf_temperature") : nothing), tag, display_plots)
 
     # ── Fh, Fe, Fg. Sign convention (leaf sensible/latent surface->atmosphere
     # positive, Fg downward positive) confirmed against the tower convention
-    # directly -- no negation needed. :legacy has one bare surface, so
+    # directly -- no negation needed. NoCanopy has one bare surface, so
     # profile.convective_heat_flux (atmosphere->surface positive, hence the
     # sign flip) is its Fh. MultilayerCanopy doesn't model an
     # exposed/gap ground fraction -- the whole ground surface exchanges with
     # the atmosphere *through* the canopy air column (ground_heat_conductance,
     # already reflected in canopy_sensible_heat_flux and the soil solve), not
     # via a separate direct pathway. profile.convective_heat_flux for this
-    # canopy_mode is profile_surface_temperature's top-leaf-temperature MOST
+    # canopy is profile_surface_temperature's top-leaf-temperature MOST
     # profile (shapes the above-canopy air/wind profile continuously down to
     # canopy top) -- a second, independent, leaf-driven flux estimate, not a
     # ground term; subtracting it from canopy_sensible_heat_flux cancels two
     # correlated leaf-driven quantities instead of adding a real ground
     # contribution, so it's dropped here. ──────────────────────────────────
-    fh = canopy_mode == :legacy ?
+    fh = canopy isa NoCanopy ?
         -ustrip.(u"W/m^2", output.profile.convective_heat_flux) :
         ustrip.(u"W/m^2", output.canopy.canopy_sensible_heat_flux)
     fe = ustrip.(u"W/m^2", output.canopy.canopy_latent_heat_flux)
     fg = ustrip.(u"W/m^2", output.ground_heat_flux)
-    flux_vars = canopy_mode == :legacy ?
+    flux_vars = canopy isa NoCanopy ?
         (("Sensible heat (Fh)", fh, "Fh"), ("Ground heat flux (Fg)", fg, "Fg")) :
         (("Sensible heat (Fh)", fh, "Fh"), ("Latent heat (Fe)", fe, "Fe"), ("Ground heat flux (Fg)", fg, "Fg"))
     _panel_grids!("flux", [
@@ -644,7 +645,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
         field === nothing && continue
         obs_vec = _col(hourly, t_model, name)
         obs_vec === nothing && continue
-        raw = _profile_series(output, heights, canopy_height, height_m, field, canopy_mode)
+        raw = _profile_series(output, heights, canopy_height, height_m, field, canopy)
         raw === nothing && continue
         model_vec, units = field == :air_temperature ? (ustrip.(u"°C", u"°C".(raw)), "°C") : (ustrip.(u"m/s", raw), "m/s")
         label = "$name @ $(height_m) m"

@@ -1,0 +1,104 @@
+# Mistakes in the OzFlux files and how they are corrected before the model sees or is compared
+# against them: the rules applied at every site, then each site's own, each with its evidence.
+# Each `type` is a correction kind defined in data_corrections.jl.
+#
+# Not mistakes, so not here: where a file lacks something rather than gets it wrong
+#   - forcing the tower can't supply, from BARRA-R2 reanalysis (forcing_selection.jl, barra.jl)
+#   - elevation from SRTM when the file names none (sites.jl's site_elevation)
+#   - pressure from elevation when the file has none (sites.jl's site_pressure)
+#   - forcing gaps from backup instruments (sites.toml's forcing_backups)
+#   - a TCAV averaging thermocouple's depth, ~4 cm not its 8 cm label (utils.jl's _sensor_depth)
+
+[[all_sites]]
+type = "RescaleBelow"
+variable = "RH"
+threshold = 1.5
+factor = 100.0
+reason = "relative humidity as a fraction in stretches of a percentage record (CapeTribulation: QCFlag 0 throughout, the low stretch clusters in 0-0.95); percentage RH never falls to 1.5"
+
+[[all_sites]]
+type = "ImplausibleRange"
+variable = "RH"
+low = 1.0
+high = 100.0
+reason = "CapeTribulation's rainforest RH sits near 0% for weeks, passing QC"
+
+[[all_sites]]
+type = "ImplausibleRange"
+variable = "Ta"
+low = -10.0
+high = 55.0
+reason = "physically implausible at these sites"
+
+[[all_sites]]
+type = "ImplausibleRange"
+variable = "Ws"
+low = 0.0
+high = 60.0
+reason = "physically implausible at these sites"
+
+[[all_sites]]
+type = "ImplausibleRange"
+variable = "Fsd"
+low = 0.0
+high = 1500.0
+reason = "physically implausible at these sites"
+
+[[all_sites]]
+type = "ImplausibleRange"
+variable = "Fld"
+low = 100.0
+high = 600.0
+reason = "physically implausible at these sites"
+
+[[all_sites]]
+type = "Flatline"
+duration_minutes = 240
+exempt_prefixes = ["Ts", "Sws"]
+reason = "four hours of identical readings is a stuck sensor; zero is exempt (calm wind, night shortwave and dry spells sit at zero for hours), and so is soil temperature and moisture, slow and quantised (WallabyCreek's Sws takes 115-933 distinct values a year)"
+
+[[sites.DigbyPlantation]]
+type = "Rescale"
+variable = "Sws_30cma"
+factor = 0.01
+reason = "labelled m^3/m^3 but a percentage: 2018 median 18.5, 95th percentile 41"
+
+[[sites.LongreachMitchellGrassRangeland]]
+type = "SaturationFraction"
+variable = "Sws"
+reason = "labelled m^3/m^3 but peaks ~0.77, above plausible porosity: a fraction of saturation"
+
+[[sites.RedDirtMelonFarm]]
+type = "ExcludedSite"
+reason = "woody savannah cleared during the record; canopy_height \"variable\""
+
+[[sites.WallabyCreek]]
+type = "AttributeOverride"
+attribute = "canopy_height"
+value = "75m"
+reason = "the file's 100 m is the tallest trees; the mountain ash canopy averages 75 m (OzFlux site description)"
+
+[[sites.WallabyCreek]]
+type = "FaultySensor"
+variable = "Fld"
+reason = "2007 over BARRA-R2's 100 m σTa⁴: median 1.00, 5th percentile 0.97 (a clear sky gives ~0.75; BARRA's own Fld median 0.84)"
+
+[[sites.WallabyCreek]]
+type = "FaultySensor"
+variable = "Flu"
+reason = "2007 over BARRA-R2's 100 m σTa⁴: median 1.19, 1.17 at night, when the canopy cools below the air and it should be under 1"
+
+[[sites.WallabyCreek]]
+type = "FaultySensor"
+variable = "Fn"
+reason = "the CNR4's net, from the faulty Fld and Flu"
+
+[[sites.Whroo]]
+type = "FaultySensor"
+variable = "Ta_HMP_16m"
+reason = "2016 mean 2.7 K above both the 8 m and 32 m sensors"
+
+[[sites.Whroo]]
+type = "FaultySensor"
+variable = "AH_HMP_1m"
+reason = "drier than every other height; r=0.32 with the model where the rest are 0.83-0.91"

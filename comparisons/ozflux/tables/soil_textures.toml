@@ -1,0 +1,69 @@
+# Campbell & Norman (1998) Table 9.1 soil texture classes: air-entry water potential, Campbell
+# b exponent and saturated hydraulic conductivity. micropoint_name is micropoint's own
+# createsoilc(soiltype=...) name for the class, so its export asks for a self-consistent table.
+
+[sand]
+air_entry = "0.7 J/kg"
+b = 1.7
+Ksat = "5.8e-3 kg*s/m^3"
+micropoint_name = "Sand"
+
+[loamy_sand]
+air_entry = "0.9 J/kg"
+b = 2.1
+Ksat = "1.7e-3 kg*s/m^3"
+micropoint_name = "Loamy sand"
+
+[sandy_loam]
+air_entry = "1.5 J/kg"
+b = 3.1
+Ksat = "7.2e-4 kg*s/m^3"
+micropoint_name = "Sandy loam"
+
+[loam]
+air_entry = "1.1 J/kg"
+b = 4.5
+Ksat = "3.7e-4 kg*s/m^3"
+micropoint_name = "Loam"
+
+[silt_loam]
+air_entry = "2.1 J/kg"
+b = 4.7
+Ksat = "1.9e-4 kg*s/m^3"
+micropoint_name = "Silt loam"
+
+[sandy_clay_loam]
+air_entry = "2.8 J/kg"
+b = 4.0
+Ksat = "1.2e-3 kg*s/m^3"
+micropoint_name = "Sandy clay loam"
+
+[clay_loam]
+air_entry = "2.6 J/kg"
+b = 5.2
+Ksat = "6.4e-5 kg*s/m^3"
+micropoint_name = "Clay loam"
+
+[silty_clay_loam]
+air_entry = "3.3 J/kg"
+b = 6.6
+Ksat = "4.2e-5 kg*s/m^3"
+micropoint_name = "Silty clay loam"
+
+[sandy_clay]
+air_entry = "2.9 J/kg"
+b = 6.0
+Ksat = "3.3e-5 kg*s/m^3"
+micropoint_name = "Sandy clay"
+
+[silty_clay]
+air_entry = "3.4 J/kg"
+b = 7.9
+Ksat = "2.5e-5 kg*s/m^3"
+micropoint_name = "Silty clay"
+
+[clay]
+air_entry = "3.7 J/kg"
+b = 7.6
+Ksat = "1.7e-5 kg*s/m^3"
+micropoint_name = "Clay"

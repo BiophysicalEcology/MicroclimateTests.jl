@@ -1,0 +1,63 @@
+# How OzFlux L3 files name and flag their variables.
+#
+# OzFlux names a variable <quantity>_<instrument>_<suffix>: Ta_HMP_2m is air temperature from a
+# temperature and humidity probe at 2 m. A bare quantity code (Ta) is the site's own composite.
+# A number in place of the instrument (Ta_1) numbers replicate sensors; anything else there
+# (Fsd_Diffuse) is a derived series, not a sensor.
+
+# QCFlag values of good observations (PyFluxPro wiki, "QC Flag Definitions"): 0 passed every
+# check, 10 passed with a linear or drift correction applied. PyFluxPro's own L6 treats these two
+# as observations.
+good_qc_flags = [0, 10]
+
+# Name suffixes of statistics of a sensor's readings, not readings
+statistic_suffixes = ["QCFlag", "Vr", "Sd"]
+
+# Variables whose good half-hours pick each site's run year
+best_year_variables = ["Ta", "Ws", "Fsd", "Fld", "Ts"]
+
+[quantity_codes]
+air_temperature = "Ta"
+relative_humidity = "RH"
+absolute_humidity = "AH"
+wind_speed = "Ws"
+downwelling_shortwave = "Fsd"
+downwelling_longwave = "Fld"
+rainfall = "Precip"
+air_pressure = "ps"
+
+# A sonic anemometer's temperature is a sonic temperature, which reads warm in humid air
+[instrument_codes.SONIC]
+description = "sonic anemometer"
+measures_sonic_temperature = true
+
+[instrument_codes.HMP]
+description = "temperature and humidity probe"
+measures_sonic_temperature = false
+
+[instrument_codes.IRGA]
+description = "infrared gas analyser"
+measures_sonic_temperature = false
+
+[instrument_codes.RMY]
+description = "propeller anemometer"
+measures_sonic_temperature = false
+
+[instrument_codes.HC2S3]
+description = "temperature and humidity probe"
+measures_sonic_temperature = false
+
+[instrument_codes.WS4]
+description = "two-dimensional sonic anemometer, wind only"
+measures_sonic_temperature = false
+
+# Standard-time UTC offset (minutes) of each file's time_zone attribute. OzFlux records local
+# standard time year-round, with no daylight saving jump.
+[time_zone_utc_offset_minutes]
+"Australia/Adelaide" = 570
+"Australia/Brisbane" = 600
+"Australia/Darwin" = 570
+"Australia/Hobart" = 600
+"Australia/Melbourne" = 600
+"Australia/Perth" = 480
+"Australia/Sydney" = 600

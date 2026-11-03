@@ -6,18 +6,15 @@ net/upward radiation, sensible/latent/ground heat flux, soil
 temperature/moisture at depth, and — where a site has multi-height sensors —
 the shape of the wind/temperature profile through and above the canopy.
 
-Unlike `oznet`/`scan_snotel`, forcing comes straight from each site's own
-tower file (30-min, aggregated to hourly), not a fetched grid — this is a
-canopy-model-focused pipeline, not a soil-moisture-grid one. A SILO
-gridded-forcing run is also available per site-year (`run_site_silo`), both
-as its own comparison against the tower obs (gridded vs point-observed skill)
-and, via `run_site_gapfilled`, as a real-data gap-filler for missing tower
-forcing (see "SILO forcing" below).
+Forcing comes from each site's highest above-canopy tower sensors (30-min,
+aggregated to hourly), with BARRA-R2 reanalysis for whatever the tower can't
+supply (`forcing_selection.jl`). A SILO gridded-forcing run is also available
+per site-year (`run_site_silo`) as its own comparison against the tower obs.
 
 ## Files
 
-- `config.jl` — model/SILO/legacy-mode choices, per-site LAI and multi-height
-  sensor lists, shared by both entry points.
+- `config.jl` — paths and model algorithm choices, shared by both entry points.
+- `tables/` — every fact about the datasets and sites (see "Data tables").
 - `utils.jl` — generic stats helpers (shared with `oznet`) plus the OzFlux
   NetCDF reader/aggregator (`read_ozflux_nc`, `discover_depth_series`,
   `discover_site_years`).
@@ -25,14 +22,14 @@ forcing (see "SILO forcing" below).
   `prepare_site` (read/aggregate/build the `MicroProblem`) -> `run_site`
   (solve). Tower forcing only; needs no MicroclimateMapper.
 - `mapper.jl` — everything that needs MicroclimateMapper: SILO forcing
-  (`run_site_silo`/`run_site_gapfilled`/`run_site_daily`) and live SLGA
+  (`run_site_silo`) and live SLGA
   soil (`soil_source` `:slga`/`:slga_uniform`). MicroclimateMapper still
   builds Microclimate's old `MicroInputs(; site, soil_profile, ...)`, so
   these paths don't run against the current Microclimate until it's ported.
 - `report.jl` — stats + plots for every comparison target
   (`report_site_results`).
-- `comparison.jl` — entry point: batch over a site x year(s) x forcing-mode x
-  canopy-mode grid, writes stats/plots, prints a cross-site summary.
+- `comparison.jl` — entry point: every site's best year, with and without
+  litter at woody sites, writes stats/plots, prints a cross-site summary.
 - `single_site.jl` — entry point: one site-year, no try/catch, for stepping
   through in the debugger.
 
@@ -53,60 +50,26 @@ Wallaby (regrowth ash forest, canopy 8-10 m, tower 12 m, one sub-canopy Ta
 sensor at 5 m).
 
 Variable-naming conventions are **not** consistent across sites (e.g.
-Calperum's `Ws_RMY2m_Av` vs Whroo's `Ws_RMY_2m`), which is why
-`SITE_HEIGHT_SERIES` in `config.jl` is an explicit per-site list rather than
-an auto-detected one.
+Calperum's `Ws_RMY2m_Av` vs Whroo's `Ws_RMY_2m`); the naming rules the code
+relies on are data, in `tables/ozflux_conventions.toml`.
 
-### LAI placeholder
+### Data tables
 
-`SITE_LEAF_AREA_INDEX` in `config.jl` is a per-site, hand-supplied constant —
-no OzFlux L3 file carries LAI in its metadata, and no phenology/dynamic LAI
-is modelled. `resolve_site` errors for any site without an entry rather than
-falling back to a generic literature guess, which would misrepresent the
-comparison. Less of a concern at evergreen sites (Cape Tribulation), more so
-anywhere with strong seasonal LAI variation.
+Every fact about the datasets and sites is data in `tables/`, never code:
+OzFlux naming conventions, data corrections (mistakes only, each with its
+evidence), per-site settings with their defaults, and soil texture classes.
 
-## SILO forcing (secondary comparison + gap-fill)
+### Leaf area index
 
-`weather_source_choice = SILO` (`config.jl`) drives a second, independent run
-per site-year via `MicroclimateMapper`'s usual point-fetch machinery (same
-pattern as `oznet`). Two uses:
+MODIS MCD15A3H's median over the run year, unless `tables/sites.toml` gives a
+site a measured value. No phenology/dynamic LAI is modelled.
 
-1. **`run_site_silo`** — the canopy model driven entirely by SILO's daily
-   min/max grids (+ CRUCL2 monthly wind climatology, SILO's own wind
-   fallback) instead of tower obs, evaluated against the same tower targets.
-   An interesting comparison in its own right: how much skill is lost going
-   from point-observed hourly forcing to gridded daily forcing?
-2. **`run_site_gapfilled`** — fills missing tower `Ta`/`RH`/`Ws`/`Fsd` hours
-   from a solved SILO run's own recorded per-hour forcing (`MicroResult`'s
-   `reference_*`/`global_radiation` columns — the diel-synthesized values the
-   solver actually used, not simulated fluxes), instead of `prepare_site`'s
-   default plain linear interpolation across gaps.
+## SILO forcing (secondary comparison)
 
-**Caveats**: SILO has no wind-speed layer at all (CRUCL2 climatology
-substitutes) and no downward-longwave layer either -- `Fld` gaps are instead
-backed out of the SILO run's own solved sky_temperature (Stefan-Boltzmann:
-incoming longwave = σ·T_sky⁴), a physically-grounded estimate rather than a
-straight-line interpolation, but still model-derived, not observed. SILO is
-daily-native — `environment_hourly` for a SILO fetch is a stub; the "hourly"
-values used for gap-filling are diel-synthesized from the daily min/max, not
-truly observed sub-daily dynamics.
-
-## Legacy canopy_mode
-
-`canopy_mode = :legacy` (`prepare_site`/`run_site`/`run_site_gapfilled`) runs
-`NoCanopy()` with a PAI-derived shade fraction (Beer-Lambert,
-`legacy_extinction_coefficient`), a wind-speed knockdown
-(`legacy_wind_multiplier`), a large horizon angle
-(`legacy_horizon_angle`, so direct beam only reaches the ground near
-solar noon), and a ground-surface roughness height (`legacy_roughness_height`,
-replacing the 0.004m bare-ground default `:full` uses) — approximating a
-forest site the way it would have been done before `MultilayerCanopy` existed.
-Run alongside `canopy_mode = :full` to see what the full canopy model
-actually buys over that approximation.
-`:legacy` has no below-canopy resolution and no canopy-summed Fh/Fe/Fsu/Flu/Fn
-(`report.jl` skips those comparisons and falls back to the ground-level MOST
-estimate for Fh only); it isn't wired up for the SILO forcing path.
+**`run_site_silo`** runs the canopy model driven entirely by SILO's daily
+min/max grids (+ CRUCL2 monthly wind climatology) via `MicroclimateMapper`,
+evaluated against the same tower targets: how much skill is lost going from
+point-observed hourly forcing to gridded daily forcing?
 
 ## Comparison targets
 

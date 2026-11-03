@@ -20,23 +20,16 @@ using Serialization, Measures
 #Microclimate._DEBUG_DEW_THRESHOLD[] = 0.08u"kg/m^2"
 #Microclimate._DEBUG_GROUND_RESISTANCE[] = true
 
-include("config.jl")
-include("utils.jl")
-include("pipeline.jl")
+include("ozflux.jl")
 include("mapper.jl")  # SILO/SLGA via MicroclimateMapper
-include("report.jl")
 
 # ── Pick the site/year(s) to debug here ───────────────────────────────────────
-site_name = "Longreach"  # "CapeTribulation", "Calperum" (:legacy), "Whroo" what is the PAI?, "Wallaby" 2008, "GWW" (:legacy), "Longreach" (:legacy), "TiTreeEast" (:legacy), "AliceSpringsMulga"
+site_name = "LongreachMitchellGrassRangeland"  # any site in data/, e.g. "CapeTribulation", "CalperumChowilla", "Whroo", "WallabyCreek", "GreatWesternWoodlands", "TiTreeEast", "AliceSpringsMulga"
 years = [2020]
 max_days = nothing  # set e.g. 30 for a fast iteration loop
-forcing_source = :gapfilled  # :tower, :silo (gridded forcing), :gapfilled (tower + SILO-filled gaps), or :daily (real tower data reduced to a daily envelope, then diel-synthesized the same way :silo is -- isolates hourly-forcing-noise effects from real-vs-gridded-value effects)
-canopy_mode = :legacy  # :full (MultilayerCanopy) or :legacy (NoCanopy + shade/wind/horizon approximation)
+forcing_source = :tower  # :tower, or :silo (gridded forcing)
 
-result = forcing_source == :silo ? run_site_silo(site_name, years; max_days, canopy_mode) :
-          forcing_source == :gapfilled ? run_site_gapfilled(site_name, years; max_days, canopy_mode) :
-          forcing_source == :daily ? run_site_daily(site_name, years; max_days, canopy_mode) :
-          run_site(site_name, years; max_days, canopy_mode);
+result = forcing_source == :silo ? run_site_silo(site_name, years; max_days) : run_site(site_name, years; max_days);
 
 plot_start = nothing
 plot_end   = nothing
@@ -46,7 +39,7 @@ plot_forcing = false  # false: skip the Ta/RH/Ws/Fsd/Fld/Precip forcing-sanity p
 plot_variable = nothing  # nothing plots every variable; or a short key: "Fsu","Flu","Fn","Fh","Fe","Fg","Ts","Sws", or a height-series name like "Ta_HMP_2m" -- stats are still computed/printed for all either way
 
 stats = report_site_results(result, result.output; plot_start, plot_end, display_plots=true,
-    source="$(forcing_source)_$(canopy_mode)", plot_forcing, plot_variable)
+    source="$(forcing_source)", plot_forcing, plot_variable)
 #display(stats)
 
 # ── Vertical canopy profiles (obs vs model) for a chosen date/hour range ──────
