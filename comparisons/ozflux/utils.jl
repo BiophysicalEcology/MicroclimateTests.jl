@@ -15,6 +15,7 @@ struct ModelStats
     n    :: Int
     std_ratio :: Float64          # std(pred) / std(obs): the variability (Taylor 2001, doi:10.1029/2000JD900719)
     daily_range_ratio :: Float64  # mean daily (max - min) of pred / of obs
+    phase_shift :: Float64        # hours the mean daily cycle of pred lags obs's, by circular cross-correlation
     wetting_ratio :: Float64      # sum of day-to-day rises of the daily mean, pred / obs
     drying_ratio :: Float64       # sum of day-to-day falls of the daily mean, pred / obs
 end
@@ -25,10 +26,10 @@ const STORAGE_KINDS = ("soil_moisture",)
 function compute_stats(obs_vec, pred_vec, times, kind)
     valid = [!ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))
              for (o, p) in zip(obs_vec, pred_vec)]
-    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, NaN, NaN, 0, NaN, NaN, NaN, NaN)
+    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, NaN, NaN, 0, NaN, NaN, NaN, NaN, NaN)
     o = Float64.(obs_vec[valid]);  p = Float64.(pred_vec[valid]);  days = Date.(times[valid])
     complete_days = [(day, i) for day in unique(days) for i in (findall(==(day), days),) if length(i) == 24]
-    daily_range_ratio = wetting_ratio = drying_ratio = NaN
+    daily_range_ratio = phase_shift = wetting_ratio = drying_ratio = NaN
     if kind in STORAGE_KINDS
         obs_change, pred_change = Float64[], Float64[]
         for ((day1, i1), (day2, i2)) in zip(complete_days, complete_days[2:end])
@@ -41,16 +42,20 @@ function compute_stats(obs_vec, pred_vec, times, kind)
     elseif !isempty(complete_days)
         daily_range(x) = mean(-(reverse(extrema(x[i]))...) for (_, i) in complete_days)
         daily_range_ratio = daily_range(p) / daily_range(o)
+        # Mean value at each hour of day over the complete days
+        daily_cycle(x) = mean(x[i] for (_, i) in complete_days)
+        obs_cycle, pred_cycle = daily_cycle(o), daily_cycle(p)
+        phase_shift = argmax(lag -> cor(obs_cycle, circshift(pred_cycle, -lag)), -12:11)
     end
     rmse = sqrt(mean((p .- o).^2))
     ModelStats(cor(o, p), rmse, rmse / std(o), mean(p .- o), mean(p .- o) / std(o), count(valid), std(p) / std(o),
-        daily_range_ratio, wetting_ratio, drying_ratio)
+        daily_range_ratio, phase_shift, wetting_ratio, drying_ratio)
 end
 
 fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
-    @sprintf("pearson correlation=%+.3f  RMSE=%6.3f  normalized RMSE=%.2f  bias=%+7.4f  normalized bias=%+.2f  std ratio=%.2f  daily range ratio=%.2f  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
-        s.pearson_correlation, s.rmse, s.normalized_rmse, s.bias, s.normalized_bias, s.std_ratio, s.daily_range_ratio, s.wetting_ratio, s.drying_ratio, s.n)
+    @sprintf("pearson correlation=%+.3f  RMSE=%6.3f  normalized RMSE=%.2f  bias=%+7.4f  normalized bias=%+.2f  std ratio=%.2f  daily range ratio=%.2f  phase shift=%+.0f h  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
+        s.pearson_correlation, s.rmse, s.normalized_rmse, s.bias, s.normalized_bias, s.std_ratio, s.daily_range_ratio, s.phase_shift, s.wetting_ratio, s.drying_ratio, s.n)
 
 # Factor taking a site's observed Sws to volumetric water content: the top layer's porosity
 # where data_corrections.jl's SaturationFraction says it is a fraction of saturation. Applied

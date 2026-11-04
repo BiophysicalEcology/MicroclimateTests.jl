@@ -27,6 +27,8 @@ sites = filter(!excluded, sort(collect(keys(discover_site_years(OZFLUX_DATA_DIR)
 make_plots = false   # per-site plots for every run (slow over every site)
 plot_forcing = false
 plot_variable = nothing
+# Report on the saved results (save_site_result) instead of solving
+rescore = get(ENV, "MICROCLIMATETESTS_RESCORE", "false") == "true"
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  MAIN LOOP                                                               ║
@@ -40,23 +42,28 @@ fail!(site_name, err) = (push!(failures, (site_name, sprint(showerror, err))); @
 prepared = []
 for site_name in sites
     try
-        push!(prepared, announce_and_prepare_site(site_name, run_years(site_name)))
+        push!(prepared, rescore ? prepare_saved_site(site_name, run_years(site_name), "tower") :
+            announce_and_prepare_site(site_name, run_years(site_name)))
     catch err
         fail!(site_name, err)
     end
 end
-println("\nSolving $(length(prepared)) sites on $(Threads.nthreads()) threads...")
 results = Vector{Any}(undef, length(prepared))
-Threads.@threads :dynamic for i in eachindex(prepared)
-    results[i] = try
-        solve_site(prepared[i])
-    catch err
-        err
+if rescore
+    results .= prepared
+else
+    println("\nSolving $(length(prepared)) sites on $(Threads.nthreads()) threads...")
+    Threads.@threads :dynamic for i in eachindex(prepared)
+        results[i] = try
+            solve_site(prepared[i])
+        catch err
+            err
+        end
     end
 end
 for (prep, result) in zip(prepared, results)
     result isa Exception && (fail!(prep.site_name, result); continue)
-    save_site_result(result, "tower")
+    rescore || save_site_result(result, "tower")
     try
         stats = report_site_results(result, result.output; make_plots, display_plots=false, plot_forcing, plot_variable)
         stats.solve_time .= result.solve_time

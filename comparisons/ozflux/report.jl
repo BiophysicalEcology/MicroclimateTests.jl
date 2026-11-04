@@ -436,7 +436,7 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
 
     site_rows = NamedTuple[]
     record!(label, kind, units, s) = push!(site_rows,
-        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, pearson_correlation=s.pearson_correlation, rmse=s.rmse, normalized_rmse=s.normalized_rmse, bias=s.bias, normalized_bias=s.normalized_bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, wetting_ratio=s.wetting_ratio, drying_ratio=s.drying_ratio, n=s.n))
+        (site=site_name, years=join(years, '-'), source, variable=label, kind, units, pearson_correlation=s.pearson_correlation, rmse=s.rmse, normalized_rmse=s.normalized_rmse, bias=s.bias, normalized_bias=s.normalized_bias, std_ratio=s.std_ratio, daily_range_ratio=s.daily_range_ratio, phase_shift=s.phase_shift, wetting_ratio=s.wetting_ratio, drying_ratio=s.drying_ratio, n=s.n))
     # `plot_variable`: nothing plots every variable (default); a String
     # restricts plotting to the one variable matching that short key (Fsu,
     # Flu, Fn, Fh, Fe, Fg, Ts, Sws, or a height-series name like
