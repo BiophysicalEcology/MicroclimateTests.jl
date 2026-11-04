@@ -26,11 +26,12 @@ variables = variables[sortperm([(findfirst(==(r.kind), KIND_ORDER), position_m(r
 site_number = Dict(site => i for (i, site) in enumerate(sort(unique(all_stats.site))))
 
 # `reference`: the perfect value, except normalized RMSE's 1, no better than predicting the
-# observed mean. `period`: of a phase shift, which is averaged around its cycle.
-measure(col, title, reference, limits, ticks; scale=identity, period=nothing) =
-    (; col, title, reference, limits, ticks=(Float64.(ticks), string.(ticks)), scale, period)
+# observed mean. `period`: of a phase shift, which is averaged around its cycle. `reaches`: the
+# phase shift's axis limits to choose from, by the sites in the plot (fit_to_sites).
+measure(col, title, reference, limits, ticks; scale=identity, period=nothing, reaches=nothing) =
+    (; col, title, reference, limits, ticks=(Float64.(ticks), string.(ticks)), scale, period, reaches)
 ratio_measure(col, title) = measure(col, title, 1.0, (0.1, 10.0), [0.1, 0.25, 0.5, 1, 2, 4, 10]; scale=log10)
-const ANNUAL_PHASE = measure(:annual_phase_shift, "Annual phase shift (days)", 0.0, (-183.0, 183.0), [-180, -90, 0, 90, 180]; period=365.25)
+const ANNUAL_PHASE = measure(:annual_phase_shift, "Annual phase shift (days)", 0.0, (-180.0, 180.0), [-180, -90, 0, 90, 180]; period=365.25, reaches=[30, 60, 90, 120, 180])
 const HOURLY_FIT = [
     measure(:pearson_correlation, "Pearson correlation", 1.0, (-0.25, 1.0), [0, 0.5, 1]),
     measure(:normalized_bias, "Normalized bias", 0.0, (-3.0, 3.0), [-3, -1, 0, 1, 3]),
@@ -39,12 +40,22 @@ const HOURLY_FIT = [
 ]
 const DAILY_AND_ANNUAL = [
     ratio_measure(:daily_range_ratio, "Daily range ratio"),
-    measure(:daily_phase_shift, "Daily phase shift (h)", 0.0, (-12.0, 12.0), [-12, -6, 0, 6, 12]; period=24.0),
+    measure(:daily_phase_shift, "Daily phase shift (h)", 0.0, (-12.0, 12.0), [-12, -6, 0, 6, 12]; period=24.0, reaches=[3, 6, 12]),
     ANNUAL_PHASE,
 ]
 const STORAGE_AND_ANNUAL = [ratio_measure(:wetting_ratio, "Wetting ratio"), ratio_measure(:drying_ratio, "Drying ratio"), ANNUAL_PHASE]
 
 circular_mean(x, period) = atan(mean(sin.(2π .* x ./ period)), mean(cos.(2π .* x ./ period))) * period / 2π
+
+# A phase shift's measure with its axis reaching only as far as the plot's sites do
+function fit_to_sites(m, kinds)
+    m.reaches === nothing && return m
+    shifts = filter(!isnan, all_stats[in.(all_stats.kind, Ref(kinds)), m.col])
+    largest = maximum(abs, shifts; init=0.0)
+    reach = m.reaches[something(findfirst(>=(largest), m.reaches), lastindex(m.reaches))]
+    ticks = [-reach, -reach ÷ 2, 0, reach ÷ 2, reach]
+    return merge(m, (limits=(-Float64(reach), Float64(reach)), ticks=(Float64.(ticks), string.(ticks))))
+end
 
 # The axis limits, with room outside `limits` for the sites beyond them
 function padded_limits(m)
@@ -59,7 +70,7 @@ function plot_sites(file, heading, kinds, measures)
     labels = ["$(r.variable) ($(r.units))" for r in eachrow(group)]
     fig = Figure(size=(280 * length(measures) + 260, 34 * n + 190), fontsize=14, backgroundcolor=:white)
     Label(fig[0, 1:length(measures)], heading; fontsize=20, font=:bold, color=INK, halign=:left)
-    for (column, m) in enumerate(measures)
+    for (column, m) in enumerate(fit_to_sites.(measures, Ref(kinds)))
         ax = Axis(fig[1, column]; title=m.title, titlecolor=INK, xscale=m.scale, xticks=m.ticks,
             yticks=(1:n, reverse(labels)), yticklabelsvisible=column == 1, yticksvisible=false,
             ygridcolor=(:black, 0.06), xgridcolor=(:black, 0.05),
