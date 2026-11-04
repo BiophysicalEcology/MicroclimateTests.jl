@@ -29,6 +29,8 @@ per site-year (`run_site_silo`) as its own comparison against the tower obs.
   where shorter), writes stats/plots, prints a cross-site summary.
 - `single_site.jl` — entry point: one site-year, no try/catch, for stepping
   through in the debugger.
+- `site_plots.jl` — entry point: Makie plots of every site's stats from
+  `all_stats.csv`, into `julia_outputs/site_plots`. Needs no solve.
 
 ## Data
 
@@ -117,4 +119,5 @@ Wallaby (1); saved under `outputs_dir/profiles_vertical/`.
 ```
 julia comparison.jl     # batch run, see SITE_YEARS/FORCING_MODES/CANOPY_MODES in comparison.jl
 julia single_site.jl     # single site-year, full stack trace on failure
+julia site_plots.jl     # plots of every site's stats, after comparison.jl
 ```
