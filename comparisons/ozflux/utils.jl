@@ -15,7 +15,8 @@ struct ModelStats
     n    :: Int
     std_ratio :: Float64          # std(pred) / std(obs): the variability (Taylor 2001, doi:10.1029/2000JD900719)
     daily_range_ratio :: Float64  # mean daily (max - min) of pred / of obs
-    phase_shift :: Float64        # hours the mean daily cycle of pred lags obs's, by circular cross-correlation
+    daily_phase_shift :: Float64  # hours pred lags obs: the lag (±12 h) of greatest pearson correlation
+    annual_phase_shift :: Float64 # days the peak of pred's fitted annual sinusoid lags obs's
     wetting_ratio :: Float64      # sum of day-to-day rises of the daily mean, pred / obs
     drying_ratio :: Float64       # sum of day-to-day falls of the daily mean, pred / obs
 end
@@ -26,10 +27,19 @@ const STORAGE_KINDS = ("soil_moisture",)
 function compute_stats(obs_vec, pred_vec, times, kind)
     valid = [!ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))
              for (o, p) in zip(obs_vec, pred_vec)]
-    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, NaN, NaN, 0, NaN, NaN, NaN, NaN, NaN)
+    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, NaN, NaN, 0, NaN, NaN, NaN, NaN, NaN, NaN)
     o = Float64.(obs_vec[valid]);  p = Float64.(pred_vec[valid]);  days = Date.(times[valid])
     complete_days = [(day, i) for day in unique(days) for i in (findall(==(day), days),) if length(i) == 24]
-    daily_range_ratio = phase_shift = wetting_ratio = drying_ratio = NaN
+    daily_range_ratio = daily_phase_shift = annual_phase_shift = wetting_ratio = drying_ratio = NaN
+    # Annual: x ≈ a + b cos(ωd) + c sin(ωd) fitted to the daily means, peaking at day atan(c, b) / ω
+    # (the annual temperature wave, Hillel 1998, Environmental Soil Physics). Needs complete days over a year.
+    if !isempty(complete_days) && first(complete_days[end]) - first(complete_days[1]) >= Day(364)
+        ω = 2π / 365.25
+        d = [Dates.value(day - first(complete_days[1])) for (day, _) in complete_days]
+        design = [ones(length(d)) cos.(ω .* d) sin.(ω .* d)]
+        peak_day(x) = ((_, b, c) = design \ [mean(x[i]) for (_, i) in complete_days]; atan(c, b) / ω)
+        annual_phase_shift = mod(peak_day(p) - peak_day(o) + 365.25 / 2, 365.25) - 365.25 / 2
+    end
     if kind in STORAGE_KINDS
         obs_change, pred_change = Float64[], Float64[]
         for ((day1, i1), (day2, i2)) in zip(complete_days, complete_days[2:end])
@@ -39,23 +49,34 @@ function compute_stats(obs_vec, pred_vec, times, kind)
         end
         wetting_ratio = sum(max.(pred_change, 0.0); init=0.0) / sum(max.(obs_change, 0.0); init=0.0)
         drying_ratio = sum(min.(pred_change, 0.0); init=0.0) / sum(min.(obs_change, 0.0); init=0.0)
-    elseif !isempty(complete_days)
-        daily_range(x) = mean(-(reverse(extrema(x[i]))...) for (_, i) in complete_days)
-        daily_range_ratio = daily_range(p) / daily_range(o)
-        # Mean value at each hour of day over the complete days
-        daily_cycle(x) = mean(x[i] for (_, i) in complete_days)
-        obs_cycle, pred_cycle = daily_cycle(o), daily_cycle(p)
-        phase_shift = argmax(lag -> cor(obs_cycle, circshift(pred_cycle, -lag)), -12:11)
+    else
+        if !isempty(complete_days)
+            daily_range(x) = mean(-(reverse(extrema(x[i]))...) for (_, i) in complete_days)
+            daily_range_ratio = daily_range(p) / daily_range(o)
+        end
+        # Correlation of obs at hour t with pred at hour t + lag, over the hourly series less its
+        # centred 24 h running mean, so only the daily cycle is compared (NaN where that window has a gap)
+        n_hours = length(obs_vec)
+        function daily_anomaly(x)
+            v = [!ismissing(xi) && isfinite(Float64(xi)) ? Float64(xi) : NaN for xi in x]
+            return [t - 12 >= 1 && t + 11 <= n_hours ? v[t] - mean(view(v, t-12:t+11)) : NaN for t in 1:n_hours]
+        end
+        obs_anomaly, pred_anomaly = daily_anomaly(obs_vec), daily_anomaly(pred_vec)
+        function lagged_correlation(lag)
+            t = [t for t in max(1, 1 - lag):min(n_hours, n_hours - lag) if isfinite(obs_anomaly[t]) && isfinite(pred_anomaly[t + lag])]
+            return length(t) < 2 ? -Inf : cor(obs_anomaly[t], pred_anomaly[t .+ lag])
+        end
+        daily_phase_shift = argmax(lagged_correlation, -12:12)
     end
     rmse = sqrt(mean((p .- o).^2))
     ModelStats(cor(o, p), rmse, rmse / std(o), mean(p .- o), mean(p .- o) / std(o), count(valid), std(p) / std(o),
-        daily_range_ratio, phase_shift, wetting_ratio, drying_ratio)
+        daily_range_ratio, daily_phase_shift, annual_phase_shift, wetting_ratio, drying_ratio)
 end
 
 fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
-    @sprintf("pearson correlation=%+.3f  RMSE=%6.3f  normalized RMSE=%.2f  bias=%+7.4f  normalized bias=%+.2f  std ratio=%.2f  daily range ratio=%.2f  phase shift=%+.0f h  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
-        s.pearson_correlation, s.rmse, s.normalized_rmse, s.bias, s.normalized_bias, s.std_ratio, s.daily_range_ratio, s.phase_shift, s.wetting_ratio, s.drying_ratio, s.n)
+    @sprintf("pearson correlation=%+.3f  RMSE=%6.3f  normalized RMSE=%.2f  bias=%+7.4f  normalized bias=%+.2f  std ratio=%.2f  daily range ratio=%.2f  daily phase shift=%+.0f h  annual phase shift=%+.0f d  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
+        s.pearson_correlation, s.rmse, s.normalized_rmse, s.bias, s.normalized_bias, s.std_ratio, s.daily_range_ratio, s.daily_phase_shift, s.annual_phase_shift, s.wetting_ratio, s.drying_ratio, s.n)
 
 # Factor taking a site's observed Sws to volumetric water content: the top layer's porosity
 # where data_corrections.jl's SaturationFraction says it is a fraction of saturation. Applied
