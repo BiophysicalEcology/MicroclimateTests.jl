@@ -155,8 +155,8 @@ function site_leaf_area_index(site_name, latitude, longitude, years)
     return measured === nothing ? modis_leaf_area_index(site_name, latitude, longitude, years) : measured
 end
 
-# Woody sites get a canopy and litter; grass, crops and pasture neither
+# Woody sites get a canopy; grass, crops and pasture none. Every site has litter, of its kind.
 is_woody(site_name) = site_canopy_height(site_name) >= site_setting(site_name, "woody_canopy_height")
-site_litter(site_name) = is_woody(site_name) ? LitterLayer(; site_setting(site_name, "woody_litter")...) : NoLitter()
+site_litter(site_name) = LitterLayer(; site_setting(site_name, is_woody(site_name) ? "woody_litter" : "pasture_litter")...)
 site_ground_roughness_height(site_name) =
     site_setting(site_name, is_woody(site_name) ? "woody_ground_roughness_height" : "pasture_roughness_height")

@@ -3,7 +3,7 @@
 # "<number> <unit>".
 
 [defaults]
-# Ground (soil, or litter at woody sites) shortwave albedo
+# Ground (soil, or litter) shortwave albedo
 albedo = 0.20
 # Guessed, no empirical data
 leaf_reflectance = 0.25
@@ -47,6 +47,15 @@ canopy_projection_ratio = 1.0
 [defaults.woody_litter]
 dry_mass = "1.5 kg/m^2"
 thickness = "2.4 cm"
+cover_fraction = 0.7
+albedo = 0.35
+
+# Litter at grass, crop and pasture sites. Central Australian rangeland litter is 0.13-0.4 kg/m²
+# (Friedel 1981, doi:10.1071/BT9810219). No grass litter bulk density, cover or albedo is in hand:
+# these take woody_litter's, with its bulk density giving the thickness.
+[defaults.pasture_litter]
+dry_mass = "0.2 kg/m^2"
+thickness = "0.3 cm"
 cover_fraction = 0.7
 albedo = 0.35
 
