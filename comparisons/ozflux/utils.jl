@@ -32,8 +32,8 @@ function compute_stats(obs_vec, pred_vec, times, kind)
     complete_days = [(day, i) for day in unique(days) for i in (findall(==(day), days),) if length(i) == 24]
     daily_range_ratio = daily_phase_shift = annual_phase_shift = wetting_ratio = drying_ratio = NaN
     # Annual: x ≈ a + b cos(ωd) + c sin(ωd) fitted to the daily means, peaking at day atan(c, b) / ω
-    # (the annual temperature wave, Hillel 1998, Environmental Soil Physics). Needs complete days over a year.
-    if !isempty(complete_days) && first(complete_days[end]) - first(complete_days[1]) >= Day(364)
+    # (the annual temperature wave, Hillel 1998, Environmental Soil Physics). Needs complete days in every month.
+    if length(unique(month(day) for (day, _) in complete_days)) == 12
         ω = 2π / 365.25
         d = [Dates.value(day - first(complete_days[1])) for (day, _) in complete_days]
         design = [ones(length(d)) cos.(ω .* d) sin.(ω .* d)]
