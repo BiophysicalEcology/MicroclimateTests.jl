@@ -122,9 +122,9 @@ end
 
 # Soil values sit below ground and air values above it, so a quantity keeps its color across the two
 const QUANTITIES = [
-    (label="Temperature (soil and air)", kinds=["soil_temperature", "profile_air_temperature"], color="#eb6834", marker=:circle),
-    (label="Water (soil moisture and absolute humidity)", kinds=["soil_moisture", "profile_absolute_humidity"], color="#2a78d6", marker=:rect),
-    (label="Wind speed", kinds=["profile_wind_speed"], color="#1baf7a", marker=:diamond),
+    (label="Temperature (soil and air)", kinds=["soil_temperature", "profile_air_temperature"], color="#eb6834", dark="#9c3a12", marker=:circle),
+    (label="Water (soil moisture and absolute humidity)", kinds=["soil_moisture", "profile_absolute_humidity"], color="#2a78d6", dark="#134a8e", marker=:rect),
+    (label="Wind speed", kinds=["profile_wind_speed"], color="#1baf7a", dark="#0b6444", marker=:diamond),
 ]
 const PROFILE_KINDS = reduce(vcat, q.kinds for q in QUANTITIES)
 const PROFILE_MEASURES = [HOURLY_FIT[1:3]..., HOURLY_FIT[4], DAILY_AND_ANNUAL[1], STORAGE_AND_ANNUAL[1], STORAGE_AND_ANNUAL[2], DAILY_AND_ANNUAL[2], ANNUAL_PHASE]
@@ -169,18 +169,18 @@ function plot_profiles(file, heading)
             position.top[1] == position.bottom[1] || linesegments!(ax, repeat(shown; inner=2),
                 vec([position.top position.bottom]'); color=(q.color, 0.45), linewidth=2)
             scatter!(ax, shown[inside], ys[inside]; color=(q.color, 0.7), marker=q.marker, markersize=10)
-            all(inside) || scatter!(ax, shown[.!inside], ys[.!inside]; color=INK,
+            all(inside) || scatter!(ax, shown[.!inside], ys[.!inside]; color=q.dark,
                 marker=[v < m.limits[1] ? :ltriangle : :rtriangle for v in values[.!inside]], markersize=11)
             length(values) < 2 && continue
             centre = m.period === nothing ? median(values) : circular_mean(values, m.period)
-            m.limits[1] <= centre <= m.limits[2] && scatter!(ax, [centre], [ys[1]]; color=INK, marker=:vline, markersize=20)
+            m.limits[1] <= centre <= m.limits[2] && scatter!(ax, [centre], [ys[1]]; color=q.dark, marker=:vline, markersize=20)
         end
     end
     Legend(fig[1, 1:3], [MarkerElement(color=q.color, marker=q.marker, markersize=12) for q in QUANTITIES], [q.label for q in QUANTITIES];
         orientation=:horizontal, framevisible=false, labelcolor=INK, tellwidth=false, halign=:left)
     Label(fig[5, 1:3],
         "Each mark is a site; a vertical line through it is the depth range that sensor averages, and triangles are sites beyond the axis. " *
-        "The dark tick is the median (phase shifts: the mean around the cycle). The grey line is a perfect match; for normalized RMSE it is no better than predicting the observed mean. " *
+        "The tick in the darker color is the median (phase shifts: the mean around the cycle). The grey line is a perfect match; for normalized RMSE it is no better than predicting the observed mean. " *
         "Heights are above ground, not relative to each site's canopy.";
         color=MUTED, fontsize=13, halign=:left, justification=:left, word_wrap=true, tellwidth=false)
     colgap!(fig.layout, 24)
