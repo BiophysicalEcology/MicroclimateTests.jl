@@ -61,6 +61,11 @@ reason = "four hours of identical readings is a stuck sensor; zero is exempt (ca
 type = "ExcludedSite"
 reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.65 m^3/m^3, modelled mean far below it)"
 
+[[sites.Boyagin]]
+type = "FaultySensor"
+variable = "Sws"
+reason = "a CS616 that barely moves all of 2020: median 0.038 m^3/m^3, 5th-95th percentile 0.034-0.045, standard deviation 0.0036"
+
 [[sites.DigbyPlantation]]
 type = "Rescale"
 variable = "Sws_30cma"
