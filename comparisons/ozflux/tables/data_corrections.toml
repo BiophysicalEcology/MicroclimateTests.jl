@@ -99,6 +99,14 @@ type = "SaturationFraction"
 variable = "Sws"
 reason = "labelled m^3/m^3 but peaks ~0.77, above plausible porosity: a fraction of saturation"
 
+[[sites.Loxton]]
+type = "ExcludedSite"
+reason = "almond orchard (the file's vegetation attribute), taken as irrigated though the file doesn't say so: the irrigation rate is unknown and the forcing has only rain"
+
+[[sites.MyallValeB]]
+type = "ExcludedSite"
+reason = "irrigated field (TERN's Myall Vale B (Irrigated) Flux Data Collection): the irrigation rate is unknown and the forcing has only rain"
+
 [[sites.RedDirtMelonFarm]]
 type = "ExcludedSite"
 reason = "woody savannah cleared during the record; canopy_height \"variable\""
@@ -141,3 +149,7 @@ reason = "2016 mean 2.7 K above both the 8 m and 32 m sensors"
 type = "FaultySensor"
 variable = "AH_HMP_1m"
 reason = "drier than every other height; r=0.32 with the model where the rest are 0.83-0.91"
+
+[[sites.YarramundiIrrigated]]
+type = "ExcludedSite"
+reason = "irrigated pasture (the file's vegetation attribute): the irrigation rate is unknown and the forcing has only rain"
