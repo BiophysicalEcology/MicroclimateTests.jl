@@ -102,6 +102,10 @@ reason = "woody savannah cleared during the record; canopy_height \"variable\""
 type = "ExcludedSite"
 reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.45 m^3/m^3 against 0.48 modelled at saturation)"
 
+[[sites.SilverPlains]]
+type = "ExcludedSite"
+reason = "excluded for now: an Organosol, like AlpinePeatland too wet for the model's free-draining soil to represent (observed soil moisture median 0.79 m^3/m^3 against 0.93 modelled at saturation, modelled too dry by 0.21)"
+
 [[sites.WallabyCreek]]
 type = "AttributeOverride"
 attribute = "canopy_height"
