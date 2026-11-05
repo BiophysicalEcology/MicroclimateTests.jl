@@ -57,6 +57,10 @@ duration_minutes = 240
 exempt_prefixes = ["Ts", "Sws"]
 reason = "four hours of identical readings is a stuck sensor; zero is exempt (calm wind, night shortwave and dry spells sit at zero for hours), and so is soil temperature and moisture, slow and quantised (WallabyCreek's Sws takes 115-933 distinct values a year)"
 
+[[sites.AlpinePeatland]]
+type = "ExcludedSite"
+reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.65 m^3/m^3, modelled mean far below it)"
+
 [[sites.DigbyPlantation]]
 type = "Rescale"
 variable = "Sws_30cma"
@@ -93,6 +97,10 @@ reason = "labelled m^3/m^3 but peaks ~0.77, above plausible porosity: a fraction
 [[sites.RedDirtMelonFarm]]
 type = "ExcludedSite"
 reason = "woody savannah cleared during the record; canopy_height \"variable\""
+
+[[sites.SamfordEcologicalResearchFacility]]
+type = "ExcludedSite"
+reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.45 m^3/m^3 against 0.48 modelled at saturation)"
 
 [[sites.WallabyCreek]]
 type = "AttributeOverride"
