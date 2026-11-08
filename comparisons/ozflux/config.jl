@@ -33,7 +33,7 @@ soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture,
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
 canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact)) # or Val(:bulk), or KTheoryAirProfile()
-longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
+longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange()
 boundary_layer_model_choice = MoninObukhov(; stability_limit=Microclimate.MomentumCorrectionLimit(),
     stability_functions=ChengBrutsaert(; momentum_dyer_constant=16.0, heat_dyer_constant=16.0))
 vapour_pressure_equation_choice = VapourPressureLookup()  # or GoffGratch()
