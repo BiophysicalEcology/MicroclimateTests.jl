@@ -544,10 +544,14 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
 
     # ── Fsu, Flu, Fn at the top of the surface (canopy top, or the ground without one); the
     # downward longwave is the sky's, σ T_sky⁴ ──────────────────────────────────────────────
-    fsu = ustrip.(u"W/m^2", output.upward_shortwave)
-    flu = ustrip.(u"W/m^2", output.upward_longwave)
-    fn = ustrip.(u"W/m^2", output.global_radiation .- output.upward_shortwave .+
-        Microclimate.σ .* output.sky_temperature .^ 4 .- output.upward_longwave)
+    # Stack MicroResult has no upward_shortwave/upward_longwave: under a canopy, take the
+    # canopy-top boundary fluxes (column 1, canopy top -> ground)
+    upward_sw = hasproperty(output, :upward_shortwave) ? output.upward_shortwave : output.canopy.boundary_upward_shortwave[:, 1]
+    upward_lw = hasproperty(output, :upward_longwave) ? output.upward_longwave : output.canopy.boundary_upward_longwave[:, 1]
+    fsu = ustrip.(u"W/m^2", upward_sw)
+    flu = ustrip.(u"W/m^2", upward_lw)
+    fn = ustrip.(u"W/m^2", output.global_radiation .- upward_sw .+
+        Microclimate.σ .* output.sky_temperature .^ 4 .- upward_lw)
     _panel_grids!("radiation", [
         (label, model_vec, _col(hourly, t_model, obscol), "W/m^2", obscol, obscol)
         for (label, model_vec, obscol) in

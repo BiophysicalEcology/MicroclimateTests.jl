@@ -338,11 +338,9 @@ function days_of_year(t)
     return Dates.dayofyear.(t[1:24:end])
 end
 
-# MultilayerCanopy for woody sites (NoCanopy for grass, crop and pasture), from the config.jl
-# model choices and the site's resolved traits. Shared by every prepare_site* so the forcing
-# modes run the same canopy.
+# MultilayerCanopy from the config.jl model choices and the site's resolved traits. Shared by
+# every prepare_site* so the forcing modes run the same canopy.
 function canopy_model(site_name, resolved, heights)
-    is_woody(site_name) || return NoCanopy()
     (; canopy_height, leaf_area_index, leaf_reflectance, leaf_transmittance) = resolved
     canopy_heights = heights[heights .<= canopy_height]
     plant_area_index = plant_area_index_profile(pai_shape(site_name), canopy_heights, canopy_height, leaf_area_index)
@@ -351,8 +349,7 @@ function canopy_model(site_name, resolved, heights)
         longwave_model = longwave_model_choice, wind_model = canopy_wind_model_choice,
         air_profile_model = canopy_air_profile_model_choice, interception_model = interception_model_choice,
         leaf_parameters = leaf_parameters(site_name), stomatal_model = MoistureResponsiveStomatalConductance(),
-        leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice,
-        ground_coupling = ground_coupling_choice)
+        leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice)
 end
 
 # MicroModel from the config.jl model choices; `rainfall_schedule` differs by
@@ -363,9 +360,9 @@ function micro_model(site_name, site, soil_profile, depths, heights, canopy, rai
         properties_model = soil_properties_model_choice, hydraulic_model = soil_hydraulic_model(site_name),
         moisture_strategy = soil_moisture_strategy_choice, energy_model = soil_energy_model_choice)
     atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule,
-        canopy_soil_coupling = canopy_soil_coupling_choice)
-    surface = SurfaceModel(; litter_model)
+    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule)
+    # PR4's SurfaceModel has no litter_model field: site_litter gives `nothing` there
+    surface = litter_model === nothing ? SurfaceModel() : SurfaceModel(; litter_model)
     return MicroModel(; hours = 0:1:23, site, soil, surface, atmosphere, canopy, config,
         vapour_pressure_equation = vapour_pressure_equation_choice)
 end

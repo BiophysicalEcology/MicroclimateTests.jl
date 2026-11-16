@@ -155,8 +155,17 @@ function site_leaf_area_index(site_name, latitude, longitude, years)
     return measured === nothing ? modis_leaf_area_index(site_name, latitude, longitude, years) : measured
 end
 
-# Woody sites get a canopy; grass, crops and pasture none. Every site has litter, of its kind.
+# Every site has a canopy and litter; woody sites' differ from those of grass, crops and pasture
 is_woody(site_name) = site_canopy_height(site_name) >= site_setting(site_name, "woody_canopy_height")
-site_litter(site_name) = LitterLayer(; site_setting(site_name, is_woody(site_name) ? "woody_litter" : "pasture_litter")...)
-site_ground_roughness_height(site_name) =
-    site_setting(site_name, is_woody(site_name) ? "woody_ground_roughness_height" : "pasture_roughness_height")
+# Stack LitterLayer takes cover_fraction, not area_per_mass/unevenness: the cover is the reference's
+# 1 - gap fraction, gap = exp(-τ) (unevenness 0) or (1 + unevenness·τ)^(-1/unevenness), τ = area_per_mass·dry_mass
+function site_litter(site_name)
+    litter_choice == "none" && return isdefined(Microclimate, :NoLitter) ? Microclimate.NoLitter() : nothing
+    settings = site_setting(site_name, is_woody(site_name) ? "woody_litter" : "pasture_litter")
+    (; dry_mass, thickness, area_per_mass, albedo) = settings
+    unevenness = get(settings, :unevenness, 0.0)
+    τ = uconvert(NoUnits, area_per_mass * dry_mass)
+    gap = unevenness == 0 ? exp(-τ) : (1.0 + unevenness * τ)^(-1 / unevenness)
+    return Microclimate.LitterLayer(; dry_mass, thickness, cover_fraction = 1.0 - gap, albedo)
+end
+site_ground_roughness_height(site_name) = site_setting(site_name, "woody_ground_roughness_height")

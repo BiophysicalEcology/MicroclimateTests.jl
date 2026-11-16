@@ -42,22 +42,34 @@ leaf_water_potential = "0 J/kg"
 canopy_projection_ratio = 1.0
 
 # Litter at woody sites: mostly pale eucalypt leaf litter over bare patches. Victorian dry
-# sclerophyll litter loads are 15-20 t/ha, and 63.5 kg/m³ bulk density (Matthews 2006) gives its
-# thickness. No measured eucalypt litter albedo is in hand.
+# sclerophyll litter loads are 15-20 t/ha, and 63.5 kg/m³ bulk density (Matthews 2006) over the
+# ground it covers gives its thickness. No measured eucalypt litter albedo, area per mass or
+# unevenness is in hand: live eucalypt leaves are 2-6 m²/kg (Schulze et al. 2006, from a search
+# summary, paper not read); unevenness 2 keeps the 0.7 cover first set for Whroo, itself unsourced.
 [defaults.woody_litter]
 dry_mass = "1.5 kg/m^2"
-thickness = "2.4 cm"
-cover_fraction = 0.7
+thickness = "3.3 cm"
+area_per_mass = "4 m^2/kg"
+unevenness = 2.0
 albedo = 0.35
 
 # Litter at grass, crop and pasture sites. Central Australian rangeland litter is 0.13-0.4 kg/m²
-# (Friedel 1981, doi:10.1071/BT9810219). No grass litter bulk density, cover or albedo is in hand:
-# these take woody_litter's, with its bulk density giving the thickness.
+# (Friedel 1981, doi:10.1071/BT9810219). No grass litter thickness, area per mass or albedo is in
+# hand: the thickness is guessed, loose thatch close to woody_litter's depth; flat winter wheat
+# residue is 2.7-5.4 m²/kg (CropSyst manual); the albedo takes woody_litter's.
 [defaults.pasture_litter]
 dry_mass = "0.2 kg/m^2"
-thickness = "0.3 cm"
-cover_fraction = 0.7
+thickness = "2 cm"
+area_per_mass = "4 m^2/kg"
 albedo = 0.35
+
+# Grass, crop and pasture leaves: guessed narrow blades, no empirical data. Campbell's x stays spherical.
+[defaults.pasture_leaf]
+leaf_length = "0.1 m"
+leaf_width = "0.005 m"
+leaf_emissivity = 0.97
+leaf_water_potential = "0 J/kg"
+canopy_projection_ratio = 1.0
 
 [sites.AliceSpringsMulga]
 pai_shape = "top_heavy"

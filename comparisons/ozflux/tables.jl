@@ -43,7 +43,7 @@ function site_setting(site_name, key)
 end
 
 site_albedo(site_name) = site_setting(site_name, "albedo")
-leaf_parameters(site_name) = LeafParameters(; site_setting(site_name, "leaf")...)
+leaf_parameters(site_name) = LeafParameters(; site_setting(site_name, is_woody(site_name) ? "leaf" : "pasture_leaf")...)
 pai_shape(site_name) = Symbol(site_setting(site_name, "pai_shape"))
 forcing_backups(site_name) = something(site_setting(site_name, "forcing_backups"), (;))
 soil_horizons(site_name) = site_setting(site_name, "soil_horizons")

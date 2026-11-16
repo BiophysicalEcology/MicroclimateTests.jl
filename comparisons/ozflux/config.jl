@@ -25,14 +25,14 @@ soil_energy_model_choice = SoilHeatTransport1D(; ode_solver=ImplicitEuler(),
 canopy_convergence_model_choice = AndersonCanopyConvergence(; leaf_balance_tolerance=1.5u"W/m^2",
     air_temperature_tolerance=0.1u"K", vapor_density_tolerance=0.07u"g/m^3",
     inverse_obukhov_length_tolerance=1e-2u"m^-1", on_failure=SmallestResidual())
-# One canopy solve per hour at the previous hour's ground temperature
-canopy_soil_coupling_choice = FullColumnCoupling(; convergence=FixedIterationConvergence(1))
-ground_coupling_choice = GroundTurbulence(; stability=GroundRichardson())
+# Stack API: no FullColumnCoupling / GroundTurbulence. The canopy solve converges the ground
+# temperature itself (AndersonCanopyConvergence's default ground_temperature_model=SoilIntegration()),
+# and ground-air exchange is RaupachLTheoryAirProfile's turbulent resistance + StantonGroundSublayer (default).
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact)) # or Val(:bulk), or KTheoryAirProfile()
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; formulation=ExactRaupachFormulation()) # or Val(:bulk), or KTheoryAirProfile()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange()
 boundary_layer_model_choice = MoninObukhov(; stability_limit=Microclimate.MomentumCorrectionLimit(),
     stability_functions=ChengBrutsaert(; momentum_dyer_constant=16.0, heat_dyer_constant=16.0))
@@ -53,6 +53,8 @@ pedotransfer_model_choice = CampbellParticleSize()  # or CosbyMultivariate(), Co
 
 # ── Save outputs to disk ──────────────────────────────────────────────────────
 save_outputs  = true
-outputs_dir   = joinpath(@__DIR__, "julia_outputs")
+outputs_dir   = get(ENV, "OZFLUX_OUTPUTS_DIR", joinpath(@__DIR__, "julia_outputs_stack"))
+# "site" (sites.toml litter, needs a stack with LitterLayer) or "none" (NoLitter, or no litter field at all)
+litter_choice = get(ENV, "OZFLUX_LITTER", isdefined(Microclimate, :LitterLayer) ? "site" : "none")
 figure_format = "png"
 emissivity = 0.97
