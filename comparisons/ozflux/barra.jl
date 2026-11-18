@@ -12,6 +12,12 @@ const BARRA_HUMIDITY_LEVELS_HPA = (950, 925, 850, 700)
 const DRY_AIR_GAS_CONSTANT = 287.05  # J/kg/K
 const STANDARD_LAPSE_RATE = 0.0065   # K/m
 const GRAVITY = 9.80665              # m/s²
+# THREDDS can stay silent for over a minute before answering a request for older months, and
+# Downloads' default gives up after 20 s without data
+const BARRA_STALL_LIMIT_SECONDS = 300
+const BARRA_DOWNLOADER = Downloads.Downloader()
+BARRA_DOWNLOADER.easy_hook = (easy, info) ->
+    Downloads.Curl.setopt(easy, Downloads.Curl.CURLOPT_LOW_SPEED_TIME, BARRA_STALL_LIMIT_SECONDS)
 
 # (time, value) pairs of a BARRA-R2 variable over a file: hourly `var` for `month`, or the
 # fixed field `var` (orog). Times are UTC: instants on the hour, hour means at the half hour.
@@ -19,7 +25,7 @@ function _barra_point(var, latitude, longitude; month=nothing)
     file = month === nothing ? "fx/$var/latest/$(var)_AUS-11_ERA5_historical_hres_BOM_BARRA-R2_v1.nc" :
         "1hr/$var/latest/$(var)_AUS-11_ERA5_historical_hres_BOM_BARRA-R2_v1_1hr_$(Dates.format(month, "yyyymm"))-$(Dates.format(month, "yyyymm")).nc"
     url = "$BARRA_NCSS/$file?var=$var&latitude=$(ustrip(u"°", latitude))&longitude=$(ustrip(u"°", longitude))&temporal=all&accept=csv"
-    fetch() = String(take!(Downloads.download(url, IOBuffer())))
+    fetch() = String(take!(Downloads.download(url, IOBuffer(); downloader=BARRA_DOWNLOADER)))
     body = retry(fetch; delays=ExponentialBackOff(n=4, first_delay=5.0))()
     return map(split(strip(body), '\n')[2:end]) do line
         fields = split(line, ',')
