@@ -54,9 +54,10 @@ end
 # Hourly BARRA-R2 forcing for `years` at a site, in the tower file's units (air temperature °C,
 # wind speed m/s, absolute humidity g/m³, radiation W/m², rainfall mm, pressure kPa), on the
 # hours the tower's own hourly rows use: local standard time (`utc_offset`), labelled by the
-# hour's start
+# hour's start. Cached in BARRA_DIR under a name holding the humidity levels, so changing them
+# builds a new cache.
 function barra_forcing(site_name, latitude, longitude, elevation, years, utc_offset::Minute)
-    path = joinpath(BARRA_DIR, "$(site_name)_$(join(years, '-')).csv")
+    path = joinpath(BARRA_DIR, "$(site_name)_$(join(years, '-'))_humidity_levels_$(join(BARRA_HUMIDITY_LEVELS_HPA, '-'))hPa.csv")
     isfile(path) && return CSV.read(path, DataFrame)
     mkpath(BARRA_DIR)
     first_hour, last_hour = DateTime(minimum(years), 1, 1) - utc_offset, DateTime(maximum(years) + 1, 1, 1) - utc_offset
