@@ -162,10 +162,11 @@ is_woody(site_name) = site_canopy_height(site_name) >= site_setting(site_name, "
 function site_litter(site_name)
     litter_choice == "none" && return isdefined(Microclimate, :NoLitter) ? Microclimate.NoLitter() : nothing
     settings = site_setting(site_name, is_woody(site_name) ? "woody_litter" : "pasture_litter")
-    (; dry_mass, thickness, area_per_mass, albedo) = settings
+    (; dry_mass, thickness, area_per_mass, albedo, element_vapor_resistance) = settings
     unevenness = get(settings, :unevenness, 0.0)
     τ = uconvert(NoUnits, area_per_mass * dry_mass)
     gap = unevenness == 0 ? exp(-τ) : (1.0 + unevenness * τ)^(-1 / unevenness)
-    return Microclimate.LitterLayer(; dry_mass, thickness, cover_fraction = 1.0 - gap, albedo)
+    moisture = litter_moisture_choice == "wet" ? Microclimate.WetLitter(; element_vapor_resistance) : Microclimate.DryLitter()
+    return Microclimate.LitterLayer(; dry_mass, thickness, cover_fraction = 1.0 - gap, albedo, moisture)
 end
 site_ground_roughness_height(site_name) = site_setting(site_name, "woody_ground_roughness_height")

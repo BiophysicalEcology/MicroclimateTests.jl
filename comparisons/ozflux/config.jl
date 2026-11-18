@@ -60,5 +60,7 @@ save_outputs  = true
 outputs_dir   = get(ENV, "OZFLUX_OUTPUTS_DIR", joinpath(@__DIR__, "julia_outputs_stack"))
 # "site" (sites.toml litter, needs a stack with LitterLayer) or "none" (NoLitter, or no litter field at all)
 litter_choice = get(ENV, "OZFLUX_LITTER", isdefined(Microclimate, :LitterLayer) ? "site" : "none")
+# "dry" (DryLitter) or "wet" (WetLitter, holding water and evaporating, needs a stack with WetLitter)
+litter_moisture_choice = get(ENV, "OZFLUX_LITTER_MOISTURE", "dry")
 figure_format = "png"
 emissivity = 0.97

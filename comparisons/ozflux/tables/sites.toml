@@ -52,6 +52,9 @@ thickness = "3.3 cm"
 area_per_mass = "4 m^2/kg"
 unevenness = 2.0
 albedo = 0.35
+# SHAW suggests 1000-50,000 s/m between residue elements and the air around them (SHAW 3.0.3
+# user manual, RESCOF); none is measured for eucalypt or grass litter, so the geometric middle
+element_vapor_resistance = "7000 s/m"
 
 # Litter at grass, crop and pasture sites. Central Australian rangeland litter is 0.13-0.4 kg/m²
 # (Friedel 1981, doi:10.1071/BT9810219). No grass litter thickness, area per mass or albedo is in
@@ -62,6 +65,7 @@ dry_mass = "0.2 kg/m^2"
 thickness = "2 cm"
 area_per_mass = "4 m^2/kg"
 albedo = 0.35
+element_vapor_resistance = "7000 s/m"
 
 # Grass, crop and pasture leaves: guessed narrow blades, no empirical data. Campbell's x stays spherical.
 [defaults.pasture_leaf]
