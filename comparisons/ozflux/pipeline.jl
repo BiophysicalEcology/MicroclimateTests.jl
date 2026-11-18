@@ -200,10 +200,12 @@ function _gapfilled_hourly_forcing(resolved, hourly)
     ws_col = wind_at_height.(hourly[!, forcing.wind_speed], forcing.wind_height, forcing.reference_height, canopy_height)
     reference_temperature = fill_gaps(ta_col) .* u"°C"
 
-    # Relative humidity: measured, or from absolute humidity at the air temperature
+    # Relative humidity: measured, or from absolute humidity at the air temperature. Values
+    # outside 0-100% are not humidities, so they are missing.
     ta_C = ustrip.(u"°C", reference_temperature)
-    rh_raw = forcing.humidity_is_absolute ?
+    rh_measured = forcing.humidity_is_absolute ?
         [ismissing(ah) ? missing : _rh_from_ah(ah, t) for (ah, t) in zip(humidity_col, ta_C)] : humidity_col
+    rh_raw = [ismissing(rh) || 0.0 <= rh <= 100.0 ? rh : missing for rh in rh_measured]
     reference_humidity = fill_gaps(rh_raw) ./ 100.0
     shortwave_col, longwave_col = hourly[!, forcing.downwelling_shortwave], hourly[!, forcing.downwelling_longwave]
     reference_wind_speed  = fill_gaps(ws_col) .* u"m/s"

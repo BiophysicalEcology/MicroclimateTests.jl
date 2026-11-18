@@ -8,7 +8,7 @@
 
 const BARRA_NCSS = "https://thredds.nci.org.au/thredds/ncss/grid/ob53/output/reanalysis/AUS-11/BOM/ERA5/historical/hres/BARRA-R2/v1"
 const BARRA_REFERENCE_HEIGHT = 100.0u"m"
-const BARRA_HUMIDITY_LEVELS_HPA = (950, 925, 850)
+const BARRA_HUMIDITY_LEVELS_HPA = (950, 925, 850, 700)
 const DRY_AIR_GAS_CONSTANT = 287.05  # J/kg/K
 const STANDARD_LAPSE_RATE = 0.0065   # K/m
 const GRAVITY = 9.80665              # m/s²
@@ -28,10 +28,11 @@ function _barra_point(var, latitude, longitude; month=nothing)
 end
 
 # Specific humidity at pressure `p` (hPa) by linear interpolation in log pressure between the
-# surface (`ps`, `huss`) and the pressure levels above it
+# surface (`ps`, `huss`) and the pressure levels above it. `p` must lie between them.
 function _humidity_at_pressure(p, ps, huss, level_humidity)
     anchors = sort([(ps, huss); [(level, q) for (level, q) in level_humidity if level < ps]]; rev=true)
-    i = something(findfirst(a -> first(a) <= p, anchors), length(anchors))
+    i = findfirst(a -> first(a) <= p, anchors)
+    i === nothing && error("$p hPa is above the highest humidity level, $(first(last(anchors))) hPa")
     i == 1 && return last(anchors[1])
     (p₁, q₁), (p₂, q₂) = anchors[i - 1], anchors[i]
     return q₁ + (q₂ - q₁) * log(p / p₁) / log(p₂ / p₁)
