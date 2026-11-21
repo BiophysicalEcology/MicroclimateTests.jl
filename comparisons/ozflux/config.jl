@@ -34,10 +34,26 @@ rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
 interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-# As the reference's GroundTurbulence(; stability=GroundRichardson()) ground coupling
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; formulation=ExactRaupachFormulation(),
-    ground_turbulence_model=GroundTurbulence(; stability=GroundRichardson())) # or BulkRaupachFormulation(), or KTheoryAirProfile()
-longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange()
+# Ground stability: "richardson", "obukhov" or "louis"; free-convection floor in m/s
+ground_turbulence_choice = GroundTurbulence(;
+    stability=Dict("richardson" => GroundRichardson, "obukhov" => CanopyObukhovLength,
+        "louis" => LouisGroundRichardson)[get(ENV, "OZFLUX_GROUND_STABILITY", "louis")](),
+    free_convection_velocity=parse(Float64, get(ENV, "OZFLUX_FREE_CONVECTION", "0.04")) * u"m/s")
+# In-canopy air profile: "exact" or "bulk" Raupach, or "ktheory"
+canopy_air_profile_model_choice = Dict(
+    "exact" => () -> RaupachLTheoryAirProfile(; formulation=ExactRaupachFormulation(), ground_turbulence_model=ground_turbulence_choice),
+    "bulk" => () -> RaupachLTheoryAirProfile(; formulation=BulkRaupachFormulation(), ground_turbulence_model=ground_turbulence_choice),
+    "ktheory" => () -> KTheoryAirProfile(; ground_turbulence_model=ground_turbulence_choice))[get(ENV, "OZFLUX_AIR_PROFILE", "exact")]()
+# Mixing at canopy top as a multiple of the surface layer's
+roughness_sublayer_choice = Microclimate.CanopyTopMixingEnhancement(;
+    max_enhancement=parse(Float64, get(ENV, "OZFLUX_CANOPY_TOP_ENHANCEMENT", "6.0")))
+# Ground roughness length in m for every site, or each site's own when unset
+ground_roughness_override = haskey(ENV, "OZFLUX_GROUND_ROUGHNESS") ? parse(Float64, ENV["OZFLUX_GROUND_ROUGHNESS"]) * u"m" : nothing
+# Soil nodes in m added to the grid, comma separated
+extra_soil_depths_m = parse.(Float64, filter(!isempty, split(get(ENV, "OZFLUX_EXTRA_SOIL_DEPTHS", ""), ",")))
+# "radiosity" (LayeredRadiosityExchange), "layered" (LayeredLongwaveExchange) or "black_body" (BlackBodyLongwaveExchange, as micropoint)
+longwave_model_choice = Dict("radiosity" => () -> LayeredRadiosityExchange(), "layered" => () -> LayeredLongwaveExchange(),
+    "black_body" => () -> Microclimate.BlackBodyLongwaveExchange())[get(ENV, "OZFLUX_LONGWAVE", "radiosity")]()
 boundary_layer_model_choice = MoninObukhov(; stability_limit=Microclimate.MomentumCorrectionLimit(),
     stability_functions=ChengBrutsaert(; momentum_dyer_constant=16.0, heat_dyer_constant=16.0))
 vapour_pressure_equation_choice = VapourPressureLookup()  # or GoffGratch()

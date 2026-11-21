@@ -284,7 +284,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
         deep_soil_temperature = fill(mean_air_temperature, ndays),  # no borehole climatology available; site-year mean air temp as a stand-in
         leaf_area_index = fill(leaf_area_index, ndays),  # only read by NoCanopy's ET partitioning; MultilayerCanopy uses its own plant_area_index
         albedo = fill(site_albedo(site_name), ndays),
-        roughness_height = fill(site_ground_roughness_height(site_name), ndays),
+        roughness_height = fill(something(ground_roughness_override, site_ground_roughness_height(site_name)), ndays),
     )
 
     site = Site(;
@@ -292,7 +292,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
         horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
     )
 
-    depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
+    depths = _build_depths(SIM_DEPTHS_M, vcat(_observed_depths_m(hourly), extra_soil_depths_m))
     soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths)
 
     heights = _build_heights(canopy_height, reference_height, first.(height_series))
@@ -350,6 +350,7 @@ function canopy_model(site_name, resolved, heights)
         shortwave_model = TwoStreamRadiation(; leaf_reflectance, leaf_transmittance),
         longwave_model = longwave_model_choice, wind_model = canopy_wind_model_choice,
         air_profile_model = canopy_air_profile_model_choice, interception_model = interception_model_choice,
+        roughness_sublayer = roughness_sublayer_choice,
         leaf_parameters = leaf_parameters(site_name), stomatal_model = MoistureResponsiveStomatalConductance(),
         leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice)
 end
