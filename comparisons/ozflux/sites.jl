@@ -158,7 +158,7 @@ end
 # Stack LitterLayer takes cover_fraction, not area_per_mass/unevenness: the cover is the reference's
 # 1 - gap fraction, gap = exp(-τ) (unevenness 0) or (1 + unevenness·τ)^(-1/unevenness), τ = area_per_mass·dry_mass
 function site_litter(site_name)
-    litter_choice == "none" && return isdefined(Microclimate, :NoLitter) ? Microclimate.NoLitter() : nothing
+    litter_choice == "none" && return Microclimate.NoLitter()
     settings = site_setting(site_name, "litter")
     (; dry_mass, thickness, area_per_mass, albedo, element_vapor_resistance) = settings
     unevenness = get(settings, :unevenness, 0.0)

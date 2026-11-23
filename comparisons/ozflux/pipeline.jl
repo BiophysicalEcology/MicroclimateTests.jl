@@ -364,8 +364,7 @@ function micro_model(site_name, site, soil_profile, depths, heights, canopy, rai
         moisture_strategy = soil_moisture_strategy_choice, energy_model = soil_energy_model_choice)
     atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
     config = MicroConfig(; convergence = convergence_choice, rainfall_schedule)
-    # PR4's SurfaceModel has no litter_model field: site_litter gives `nothing` there
-    surface = litter_model === nothing ? SurfaceModel() : SurfaceModel(; litter_model)
+    surface = SurfaceModel(; litter_model)
     return MicroModel(; hours = 0:1:23, site, soil, surface, atmosphere, canopy, config,
         vapour_pressure_equation = vapour_pressure_equation_choice)
 end
