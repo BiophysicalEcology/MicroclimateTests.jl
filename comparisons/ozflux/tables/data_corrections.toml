@@ -14,48 +14,48 @@ type = "RescaleBelow"
 variable = "RH"
 threshold = 1.5
 factor = 100.0
-reason = "relative humidity as a fraction in stretches of a percentage record (CapeTribulation: QCFlag 0 throughout, the low stretch clusters in 0-0.95); percentage RH never falls to 1.5"
+reason = "relative humidity as a fraction in stretches of a percentage record; percentage RH never falls to 1.5"
 
 [[all_sites]]
 type = "ImplausibleRange"
 variable = "RH"
 low = 1.0
 high = 100.0
-reason = "CapeTribulation's rainforest RH sits near 0% for weeks, passing QC"
+reason = "relative humidity outside 1-100% is physically implausible"
 
 [[all_sites]]
 type = "ImplausibleRange"
 variable = "Ta"
 low = -10.0
 high = 55.0
-reason = "physically implausible at these sites"
+reason = "air temperature outside -10 to 55 °C is physically implausible"
 
 [[all_sites]]
 type = "ImplausibleRange"
 variable = "Ws"
 low = 0.0
 high = 60.0
-reason = "physically implausible at these sites"
+reason = "wind speed outside 0-60 m/s is physically implausible"
 
 [[all_sites]]
 type = "ImplausibleRange"
 variable = "Fsd"
 low = 0.0
 high = 1500.0
-reason = "physically implausible at these sites"
+reason = "downwelling shortwave outside 0-1500 W/m² is physically implausible: the solar constant is 1361 W/m²"
 
 [[all_sites]]
 type = "ImplausibleRange"
 variable = "Fld"
 low = 100.0
 high = 600.0
-reason = "physically implausible at these sites"
+reason = "downwelling longwave outside 100-600 W/m² is physically implausible: blackbody emission at -68 and 48 °C"
 
 [[all_sites]]
 type = "Flatline"
 duration_minutes = 240
 exempt_prefixes = ["Ts", "Sws"]
-reason = "four hours of identical readings is a stuck sensor; zero is exempt (calm wind, night shortwave and dry spells sit at zero for hours), and so is soil temperature and moisture, slow and quantised (WallabyCreek's Sws takes 115-933 distinct values a year)"
+reason = "four hours of identical readings is a stuck sensor; zero is exempt (calm wind, night shortwave and dry spells sit at zero for hours), and so are soil temperature and moisture, which change slowly in quantised steps"
 
 [[sites.AdelaideRiver]]
 type = "AttributeOverride"
