@@ -59,19 +59,21 @@ end
 site_utc_offset(site_name) =
     Minute(OZFLUX_CONVENTIONS["time_zone_utc_offset_minutes"][site_attributes(site_name)["time_zone"]])
 
-# Calendar years a site runs over, from FIRST_MODIS_YEAR so MODIS gives its leaf area index:
-# the whole year with the most half-hours of good tower forcing and soil temperature (the
-# latest on ties), else every year the record touches, for records shorter than any whole year.
-# Times label each half-hour's end, so a year's last record is 00:00 on 1 January.
+# The file's record interval
+site_time_step(site_name) = Minute(parse(Int, site_attributes(site_name)["time_step"]))
+
+# Run years from FIRST_MODIS_YEAR: the whole year with the most good forcing and soil temperature records (latest on ties), else every year recorded
 function run_years(site_name)
+    step = site_time_step(site_name)
     NCDataset(ozflux_site_path(OZFLUX_DATA_DIR, site_name)) do ds
         times = ds["time"][:]
-        years = Dates.year.(times .- Minute(30))
+        # Times label each record's end
+        years = Dates.year.(times .- step)
         good = trues(length(years))
         for name in BEST_YEAR_VARIABLES
             good .&= haskey(ds, name * "_QCFlag") ? in.(ds[name * "_QCFlag"][:], Ref(OZFLUX_GOOD_QC_FLAGS)) : false
         end
-        whole(y) = first(times) <= DateTime(y, 1, 1, 0, 30) && last(times) >= DateTime(y + 1, 1, 1)
+        whole(y) = first(times) <= DateTime(y, 1, 1) + step && last(times) >= DateTime(y + 1, 1, 1)
         recorded = filter(>=(FIRST_MODIS_YEAR), unique(years))
         isempty(recorded) && error("$site_name has no record from $FIRST_MODIS_YEAR")
         candidates = filter(whole, recorded)
@@ -84,7 +86,7 @@ end
 # First and last day of the site's record within `years`
 function record_period(site_name, years)
     NCDataset(ozflux_site_path(OZFLUX_DATA_DIR, site_name)) do ds
-        days = filter(d -> Dates.year(d) in years, Date.(ds["time"][:] .- Minute(30)))
+        days = filter(d -> Dates.year(d) in years, Date.(ds["time"][:] .- site_time_step(site_name)))
         return first(days), last(days)
     end
 end
