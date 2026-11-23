@@ -1,42 +1,27 @@
-# comparison.jl
-#
-# Batch entry point: runs the canopy model on tower forcing at every site in
-# data/, over each site's best-covered year or, where shorter, its whole record
-# (sites.jl's run_years). Writes per-site stats (report.jl) to all_stats.csv and prints a cross-site summary. All model
-# setup and per-site logic lives in pipeline.jl/sites.jl/report.jl (shared
-# with single_site.jl) and config.jl. SILO forcing runs are single_site.jl.
-#
-# Usage:
-#   julia comparison.jl              ← every site in data/
-#   include("comparison.jl")         ← from a Julia REPL
+# Entry point: runs every site on tower forcing over its run years, writes all_stats.csv and prints a cross-site summary
 
 using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation, OrdinaryDiffEqSDIRK
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
 using Rasters, ArchGDAL, NCDatasets, RasterDataSources, PointDataSources
-using Rasters.Extents: Extent
 using GeoInterface: Wrappers as GIW
 using Serialization
 
 include("ozflux.jl")
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  RUN CONFIGURATION                                                       ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
-
 sites = filter(!excluded, sort(collect(keys(discover_site_years(OZFLUX_DATA_DIR)))))
-make_plots = false   # per-site plots for every run (slow over every site)
+# Per-site plots, slow over every site
+make_plots = false
 plot_forcing = false
 plot_variable = nothing
 # Report on the saved results (save_site_result) instead of solving
 rescore = get(ENV, "MICROCLIMATETESTS_RESCORE", "false") == "true"
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  MAIN LOOP                                                               ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
-
 all_stats = DataFrame()
 failures = Tuple{String,String}[]
-fail!(site_name, err) = (push!(failures, (site_name, sprint(showerror, err))); @warn "Site $site_name failed" exception=err)
+function fail!(site_name, err)
+    push!(failures, (site_name, sprint(showerror, err)))
+    @warn "Site $site_name failed" exception=err
+end
 
 # Prepare serially (NetCDF and the caches aren't thread-safe), solve on every thread, report serially
 prepared = []
@@ -62,7 +47,10 @@ else
     end
 end
 for (prep, result) in zip(prepared, results)
-    result isa Exception && (fail!(prep.site_name, result); continue)
+    if result isa Exception
+        fail!(prep.site_name, result)
+        continue
+    end
     rescore || save_site_result(result, "tower")
     try
         stats = report_site_results(result, result.output; make_plots, display_plots=false, plot_forcing, plot_variable)
@@ -72,6 +60,7 @@ for (prep, result) in zip(prepared, results)
         fail!(prep.site_name, err)
     end
 end
+mkpath(outputs_dir)
 CSV.write(joinpath(outputs_dir, "all_stats.csv"), all_stats)
 
 # ── Cross-site summary: mean bias and RMSE of each variable over the sites measuring it ──
@@ -85,5 +74,8 @@ if nrow(all_stats) > 0
         rows = filter(r -> r.variable == v, sub)
         @printf("  %-32s  %5d   %+8.3f / %7.3f  %s\n", v, nrow(rows), mean(rows.bias), mean(rows.rmse), only(unique(rows.units)))
     end
-    isempty(failures) || (println("\nFailed:"); foreach(((s, e),) -> println("  $s: ", first(split(e, '\n'))), failures))
+    isempty(failures) || println("\nFailed:")
+    for (s, e) in failures
+        println("  $s: ", first(split(e, '\n')))
+    end
 end

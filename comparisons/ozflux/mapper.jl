@@ -73,7 +73,7 @@ function prepare_site_silo(site_name, years; max_days=nothing, litter_model=site
     sim_start, sim_end = _year_span(years)
 
     hourly = _aggregate_hourly(read_ozflux_nc(resolved.path, years, site_corrections(site_name); height_series))
-    depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
+    depths = _build_depths(SIM_DEPTHS_M, vcat(_observed_depths_m(hourly), extra_soil_depths_m))
     heights = _build_heights(canopy_height, reference_height, first.(height_series))
 
     site = Site(;
