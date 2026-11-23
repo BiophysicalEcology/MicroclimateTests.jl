@@ -1,16 +1,8 @@
-# site_plots.jl
-#
-# Entry point: plots every site's stats from all_stats.csv (written by comparison.jl) with
-# CairoMakie, into julia_outputs/site_plots. Needs no solve or observations. For each group of
-# variables, one dot per site for each measure; then every site against every variable.
-#
-# Usage:
-#   julia site_plots.jl              ← after comparison.jl
-#   include("site_plots.jl")         ← from a Julia REPL
+# Entry point, after comparison.jl: plots every site's stats from the outputs folder's all_stats.csv into its site_plots/
 
 using CSV, DataFrames, Statistics, CairoMakie
 
-outputs_dir = joinpath(@__DIR__, "julia_outputs")
+outputs_dir = get(ENV, "OZFLUX_OUTPUTS_DIR", joinpath(@__DIR__, "outputs", "default"))
 plots_dir = joinpath(outputs_dir, "site_plots")
 mkpath(plots_dir)
 

@@ -30,7 +30,7 @@ per site-year (`run_site_silo`) as its own comparison against the tower obs.
 - `single_site.jl` — entry point: one site-year, no try/catch, for stepping
   through in the debugger.
 - `site_plots.jl` — entry point: Makie plots of every site's stats from
-  `all_stats.csv`, into `julia_outputs/site_plots`. Needs no solve.
+  `all_stats.csv`, into `outputs/default/site_plots`. Needs no solve.
 
 ## Data
 
@@ -83,7 +83,7 @@ not just the aggregate flux.
 
 Every comparison: `ModelStats` (r/RMSE/bias/n) via `compute_stats`, an
 overlaid obs-vs-model timeseries plot, and a scatter/1:1 plot, saved under
-`outputs_dir` (`julia_outputs/` by default, gitignored) per site-year and
+`outputs_dir` (`outputs/default/` by default, gitignored) per site-year and
 forcing/canopy mode.
 
 ### Vertical profile snapshots

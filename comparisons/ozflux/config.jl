@@ -72,7 +72,7 @@ pedotransfer_model_choice = CampbellParticleSize()  # or CosbyMultivariate(), Co
 
 # ── Save outputs to disk ──────────────────────────────────────────────────────
 save_outputs  = true
-outputs_dir   = get(ENV, "OZFLUX_OUTPUTS_DIR", joinpath(@__DIR__, "julia_outputs_stack"))
+outputs_dir   = get(ENV, "OZFLUX_OUTPUTS_DIR", joinpath(@__DIR__, "outputs", "default"))
 # "site" (sites.toml litter, needs a stack with LitterLayer) or "none" (NoLitter, or no litter field at all)
 litter_choice = get(ENV, "OZFLUX_LITTER", isdefined(Microclimate, :LitterLayer) ? "site" : "none")
 # "dry" (DryLitter) or "wet" (WetLitter, holding water and evaporating, needs a stack with WetLitter)
