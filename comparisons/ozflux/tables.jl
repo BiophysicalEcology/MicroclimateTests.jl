@@ -32,18 +32,41 @@ const PEAT = table_value(read_table("peat"))
 
 # ── Site settings ─────────────────────────────────────────────────────────────
 const SITE_SETTINGS = read_table("sites")
+const IGBP_CLASSES = read_table("igbp_classes")["classes"]
 
-# A site's setting `key`: its own, else the default, merged key by key for sub-tables; nothing
-# when neither sets it
+# A site's own sites.toml table, empty when it has none
+own_site_settings(site_name) = get(SITE_SETTINGS["sites"], site_name, Dict{String,Any}())
+
+# A site's IGBP class: its own igbp_class, else igbp_classes.toml's for its FLUXNET ID
+function igbp_class(site_name)
+    own = get(own_site_settings(site_name), "igbp_class", nothing)
+    own === nothing || return own
+    id = get(site_attributes(site_name), "fluxnet_id", "")
+    haskey(IGBP_CLASSES, id) || error("$site_name: FLUXNET ID \"$id\" not in igbp_classes.toml; set its igbp_class in sites.toml")
+    return IGBP_CLASSES[id]
+end
+
+# A site's vegetation type (sites.toml's [vegetation.<type>]), from its IGBP class
+function vegetation_type(site_name)
+    class = igbp_class(site_name)
+    haskey(SITE_SETTINGS["igbp_vegetation"], class) || error("$site_name: IGBP class $class has no entry in sites.toml's [igbp_vegetation]")
+    return SITE_SETTINGS["igbp_vegetation"][class]
+end
+
+# Merges key by key where both are tables, else the later replaces the earlier
+layer_setting(earlier, later) = earlier isa AbstractDict && later isa AbstractDict ? merge(earlier, later) : something(later, Some(earlier))
+
+# A site's setting `key`: the default, then its vegetation type's, then its own; nothing when none sets it
 function site_setting(site_name, key)
     default = get(SITE_SETTINGS["defaults"], key, nothing)
-    own = get(get(SITE_SETTINGS["sites"], site_name, Dict{String,Any}()), key, nothing)
-    value = own isa AbstractDict && default isa AbstractDict ? merge(default, own) : something(own, default, Some(nothing))
+    vegetation = get(SITE_SETTINGS["vegetation"][vegetation_type(site_name)], key, nothing)
+    own = get(own_site_settings(site_name), key, nothing)
+    value = layer_setting(layer_setting(default, vegetation), own)
     return value === nothing ? nothing : table_value(value)
 end
 
 site_albedo(site_name) = site_setting(site_name, "albedo")
-leaf_parameters(site_name) = LeafParameters(; site_setting(site_name, is_woody(site_name) ? "leaf" : "pasture_leaf")...)
+leaf_parameters(site_name) = LeafParameters(; site_setting(site_name, "leaf")...)
 pai_shape(site_name) = Symbol(site_setting(site_name, "pai_shape"))
 forcing_backups(site_name) = something(site_setting(site_name, "forcing_backups"), (;))
 soil_horizons(site_name) = site_setting(site_name, "soil_horizons")
