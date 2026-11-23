@@ -71,13 +71,30 @@ end
 const CORRECTION_KINDS = Dict(string(nameof(T)) => T for T in
     (Rescale, RescaleBelow, ImplausibleRange, Flatline, SaturationFraction, AttributeOverride, SensorDepth, FaultySensor, ExcludedSite))
 
+# data_corrections.toml's sections in the order they apply, each with its correction kind, or nothing where each entry names its `type`
+const CORRECTION_SECTIONS = [
+    "excluded_sites" => ExcludedSite,
+    "attribute_overrides" => AttributeOverride,
+    "unit_errors" => nothing,
+    "implausible_values" => nothing,
+    "faulty_sensors" => FaultySensor,
+    "sensor_depths" => SensorDepth,
+]
+
 # A table entry as its correction
-correction(entry) = CORRECTION_KINDS[entry["type"]](; (Symbol(k) => v for (k, v) in entry if k != "type")...)
+function correction(kind, entry)
+    T = kind === nothing ? CORRECTION_KINDS[entry["type"]] : kind
+    return T(; (Symbol(k) => v for (k, v) in entry if k != "type" && k != "site")...)
+end
 
 const DATA_CORRECTIONS_TABLE = read_table("data_corrections")
-const ALL_SITE_CORRECTIONS = DataCorrection[correction(entry) for entry in DATA_CORRECTIONS_TABLE["all_sites"]]
-const SITE_DATA_CORRECTIONS = Dict{String,Vector{DataCorrection}}(site_name => correction.(entries)
-    for (site_name, entries) in DATA_CORRECTIONS_TABLE["sites"])
+const CORRECTION_ENTRIES = [(get(entry, "site", nothing), correction(kind, entry))
+    for (section, kind) in CORRECTION_SECTIONS for entry in get(DATA_CORRECTIONS_TABLE, section, [])]
+const ALL_SITE_CORRECTIONS = DataCorrection[c for (site, c) in CORRECTION_ENTRIES if site === nothing]
+const SITE_DATA_CORRECTIONS = Dict{String,Vector{DataCorrection}}()
+for (site, c) in CORRECTION_ENTRIES
+    site === nothing || push!(get!(SITE_DATA_CORRECTIONS, site, DataCorrection[]), c)
+end
 
 site_corrections(site_name) = [ALL_SITE_CORRECTIONS; get(SITE_DATA_CORRECTIONS, site_name, DataCorrection[])]
 

@@ -1,203 +1,209 @@
-# Mistakes in the OzFlux files and how they are corrected before the model sees or is compared
-# against them: the rules applied at every site, then each site's own, each with its evidence.
-# Each `type` is a correction kind defined in data_corrections.jl.
-#
-# Not mistakes, so not here: where a file lacks something rather than gets it wrong
-#   - forcing the tower can't supply, from BARRA-R2 reanalysis (forcing_selection.jl, barra.jl)
-#   - elevation from SRTM when the file names none (sites.jl's site_elevation)
-#   - pressure from elevation when the file has none (sites.jl's site_pressure)
-#   - forcing gaps from backup instruments (sites.toml's forcing_backups)
-#   - a TCAV averaging thermocouple's depths, its 2-6 cm junctions not its 8 cm plate depth (utils.jl's _sensor_depth_range)
+# Mistakes in the OzFlux files, corrected before the model sees or is compared against them; entries without a `site` apply to every site
+# Not here, because the file lacks rather than gets wrong: BARRA-R2 forcing (barra.jl), SRTM elevation and pressure (sites.jl), backup forcing sensors (sites.toml), TCAV junction depths (utils.jl)
 
-[[all_sites]]
+# ── Sites not run ────────────────────────────────────────────────────────────
+
+[[excluded_sites]]
+site = "AlpinePeatland"
+reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.65 m^3/m^3, modelled mean far below it)"
+
+[[excluded_sites]]
+site = "Loxton"
+reason = "almond orchard (the file's vegetation attribute), taken as irrigated though the file doesn't say so: the irrigation rate is unknown and the forcing has only rain"
+
+[[excluded_sites]]
+site = "MyallValeB"
+reason = "irrigated field (TERN's Myall Vale B (Irrigated) Flux Data Collection): the irrigation rate is unknown and the forcing has only rain"
+
+[[excluded_sites]]
+site = "RedDirtMelonFarm"
+reason = "woody savannah cleared during the record; canopy_height \"variable\""
+
+[[excluded_sites]]
+site = "SamfordEcologicalResearchFacility"
+reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.45 m^3/m^3 against 0.48 modelled at saturation)"
+
+[[excluded_sites]]
+site = "SilverPlains"
+reason = "excluded for now: an Organosol, like AlpinePeatland too wet for the model's free-draining soil to represent (observed soil moisture median 0.79 m^3/m^3 against 0.93 modelled at saturation, modelled too dry by 0.21)"
+
+[[excluded_sites]]
+site = "YarramundiIrrigated"
+reason = "irrigated pasture (the file's vegetation attribute): the irrigation rate is unknown and the forcing has only rain"
+
+# ── Site metadata: global attributes replaced ────────────────────────────────
+
+[[attribute_overrides]]
+site = "AdelaideRiver"
+attribute = "fluxnet_id"
+value = "AU-Ade"
+reason = "the file's AU-Adr is in no FLUXNET list; AU-Ade is Adelaide River in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "Emerald"
+attribute = "fluxnet_id"
+value = "AU-Emr"
+reason = "the file has no fluxnet_id; AU-Emr is Emerald Arcturus in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "MyallValeA"
+attribute = "fluxnet_id"
+value = "AU-MvA"
+reason = "the file's AU-MVA differs in case from AU-MvA, Myall Vale A in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "MyallValeB"
+attribute = "fluxnet_id"
+value = "AU-MvB"
+reason = "the file's AU-MVB differs in case from AU-MvB, Myall Vale B in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "WallabyCreek"
+attribute = "canopy_height"
+value = "75m"
+reason = "the file's 100 m is the tallest trees; the mountain ash canopy averages 75 m (OzFlux site description)"
+
+[[attribute_overrides]]
+site = "WallabyCreek"
+attribute = "fluxnet_id"
+value = "AU-Wac"
+reason = "the file has no fluxnet_id; AU-Wac is Wallaby Creek in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "Wedgetail"
+attribute = "fluxnet_id"
+value = "AU-Wgt"
+reason = "the file's Au-Sil is SilverPlains' ID; AU-Wgt is Wedgetail in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "YarramundiControl"
+attribute = "fluxnet_id"
+value = "AU-Ya1"
+reason = "the file has no fluxnet_id; AU-Ya1 is Yarramundi Control in the FLUXNET Shuttle snapshot"
+
+[[attribute_overrides]]
+site = "YarramundiIrrigated"
+attribute = "fluxnet_id"
+value = "AU-Ya2"
+reason = "the file has no fluxnet_id; AU-Ya2 is Yarramundi Irrigated in the FLUXNET Shuttle snapshot"
+
+# ── Wrong units; each entry's `type` is its kind in data_corrections.jl ─────
+
+[[unit_errors]]
 type = "RescaleBelow"
 variable = "RH"
 threshold = 1.5
 factor = 100.0
 reason = "relative humidity as a fraction in stretches of a percentage record; percentage RH never falls to 1.5"
 
-[[all_sites]]
+[[unit_errors]]
+type = "Rescale"
+site = "DigbyPlantation"
+variable = "Sws_30cma"
+factor = 0.01
+reason = "labelled m^3/m^3 but a percentage: 2018 median 18.5, 95th percentile 41, valid_range 0-55"
+
+[[unit_errors]]
+type = "SaturationFraction"
+site = "LongreachMitchellGrassRangeland"
+variable = "Sws"
+reason = "labelled m^3/m^3 but peaks ~0.77, above plausible porosity: a fraction of saturation"
+
+# ── Implausible values, dropped; each entry's `type` is its kind in data_corrections.jl ─
+
+[[implausible_values]]
 type = "ImplausibleRange"
 variable = "RH"
 low = 1.0
 high = 100.0
 reason = "relative humidity outside 1-100% is physically implausible"
 
-[[all_sites]]
+[[implausible_values]]
 type = "ImplausibleRange"
 variable = "Ta"
 low = -10.0
 high = 55.0
 reason = "air temperature outside -10 to 55 °C is physically implausible"
 
-[[all_sites]]
+[[implausible_values]]
 type = "ImplausibleRange"
 variable = "Ws"
 low = 0.0
 high = 60.0
 reason = "wind speed outside 0-60 m/s is physically implausible"
 
-[[all_sites]]
+[[implausible_values]]
 type = "ImplausibleRange"
 variable = "Fsd"
 low = 0.0
 high = 1500.0
 reason = "downwelling shortwave outside 0-1500 W/m² is physically implausible: the solar constant is 1361 W/m²"
 
-[[all_sites]]
+[[implausible_values]]
 type = "ImplausibleRange"
 variable = "Fld"
 low = 100.0
 high = 600.0
 reason = "downwelling longwave outside 100-600 W/m² is physically implausible: blackbody emission at -68 and 48 °C"
 
-[[all_sites]]
+[[implausible_values]]
 type = "Flatline"
 duration_minutes = 240
 exempt_prefixes = ["Ts", "Sws"]
 reason = "four hours of identical readings is a stuck sensor; zero is exempt (calm wind, night shortwave and dry spells sit at zero for hours), and so are soil temperature and moisture, which change slowly in quantised steps"
 
-[[sites.AdelaideRiver]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-Ade"
-reason = "the file's AU-Adr is in no FLUXNET list; AU-Ade is Adelaide River in the FLUXNET Shuttle snapshot"
+# ── Faulty sensors, dropped wherever read ───────────────────────────────────
 
-[[sites.AlpinePeatland]]
-type = "ExcludedSite"
-reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.65 m^3/m^3, modelled mean far below it)"
-
-[[sites.Boyagin]]
-type = "FaultySensor"
+[[faulty_sensors]]
+site = "Boyagin"
 variable = "Sws"
 reason = "a CS616 that barely moves all of 2020: median 0.038 m^3/m^3, 5th-95th percentile 0.034-0.045, standard deviation 0.0036"
 
-[[sites.DigbyPlantation]]
-type = "Rescale"
-variable = "Sws_30cma"
-factor = 0.01
-reason = "labelled m^3/m^3 but a percentage: 2018 median 18.5, 95th percentile 41, valid_range 0-55"
+[[faulty_sensors]]
+site = "DigbyPlantation"
+variable = "Ts_30cma"
+reason = "the vertical CS650's thermistor, by the rods' entry into its head (Campbell Scientific CS650 manual): near the surface at an unknown depth, not at the 30 cm labelled"
 
-[[sites.DigbyPlantation]]
-type = "SensorDepth"
+[[faulty_sensors]]
+site = "DigbyPlantation"
+variable = "Ts"
+reason = "a copy of Ts_30cma"
+
+[[faulty_sensors]]
+site = "DigbyPlantation"
+variable = "Fg"
+reason = "median -84 W/m^2 against -4.0 and -2.9 from its two plates (Fg_8cma, Fg_8cmb), and clipped at its ±300 valid range; its storage term likely comes from the CS650's percent moisture and near-surface temperature taken as 30 cm"
+
+[[faulty_sensors]]
+site = "WallabyCreek"
+variable = "Fld"
+reason = "2007 over BARRA-R2's 100 m σTa⁴: median 1.00, 5th percentile 0.97 (a clear sky gives ~0.75; BARRA's own Fld median 0.84)"
+
+[[faulty_sensors]]
+site = "WallabyCreek"
+variable = "Flu"
+reason = "2007 over BARRA-R2's 100 m σTa⁴: median 1.19, 1.17 at night, when the canopy cools below the air and it should be under 1"
+
+[[faulty_sensors]]
+site = "WallabyCreek"
+variable = "Fn"
+reason = "the CNR4's net, from the faulty Fld and Flu"
+
+[[faulty_sensors]]
+site = "Whroo"
+variable = "Ta_HMP_16m"
+reason = "2016 mean 2.7 K above both the 8 m and 32 m sensors"
+
+[[faulty_sensors]]
+site = "Whroo"
+variable = "AH_HMP_1m"
+reason = "drier than every other height; r=0.32 with the model where the rest are 0.83-0.91"
+
+# ── Sensor depths, in place of the file's ──────────────────────────────────
+
+[[sensor_depths]]
+site = "DigbyPlantation"
 variable = "Sws_30cma"
 top_m = 0.0
 bottom_m = 0.3
 reason = "a CS650, whose water content is the average over its 30 cm rods (Campbell Scientific CS650 manual), installed vertically from the surface: its temperature (Ts_30cma) peaks at 16:00, an hour after the air, not near midnight as at 30 cm"
-
-[[sites.DigbyPlantation]]
-type = "FaultySensor"
-variable = "Ts_30cma"
-reason = "the vertical CS650's thermistor, by the rods' entry into its head (Campbell Scientific CS650 manual): near the surface at an unknown depth, not at the 30 cm labelled"
-
-[[sites.DigbyPlantation]]
-type = "FaultySensor"
-variable = "Ts"
-reason = "a copy of Ts_30cma"
-
-[[sites.DigbyPlantation]]
-type = "FaultySensor"
-variable = "Fg"
-reason = "median -84 W/m^2 against -4.0 and -2.9 from its two plates (Fg_8cma, Fg_8cmb), and clipped at its ±300 valid range; its storage term likely comes from the CS650's percent moisture and near-surface temperature taken as 30 cm"
-
-[[sites.Emerald]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-Emr"
-reason = "the file has no fluxnet_id; AU-Emr is Emerald Arcturus in the FLUXNET Shuttle snapshot"
-
-[[sites.LongreachMitchellGrassRangeland]]
-type = "SaturationFraction"
-variable = "Sws"
-reason = "labelled m^3/m^3 but peaks ~0.77, above plausible porosity: a fraction of saturation"
-
-[[sites.Loxton]]
-type = "ExcludedSite"
-reason = "almond orchard (the file's vegetation attribute), taken as irrigated though the file doesn't say so: the irrigation rate is unknown and the forcing has only rain"
-
-[[sites.MyallValeA]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-MvA"
-reason = "the file's AU-MVA differs in case from AU-MvA, Myall Vale A in the FLUXNET Shuttle snapshot"
-
-[[sites.MyallValeB]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-MvB"
-reason = "the file's AU-MVB differs in case from AU-MvB, Myall Vale B in the FLUXNET Shuttle snapshot"
-
-[[sites.MyallValeB]]
-type = "ExcludedSite"
-reason = "irrigated field (TERN's Myall Vale B (Irrigated) Flux Data Collection): the irrigation rate is unknown and the forcing has only rain"
-
-[[sites.RedDirtMelonFarm]]
-type = "ExcludedSite"
-reason = "woody savannah cleared during the record; canopy_height \"variable\""
-
-[[sites.SamfordEcologicalResearchFacility]]
-type = "ExcludedSite"
-reason = "excluded for now: effectively a bog that does not drain, which the model's free-draining soil can't represent (observed soil moisture median 0.45 m^3/m^3 against 0.48 modelled at saturation)"
-
-[[sites.SilverPlains]]
-type = "ExcludedSite"
-reason = "excluded for now: an Organosol, like AlpinePeatland too wet for the model's free-draining soil to represent (observed soil moisture median 0.79 m^3/m^3 against 0.93 modelled at saturation, modelled too dry by 0.21)"
-
-[[sites.WallabyCreek]]
-type = "AttributeOverride"
-attribute = "canopy_height"
-value = "75m"
-reason = "the file's 100 m is the tallest trees; the mountain ash canopy averages 75 m (OzFlux site description)"
-
-[[sites.WallabyCreek]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-Wac"
-reason = "the file has no fluxnet_id; AU-Wac is Wallaby Creek in the FLUXNET Shuttle snapshot"
-
-[[sites.WallabyCreek]]
-type = "FaultySensor"
-variable = "Fld"
-reason = "2007 over BARRA-R2's 100 m σTa⁴: median 1.00, 5th percentile 0.97 (a clear sky gives ~0.75; BARRA's own Fld median 0.84)"
-
-[[sites.WallabyCreek]]
-type = "FaultySensor"
-variable = "Flu"
-reason = "2007 over BARRA-R2's 100 m σTa⁴: median 1.19, 1.17 at night, when the canopy cools below the air and it should be under 1"
-
-[[sites.WallabyCreek]]
-type = "FaultySensor"
-variable = "Fn"
-reason = "the CNR4's net, from the faulty Fld and Flu"
-
-[[sites.Wedgetail]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-Wgt"
-reason = "the file's Au-Sil is SilverPlains' ID; AU-Wgt is Wedgetail in the FLUXNET Shuttle snapshot"
-
-[[sites.Whroo]]
-type = "FaultySensor"
-variable = "Ta_HMP_16m"
-reason = "2016 mean 2.7 K above both the 8 m and 32 m sensors"
-
-[[sites.Whroo]]
-type = "FaultySensor"
-variable = "AH_HMP_1m"
-reason = "drier than every other height; r=0.32 with the model where the rest are 0.83-0.91"
-
-[[sites.YarramundiControl]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-Ya1"
-reason = "the file has no fluxnet_id; AU-Ya1 is Yarramundi Control in the FLUXNET Shuttle snapshot"
-
-[[sites.YarramundiIrrigated]]
-type = "AttributeOverride"
-attribute = "fluxnet_id"
-value = "AU-Ya2"
-reason = "the file has no fluxnet_id; AU-Ya2 is Yarramundi Irrigated in the FLUXNET Shuttle snapshot"
-
-[[sites.YarramundiIrrigated]]
-type = "ExcludedSite"
-reason = "irrigated pasture (the file's vegetation attribute): the irrigation rate is unknown and the forcing has only rain"
