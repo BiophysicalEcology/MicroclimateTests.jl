@@ -1,4 +1,3 @@
-Manifest.toml
 *.png
 *.gif
 .claude/settings.local.json
