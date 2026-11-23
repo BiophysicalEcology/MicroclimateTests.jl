@@ -17,14 +17,14 @@ stomatal_closure_potential = "-1500 J/kg"
 # Ground roughness height under the canopy (NicheMapR's default, no site data)
 ground_roughness_height = "0.004 m"
 # Optional per-site keys, absent by default:
-#   igbp_class                for sites missing from igbp_classes.toml
+#   land_cover_class          for sites missing from land_cover_classes.toml
 #   measured_leaf_area_index  replaces MODIS's
 #   soil_source               "horizons" (soil_horizons below) instead of the file's texture
 #   soil_horizons             measured horizons: bottom depths, bulk density, clay/silt/sand %
 #   forcing_backups           variables summed to stand in for a missing forcing sensor, calibrated by a linear fit where both report
 
-# Vegetation type of each IGBP land-cover class (igbp_classes.toml)
-[igbp_vegetation]
+# Vegetation type of each land-cover class (land_cover_classes.toml)
+[land_cover_vegetation]
 EBF = "eucalypt"
 DBF = "eucalypt"
 WSA = "eucalypt"
@@ -76,7 +76,7 @@ leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m" }
 
 # Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Saltbush plain / chenopod shrubland"
 [sites.Boolcoomatta]
-igbp_class = "OSH"
+land_cover_class = "OSH"
 
 # Pale sandy mallee soil, sparse cover
 [sites.CalperumChowilla]
@@ -90,19 +90,19 @@ pai_shape = "top_heavy"
 
 # Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Eucalyptus globulus (blue gum)"
 [sites.DigbyPlantation]
-igbp_class = "EBF"
+land_cover_class = "EBF"
 
 # Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Various crops, including wheat, canola, and pasture grasses"
 [sites.Dookie]
-igbp_class = "CRO"
+land_cover_class = "CRO"
 
 # Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Phalaris and Subterranean Clover"
 [sites.GatumPasture]
-igbp_class = "GRA"
+land_cover_class = "GRA"
 
 # Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "sparse eucalypt woodland"
 [sites.GreatWesternWoodlands]
-igbp_class = "WSA"
+land_cover_class = "WSA"
 
 [sites.LongreachMitchellGrassRangeland]
 stomatal_closure_potential = "-2500 J/kg"

@@ -32,25 +32,25 @@ const PEAT = table_value(read_table("peat"))
 
 # ── Site settings ─────────────────────────────────────────────────────────────
 const SITE_SETTINGS = read_table("sites")
-const IGBP_CLASSES = read_table("igbp_classes")["classes"]
+const LAND_COVER_CLASSES = read_table("land_cover_classes")["classes"]
 
 # A site's own sites.toml table, empty when it has none
 own_site_settings(site_name) = get(SITE_SETTINGS["sites"], site_name, Dict{String,Any}())
 
-# A site's IGBP class: its own igbp_class, else igbp_classes.toml's for its FLUXNET ID
-function igbp_class(site_name)
-    own = get(own_site_settings(site_name), "igbp_class", nothing)
+# A site's land-cover class: its own land_cover_class, else land_cover_classes.toml's for its FLUXNET ID
+function land_cover_class(site_name)
+    own = get(own_site_settings(site_name), "land_cover_class", nothing)
     own === nothing || return own
     id = get(site_attributes(site_name), "fluxnet_id", "")
-    haskey(IGBP_CLASSES, id) || error("$site_name: FLUXNET ID \"$id\" not in igbp_classes.toml; set its igbp_class in sites.toml")
-    return IGBP_CLASSES[id]
+    haskey(LAND_COVER_CLASSES, id) || error("$site_name: FLUXNET ID \"$id\" not in land_cover_classes.toml; set its land_cover_class in sites.toml")
+    return LAND_COVER_CLASSES[id]
 end
 
-# A site's vegetation type (sites.toml's [vegetation.<type>]), from its IGBP class
+# A site's vegetation type (sites.toml's [vegetation.<type>]), from its land-cover class
 function vegetation_type(site_name)
-    class = igbp_class(site_name)
-    haskey(SITE_SETTINGS["igbp_vegetation"], class) || error("$site_name: IGBP class $class has no entry in sites.toml's [igbp_vegetation]")
-    return SITE_SETTINGS["igbp_vegetation"][class]
+    class = land_cover_class(site_name)
+    haskey(SITE_SETTINGS["land_cover_vegetation"], class) || error("$site_name: land-cover class $class has no entry in sites.toml's [land_cover_vegetation]")
+    return SITE_SETTINGS["land_cover_vegetation"][class]
 end
 
 # Merges key by key where both are tables, else the later replaces the earlier

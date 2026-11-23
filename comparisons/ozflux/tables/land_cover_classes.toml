@@ -1,4 +1,4 @@
-# IGBP land-cover class of each TERN (OzFlux) site, by FLUXNET ID, from the FLUXNET Shuttle snapshot fluxnet_shuttle_snapshot_20261122T212325.csv
+# Land-cover class (IGBP scheme, as FLUXNET uses) of each TERN (OzFlux) site by FLUXNET ID, from the FLUXNET Shuttle snapshot fluxnet_shuttle_snapshot_20261122T212325.csv
 [classes]
 "AU-Ade" = "WSA"
 "AU-APL" = "WET"
