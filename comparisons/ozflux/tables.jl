@@ -21,7 +21,8 @@ const OZFLUX_GOOD_QC_FLAGS = OZFLUX_CONVENTIONS["good_qc_flags"]
 const OZFLUX_STATISTIC_SUFFIXES = OZFLUX_CONVENTIONS["statistic_suffixes"]
 const BEST_YEAR_VARIABLES = OZFLUX_CONVENTIONS["best_year_variables"]
 const OZFLUX_QUANTITY_CODES = table_value(OZFLUX_CONVENTIONS["quantity_codes"])
-const OZFLUX_INSTRUMENT_CODES = Dict(code => table_value(instrument) for (code, instrument) in OZFLUX_CONVENTIONS["instrument_codes"])
+const OZFLUX_INSTRUMENT_CODES = OZFLUX_CONVENTIONS["instrument_codes"]
+const OZFLUX_SONIC_TEMPERATURE_CODES = OZFLUX_CONVENTIONS["sonic_temperature_codes"]
 
 # ── Soil textures ─────────────────────────────────────────────────────────────
 const CAMPBELL_NORMAN_TEXTURES = Dict(Symbol(name) => table_value(texture) for (name, texture) in read_table("soil_textures"))

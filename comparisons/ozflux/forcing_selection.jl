@@ -42,8 +42,8 @@ function instrument_code(name)
     return length(parts) >= 2 && haskey(OZFLUX_INSTRUMENT_CODES, parts[2]) ? String(parts[2]) : nothing
 end
 
-measures_sonic_temperature(name) =
-    (code = instrument_code(name); code !== nothing && OZFLUX_INSTRUMENT_CODES[code].measures_sonic_temperature)
+# Whether variable `name` comes from an instrument whose temperature is a sonic temperature
+measures_sonic_temperature(name) = instrument_code(name) in OZFLUX_SONIC_TEMPERATURE_CODES
 
 # Heights (m) a variable measures at: its own `height` attribute, else the one height of the
 # other variables from the same instrument, by name code or `instrument` attribute (a sonic

@@ -16,6 +16,9 @@ statistic_suffixes = ["QCFlag", "Vr", "Sd"]
 # Variables whose good half-hours pick each site's run year
 best_year_variables = ["Ta", "Ws", "Fsd", "Fld", "Ts"]
 
+# Instruments whose air temperature is a sonic temperature, which reads warm in humid air
+sonic_temperature_codes = ["SONIC"]
+
 [quantity_codes]
 air_temperature = "Ta"
 relative_humidity = "RH"
@@ -26,30 +29,14 @@ downwelling_longwave = "Fld"
 rainfall = "Precip"
 air_pressure = "ps"
 
-# A sonic anemometer's temperature is a sonic temperature, which reads warm in humid air
-[instrument_codes.SONIC]
-description = "sonic anemometer"
-measures_sonic_temperature = true
-
-[instrument_codes.HMP]
-description = "temperature and humidity probe"
-measures_sonic_temperature = false
-
-[instrument_codes.IRGA]
-description = "infrared gas analyser"
-measures_sonic_temperature = false
-
-[instrument_codes.RMY]
-description = "propeller anemometer"
-measures_sonic_temperature = false
-
-[instrument_codes.HC2S3]
-description = "temperature and humidity probe"
-measures_sonic_temperature = false
-
-[instrument_codes.WS4]
-description = "two-dimensional sonic anemometer, wind only"
-measures_sonic_temperature = false
+# Instrument codes in variable names (Ta_HMP_2m)
+[instrument_codes]
+SONIC = "sonic anemometer"
+HMP = "temperature and humidity probe"
+IRGA = "infrared gas analyser"
+RMY = "propeller anemometer"
+HC2S3 = "temperature and humidity probe"
+WS4 = "two-dimensional sonic anemometer, wind only"
 
 # Standard-time UTC offset (minutes) of each file's time_zone attribute. OzFlux records local
 # standard time year-round, with no daylight saving jump.
