@@ -3,7 +3,6 @@
 
 # ── SILO weather source (secondary comparison) ──────────────────────────────
 weather_source_choice = SILO
-ENV["SILO_EMAIL"] = get(ENV, "SILO_EMAIL", "m.kearney@unimelb.edu.au")
 use_opendap_points = true  # PointDataSources.jl OPeNDAP point query, not a whole-raster download
 dem_source_choice = SRTM
 compute_terrain_choice = false
@@ -121,6 +120,7 @@ function prepare_site_silo(site_name, years; max_days=nothing, litter_model=site
 end
 
 function run_site_silo(site_name, years; max_days=nothing)
+    haskey(ENV, "SILO_EMAIL") || error("SILO forcing needs your email in ENV[\"SILO_EMAIL\"], as SILO's API asks")
     println("\n" * "="^72)
     println("Site $site_name  years=$years (SILO forcing)")
     println("="^72)
