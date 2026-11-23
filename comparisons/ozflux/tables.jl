@@ -1,11 +1,9 @@
-# tables.jl — the data tables in tables/ (OzFlux naming conventions, data corrections, site
-# settings, soil textures), read into Julia values. Every fact about the datasets and sites
-# lives in those tables, none in code.
+# The TOML files in settings/, read into Julia values
 
 using TOML
 
-const TABLES_DIR = joinpath(@__DIR__, "tables")
-read_table(name) = TOML.parsefile(joinpath(TABLES_DIR, "$name.toml"))
+const SETTINGS_DIR = joinpath(@__DIR__, "settings")
+read_table(name) = TOML.parsefile(joinpath(SETTINGS_DIR, "$name.toml"))
 
 # A table value as Julia: "<number> <unit>" strings as quantities, tables as NamedTuples
 const QUANTITY_PATTERN = r"^(-?[\d.]+(?:e-?\d+)?) (\S+)$"

@@ -1,5 +1,4 @@
-# data_corrections.jl — the kinds of correction tables/data_corrections.toml applies to mistakes
-# in the OzFlux files, and how each changes the data.
+# The kinds of correction settings/data_corrections.toml applies to mistakes in the OzFlux files, and how each changes the data
 
 """
 A change to one site's OzFlux data. Each carries the `reason` for it.

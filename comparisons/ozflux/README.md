@@ -14,7 +14,7 @@ per site-year (`run_site_silo`) as its own comparison against the tower obs.
 ## Files
 
 - `config.jl` — paths and model algorithm choices, shared by both entry points.
-- `tables/` — every fact about the datasets and sites (see "Data tables").
+- `settings/` — every fact about the datasets and sites (see "Settings").
 - `utils.jl` — generic stats helpers (shared with `oznet`) plus the OzFlux
   NetCDF reader/aggregator (`read_ozflux_nc`, `discover_depth_series`,
   `discover_site_years`).
@@ -50,17 +50,17 @@ sensor at 5 m).
 
 Variable-naming conventions are **not** consistent across sites (e.g.
 Calperum's `Ws_RMY2m_Av` vs Whroo's `Ws_RMY_2m`); the naming rules the code
-relies on are data, in `tables/ozflux_conventions.toml`.
+relies on are data, in `settings/ozflux_conventions.toml`.
 
-### Data tables
+### Settings
 
-Every fact about the datasets and sites is data in `tables/`, never code:
+Every fact about the datasets and sites is data in `settings/`, never code:
 OzFlux naming conventions, data corrections (mistakes only, each with its
 evidence), per-site settings with their defaults, soil texture classes and peat (`peat.toml`).
 
 ### Leaf area index
 
-MODIS MCD15A3H's median over the run year, unless `tables/sites.toml` gives a
+MODIS MCD15A3H's median over the run year, unless `settings/sites.toml` gives a
 site a measured value. No phenology/dynamic LAI is modelled.
 
 ## SILO forcing (secondary comparison)
@@ -109,7 +109,7 @@ Wallaby (1); saved under `outputs_dir/profiles_vertical/`.
 - **No CO2/photosynthesis module** — `Fc` isn't usable.
 - **Soil is SLGA at the site's 90 m cell** (texture converted to USDA classes),
   except at sites whose file names a peat or Organosol, which SLGA misses (cited
-  values in `tables/peat.toml`), and Whroo, with measured horizons. Downloads need
+  values in `settings/peat.toml`), and Whroo, with measured horizons. Downloads need
   a TERN API key in `ENV["RASTERDATASOURCES_SLGA_TERN_API_KEY"]`.
 - **30-min OzFlux data is paired-averaged to hourly**; sub-hourly dynamics
   are lost. `MultilayerCanopy`/`MicroModel` are hourly-only in any case.

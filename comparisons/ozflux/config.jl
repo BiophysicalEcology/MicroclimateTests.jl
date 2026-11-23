@@ -1,5 +1,4 @@
-# config.jl — paths and model algorithm choices for comparison.jl and single_site.jl. Facts
-# about the datasets and sites are data, in tables/ (read by tables.jl).
+# Paths and model choices; facts about the datasets and sites are in settings/
 
 const OZFLUX_DATA_DIR = joinpath(@__DIR__, "data")
 const SRTM_ELEVATION_DIR = joinpath(OZFLUX_DATA_DIR, "srtm_elevation")

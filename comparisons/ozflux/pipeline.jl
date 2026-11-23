@@ -133,7 +133,7 @@ end
 _observed_depths_m(hourly) = [d for prefix in ("Ts", "Sws") for r in _hourly_depth_series(hourly, prefix) for d in (r.top_m, r.bottom_m)]
 
 # Soil profile from soil_source(site_name): SLGA at the site's cell (:slga, _slga_soil_profile
-# in mapper.jl), measured horizons (:horizons), peat (:peat, tables/peat.toml), or a fixed
+# in mapper.jl), measured horizons (:horizons), peat (:peat, settings/peat.toml), or a fixed
 # CAMPBELL_NORMAN_TEXTURES texture. :slga_uniform is the SLGA profile collapsed to one
 # depth-weighted-mean slab (flatten_soil_profile, utils.jl), so micropoint can run the same
 # flat numbers.

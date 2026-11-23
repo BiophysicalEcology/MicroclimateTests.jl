@@ -1,6 +1,4 @@
-# sites.jl — per-site inputs derived from each site's OzFlux file and MODIS, so every site on
-# disk runs without hand-written entries. tables/sites.toml overrides these only where a site
-# has measurements (Whroo's soil pit, leaf area index).
+# Per-site inputs from each site's OzFlux file, MODIS and SRTM; settings/sites.toml overrides them where a site has measurements
 
 using Downloads
 

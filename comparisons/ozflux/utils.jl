@@ -225,7 +225,7 @@ function soil_profile_from_texture(texture::NamedTuple, depths;
     )
 end
 
-# SoilProfile from measured soil horizons (tables/sites.toml's soil_horizons):
+# SoilProfile from measured soil horizons (settings/sites.toml's soil_horizons):
 # each node takes the bulk density and texture of the horizon it sits in, with
 # Campbell hydraulics from `pedotransfer_model`. Nodes below the deepest horizon
 # take the deepest horizon's values.
@@ -240,7 +240,7 @@ function soil_profile_from_horizons(horizons, depths, pedotransfer_model;
     )
 end
 
-# SoilProfile of peat (tables/peat.toml): each node takes the class of the layer it sits in,
+# SoilProfile of peat (settings/peat.toml): each node takes the class of the layer it sits in,
 # its bulk density from the class porosity and the organic solid density
 function soil_profile_from_peat(peat, depths; root_density=_root_density_for_depths(depths))
     class = [searchsortedfirst(peat.bottom, d) for d in depths]
@@ -487,7 +487,7 @@ end
 # (height_m, variable_name) pairs from sites.jl's discover_height_series;
 # height_m itself isn't needed here, only the variable name. `extra_vars`:
 # further variable names to read: the forcing sensors forcing_sources picked and the site's
-# forcing_backups (tables/sites.toml). Every series gets
+# forcing_backups (settings/sites.toml). Every series gets
 # the site's data_corrections.jl `corrections`.
 function read_ozflux_nc(path, years, corrections; height_series=Tuple{Float64,String}[], extra_vars=String[])
     NCDataset(path) do ds
