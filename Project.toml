@@ -38,7 +38,7 @@ BiophysicalBehaviour = {url = "https://github.com/BiophysicalEcology/Biophysical
 BiophysicalGeometry = {url = "https://github.com/BiophysicalEcology/BiophysicalGeometry.jl", rev = "main"}
 FluidProperties = {url = "https://github.com/BiophysicalEcology/FluidProperties.jl", rev = "main"}
 HeatExchange = {url = "https://github.com/BiophysicalEcology/HeatExchange.jl", rev = "main"}
-Microclimate = {url = "https://github.com/BiophysicalEcology/Microclimate.jl", rev = "canopy-litter"}
+Microclimate = {url = "https://github.com/BiophysicalEcology/Microclimate.jl", rev = "ground-stability-black-body"}
 MicroclimateMapper = {url = "https://github.com/BiophysicalEcology/MicroclimateMapper.jl", rev = "slga-soil"}
 RasterDataSources = {url = "https://github.com/mrke/RasterDataSources.jl", rev = "barra-soilgrids"}
 SolarRadiation = {url = "https://github.com/BiophysicalEcology/SolarRadiation.jl", rev = "main"}
