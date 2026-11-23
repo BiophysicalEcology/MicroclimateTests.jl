@@ -19,7 +19,6 @@ MicroclimateMapper = "e0e7f0f3-f3e4-4128-a017-ba7c8101b3e1"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 OrdinaryDiffEqSDIRK = "2d112036-d095-4a1e-ab9a-08536f3ecdbf"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
-PointDataSources = "8cbab062-ff6a-44c2-92ab-f364c212cc46"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -38,9 +37,8 @@ ZarrDatasets = "519a4cdf-1362-424a-9ea1-b1d782dbb24b"
 BiophysicalBehaviour = {url = "https://github.com/BiophysicalEcology/BiophysicalBehaviour.jl", rev = "main"}
 BiophysicalGeometry = {url = "https://github.com/BiophysicalEcology/BiophysicalGeometry.jl", rev = "main"}
 FluidProperties = {url = "https://github.com/BiophysicalEcology/FluidProperties.jl", rev = "main"}
-HeatExchange = {url = "https://github.com/BiophysicalEcology/HeatExchange.jl", rev = "reynolds-floor"}
+HeatExchange = {url = "https://github.com/BiophysicalEcology/HeatExchange.jl", rev = "main"}
 Microclimate = {url = "https://github.com/BiophysicalEcology/Microclimate.jl", rev = "canopy-litter"}
 MicroclimateMapper = {url = "https://github.com/BiophysicalEcology/MicroclimateMapper.jl", rev = "slga-soil"}
-PointDataSources = {url = "https://github.com/BiophysicalEcology/PointDataSources.jl", rev = "barra-rasterdatasources-master"}
 RasterDataSources = {url = "https://github.com/mrke/RasterDataSources.jl", rev = "barra-soilgrids"}
 SolarRadiation = {url = "https://github.com/BiophysicalEcology/SolarRadiation.jl", rev = "main"}

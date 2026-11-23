@@ -132,14 +132,12 @@ end
 # Both ends of every Ts and Sws depth range: the depths _build_depths lands nodes on
 _observed_depths_m(hourly) = [d for prefix in ("Ts", "Sws") for r in _hourly_depth_series(hourly, prefix) for d in (r.top_m, r.bottom_m)]
 
-# Soil profile from soil_source(site_name): SLGA at the site's cell (:slga, _slga_soil_profile
-# in mapper.jl), measured horizons (:horizons), peat (:peat, settings/peat.toml), or a fixed
-# CAMPBELL_NORMAN_TEXTURES texture. :slga_uniform is the SLGA profile collapsed to one
-# depth-weighted-mean slab (flatten_soil_profile, utils.jl), so micropoint can run the same
-# flat numbers.
-#
-# Cached per (site_name, depths, source): prepare_site/prepare_site_silo fetch the same site's
-# same depth grid.
+# SLGA soil at the site's cell
+_slga_soil_profile(latitude, longitude, depths) =
+    build_soil_profile(SLGA, (ustrip(u"°", longitude), ustrip(u"°", latitude));
+        depths, pedotransfer_model = pedotransfer_model_choice).soil_profile
+
+# Soil profile from soil_source(site_name), cached; :slga_uniform is SLGA flattened to one slab, for micropoint
 const _SOIL_CACHE = Dict{Tuple{String,Vector{Float64},Symbol},Any}()
 
 function _fetch_soil_profile(site_name, latitude, longitude, depths)
@@ -244,10 +242,7 @@ function read_hourly_site_data(resolved)
     return hourly
 end
 
-# Reads + aggregates all requested years, builds the MicroProblem. Doesn't
-# run anything -- that's run_site. `max_days` truncates the run for fast
-# debug-loop iteration (unlike oznet, ozflux is keyed on whole-year files,
-# not a continuous date range, so there's no sim_start/sim_end to shorten).
+# The site's MicroProblem over `years`, or its first `max_days` days
 function prepare_site(site_name, years; max_days=nothing, litter_model=site_litter(site_name))
     resolved = resolve_site(site_name, years)
     (; canopy_height, reference_height, forcing, latitude, longitude, leaf_area_index, height_series) = resolved
@@ -298,7 +293,7 @@ function prepare_site(site_name, years; max_days=nothing, litter_model=site_litt
     heights = _build_heights(canopy_height, reference_height, first.(height_series))
 
     canopy = canopy_model(site_name, resolved, heights)
-    model = micro_model(site_name, site, soil_profile, depths, heights, canopy, rainfall_schedule_choice; litter_model)
+    model = micro_model(site_name, site, soil_profile, depths, heights, canopy; litter_model)
 
     # Initial soil state from the site's own first observed Ts/Sws (falls
     # back to the mean air temperature / a mid-range moisture guess for any
@@ -340,8 +335,7 @@ function days_of_year(t)
     return Dates.dayofyear.(t[1:24:end])
 end
 
-# MultilayerCanopy from the config.jl model choices and the site's resolved traits. Shared by
-# every prepare_site* so the forcing modes run the same canopy.
+# MultilayerCanopy from the config.jl model choices and the site's resolved traits
 function canopy_model(site_name, resolved, heights)
     (; canopy_height, leaf_area_index, leaf_reflectance, leaf_transmittance) = resolved
     canopy_heights = heights[heights .<= canopy_height]
@@ -355,15 +349,13 @@ function canopy_model(site_name, resolved, heights)
         leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice)
 end
 
-# MicroModel from the config.jl model choices; `rainfall_schedule` differs by
-# forcing source (tower Precip is per-timestep, SILO a daily total).
-function micro_model(site_name, site, soil_profile, depths, heights, canopy, rainfall_schedule;
-    litter_model=site_litter(site_name))
+# MicroModel from the config.jl model choices
+function micro_model(site_name, site, soil_profile, depths, heights, canopy; litter_model=site_litter(site_name))
     soil = SoilModel(; depths, profile = soil_profile,
         properties_model = soil_properties_model_choice, hydraulic_model = soil_hydraulic_model(site_name),
         moisture_strategy = soil_moisture_strategy_choice, energy_model = soil_energy_model_choice)
     atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule)
+    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = rainfall_schedule_choice)
     surface = SurfaceModel(; litter_model)
     return MicroModel(; hours = 0:1:23, site, soil, surface, atmosphere, canopy, config,
         vapour_pressure_equation = vapour_pressure_equation_choice)

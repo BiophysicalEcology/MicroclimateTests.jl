@@ -2,8 +2,7 @@
 
 using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation, OrdinaryDiffEqSDIRK
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
-using Rasters, ArchGDAL, NCDatasets, RasterDataSources, PointDataSources
-using GeoInterface: Wrappers as GIW
+using Rasters, ArchGDAL, NCDatasets, RasterDataSources
 using Serialization
 
 include("ozflux.jl")

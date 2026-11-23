@@ -6,7 +6,7 @@ Runs Microclimate.jl at the TERN OzFlux flux towers ([ozflux.org.au](https://ozf
 
 - `./download_ozflux.sh` downloads every site's OzFlux L3 file into `data/`.
 - BARRA-R2, MODIS leaf area and SRTM elevation download on first use, into `data/`.
-- SLGA soil needs a TERN API key in `RASTERDATASOURCES_SLGA_TERN_API_KEY`; SILO forcing (`mapper.jl`) needs `SILO_EMAIL`.
+- SLGA soil needs a TERN API key in `RASTERDATASOURCES_SLGA_TERN_API_KEY`.
 
 ## Run
 

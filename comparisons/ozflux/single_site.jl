@@ -2,8 +2,7 @@
 
 using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation, OrdinaryDiffEqSDIRK
 using CSV, DataFrames, Dates, Statistics, Printf, Plots
-using Rasters, ArchGDAL, NCDatasets, RasterDataSources, PointDataSources
-using GeoInterface: Wrappers as GIW
+using Rasters, ArchGDAL, NCDatasets, RasterDataSources
 using Serialization, Measures
 
 include("ozflux.jl")
@@ -13,10 +12,8 @@ site_name = "LongreachMitchellGrassRangeland"
 years = [2020]
 # Days to run, nothing for all
 max_days = nothing
-# :tower, or :silo gridded forcing
-forcing_source = :tower
 
-result = forcing_source == :silo ? run_site_silo(site_name, years; max_days) : run_site(site_name, years; max_days)
+result = run_site(site_name, years; max_days)
 
 plot_start = DateTime(years[1], 1, 1, 0)
 plot_end = DateTime(years[1], 12, 30, 23)
@@ -25,7 +22,7 @@ plot_forcing = false
 plot_variable = nothing
 
 stats = report_site_results(result, result.output; plot_start, plot_end, display_plots=true,
-    source="$(forcing_source)", plot_forcing, plot_variable)
+    plot_forcing, plot_variable)
 
 # Vertical canopy profiles, obs against model
 profile_times = DateTime(years[1], 11, 1, 1):Hour(1):DateTime(years[1], 11, 1, 16)

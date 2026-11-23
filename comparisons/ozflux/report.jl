@@ -1,10 +1,7 @@
 # report.jl — stats + plots for every comparison target, given a solved
 # `run_site` result. Requires config.jl/utils.jl/pipeline.jl already included.
 
-# Obs, reindexed onto `t_model` by DateTime (`missing` where t_model has no
-# matching obs row) -- a no-op reindex when hourly.DateTime == t_model (the
-# tower-forced run), but required for the SILO-forced run, whose model span
-# (full calendar year) needn't match the tower file's own coverage.
+# Obs column `name` on `t_model`'s hours, missing where the file has none
 function _col(hourly, t_model, name)
     name in names(hourly) || return nothing
     col = hourly[!, name]
@@ -488,48 +485,21 @@ function report_site_results(prep, output; plot_start=nothing, plot_end=nothing,
          for r in _hourly_depth_series(hourly, prefix)];
         ylims)
 
-    # ── Forcing sanity: what actually drove the model, real-obs hours in black,
-    # interpolated hours in orange -- confirms
-    # both the read/aggregation pipeline and how much of the record is filled.
-    # forcing_used/filled_mask are absent from a SILO-forced prep (tower
-    # forcing isn't used there at all) -- falls back to what SILO's own model
-    # actually consumed (output.reference_*/global_radiation, Fld backed out
-    # of sky_temperature, environment_daily's
-    # daily rainfall total) instead of the tower's raw columns, which a SILO
-    # run never reads.
-    forcing_used = get(prep, :forcing_used, nothing)
-    filled_mask = get(prep, :filled_mask, nothing)
-    environment_daily = get(prep, :environment_daily, nothing)
-    sim_start = get(prep, :sim_start, nothing)
+    # Forcing that drove the model: observed hours black, filled hours orange
+    (; forcing_used, filled_mask) = prep
     for (name, units) in (("Ta","°C"), ("RH","%"), ("Ws","m/s"), ("Fsd","W/m^2"), ("Fld","W/m^2"), ("Precip","mm"))
         make_plots && plot_forcing && (plot_variable === nothing || plot_variable == name) || continue
         p = nothing
         ps = isnothing(plot_start) ? t_model[1] : plot_start
         pe = isnothing(plot_end) ? t_model[end] : plot_end
         m = findall(t -> ps <= t <= pe, t_model)
-        if forcing_used !== nothing && haskey(forcing_used, Symbol(name))
+        if haskey(forcing_used, Symbol(name))
             used = getproperty(forcing_used, Symbol(name))
             filled = getproperty(filled_mask, Symbol(name))
             obs_only = [f ? NaN : v for (v, f) in zip(used, filled)]
             filled_only = [f ? v : NaN for (v, f) in zip(used, filled)]
             p = plot(t_model[m], obs_only[m]; label="obs", color=:black, lw=1, title="$name ($site_name)", ylabel=units)
             plot!(p, t_model[m], filled_only[m]; label="filled", color=:orange, lw=1)
-        elseif environment_daily !== nothing && name == "Precip"
-            # SILO has no hourly rain, only a daily total -- plotted at daily
-            # resolution (a step per day), not resampled onto t_model.
-            daily_dates = collect(sim_start:Day(1):(sim_start + Day(length(environment_daily.rainfall) - 1)))
-            vals = ustrip.(u"kg/m^2", environment_daily.rainfall)  # mm == kg/m^2 for water
-            dm = findall(d -> Date(ps) <= d <= Date(pe), daily_dates)
-            isempty(dm) && continue
-            p = plot(daily_dates[dm], vals[dm]; label=nothing, title="$name ($site_name, SILO daily total)",
-                ylabel=units, color=:black, lw=1, seriestype=:steppost)
-        elseif environment_daily !== nothing
-            vals = name == "Ta" ? ustrip.(u"°C", output.reference_temperature) :
-                   name == "RH" ? output.reference_humidity .* 100.0 :
-                   name == "Ws" ? ustrip.(u"m/s", output.reference_wind_speed) :
-                   name == "Fsd" ? ustrip.(u"W/m^2", output.global_radiation) :
-                   ustrip.(u"W/m^2", FluidProperties.σ .* output.sky_temperature .^ 4)  # Fld
-            p = plot(t_model[m], vals[m]; label=nothing, title="$name ($site_name, SILO-derived)", ylabel=units, color=:black, lw=1)
         else
             vals = _col(hourly, t_model, name)
             vals === nothing && continue

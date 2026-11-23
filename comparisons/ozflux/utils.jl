@@ -84,34 +84,6 @@ fmt_stat(s::ModelStats) =
 sws_obs_scale(site_name, soil_profile) = has_correction(site_corrections(site_name), SaturationFraction, "Sws") ?
     1 - soil_profile.bulk_density[1] / soil_profile.mineral_density[1] : 1.0
 
-# Truncates a DailyMinMaxEnvironment's per-day forcing series to the first
-# `ndays` days. Needed by prepare_site_silo's max_days path: fetch_silo_forcing
-# fetches whole years, but the solve itself only iterates
-# `ndays` days -- left untruncated, environment_minmax's forcing arrays stay
-# longer than solar_radiation_out (sized to `days`), a BoundsError in
-# evaluate!/solar_day once the solver reaches day ndays+1.
-# minmax_forcings' derived _mean fields are lazy Broadcasted (not materialized
-# Vectors, so they track later in-place mutation of the min/max arrays --
-# see its own comment) -- materialize before slicing since Broadcasted
-# doesn't support arbitrary indexing. Safe here: any such mutation is
-# internal to fetch_silo_forcing, already done by the time it returns.
-_truncate_days(v::AbstractVector, ndays) = v[1:ndays]
-_truncate_days(v, ndays) = Base.Broadcast.materialize(v)[1:ndays]
-_truncate_forcing(f::DielForcing, ndays) = DielForcing(f.curve, map(v -> _truncate_days(v, ndays), f.values))
-_truncate_forcing(d::Derived, ndays) = d
-truncate_environment_minmax(env::DailyMinMaxEnvironment, ndays) =
-    DailyMinMaxEnvironment(; forcings = map(f -> _truncate_forcing(f, ndays), env.forcings))
-
-# Same max_days issue, one level down: fetch_silo_forcing's environment_hourly
-# (the SILO stub -- only pressure is ever populated, everything else nothing)
-# is also fetched full-year and needs truncating to `n` hours to match the
-# truncated solve. Generic over whichever fields are actually Vectors, so it
-# doesn't assume pressure is the only one.
-function truncate_environment_hourly(h::HourlyTimeseries, n)
-    kwargs = NamedTuple(f => (v = getfield(h, f); v isa AbstractVector ? v[1:n] : v) for f in fieldnames(typeof(h)))
-    return HourlyTimeseries(; kwargs...)
-end
-
 # ── Canopy/soil grid + profile construction (generic, not site-specific) ────
 
 # Soil depths (m): NicheMapR's 10-node scheme (cm) plus a midpoint between

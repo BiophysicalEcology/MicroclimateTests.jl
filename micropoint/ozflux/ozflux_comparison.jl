@@ -9,9 +9,8 @@
 
 using Microclimate, MicroclimateMapper, Unitful, FluidProperties
 using CSV, DataFrames, Dates, Statistics, Printf, Plots, Measures
-using Rasters, NCDatasets, RasterDataSources, PointDataSources
+using Rasters, NCDatasets, RasterDataSources
 using Rasters.Extents: Extent
-using GeoInterface: Wrappers as GIW
 using Serialization
 
 const OZFLUX_DIR = joinpath(@__DIR__, "..", "..", "comparisons", "ozflux")
