@@ -19,7 +19,7 @@ canopy_convergence_model_choice = AndersonCanopyConvergence(; leaf_balance_toler
     air_temperature_tolerance=0.1u"K", vapor_density_tolerance=0.07u"g/m^3",
     inverse_obukhov_length_tolerance=1e-2u"m^-1", on_failure=SmallestResidual(),
     ground_temperature_model=get(ENV, "OZFLUX_GROUND_TEMPERATURE", "soil") == "hour_start" ?
-        HourStartGroundTemperature() : SoilIntegration())
+        HourStartGroundTemperature() : IntegratedGroundTemperature())
 # OzFlux Precip is per time step, not a daily total
 rainfall_schedule_choice = HourlyRainfall()
 # Soil moisture simulated, so it can be compared against Sws
