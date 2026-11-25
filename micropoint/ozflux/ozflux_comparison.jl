@@ -1,5 +1,5 @@
 # ozflux_comparison.jl — entry point: runs Microclimate.jl (comparisons/
-# ozflux's own run_site_gapfilled) and micropoint (R, RunModelFull) on the
+# ozflux's own run_site) and micropoint (R, RunModelFull) on the
 # identical real forcing, then reports 3-way stats/plots (obs, Microclimate.jl,
 # micropoint) via report_site_results3 (report.jl), plus a solve-time
 # comparison. Self-contained (not added to comparisons/ozflux/report.jl) so
@@ -7,27 +7,19 @@
 #
 # Usage: julia ozflux_comparison.jl (or include() from the REPL)
 
-using Microclimate, MicroclimateMapper, Unitful, FluidProperties
+using Microclimate, MicroclimateMapper, Unitful, FluidProperties, SolarRadiation, OrdinaryDiffEqSDIRK
 using CSV, DataFrames, Dates, Statistics, Printf, Plots, Measures
-using Rasters, NCDatasets, RasterDataSources, PointDataSources
-using Rasters.Extents: Extent
-using GeoInterface: Wrappers as GIW
+using Rasters, ArchGDAL, NCDatasets, RasterDataSources
 using Serialization
 
-const OZFLUX_DIR = joinpath(@__DIR__, "..", "..", "comparisons", "ozflux")
-include(joinpath(OZFLUX_DIR, "config.jl"))
-include(joinpath(OZFLUX_DIR, "utils.jl"))
-include(joinpath(OZFLUX_DIR, "pipeline.jl"))
-include(joinpath(OZFLUX_DIR, "report.jl"))
+include(joinpath(@__DIR__, "..", "..", "comparisons", "ozflux", "ozflux.jl"))
 include(joinpath(@__DIR__, "write_ozflux_micropoint_inputs.jl"))
 include(joinpath(@__DIR__, "utils.jl"))
 include(joinpath(@__DIR__, "report.jl"))
 
-# site_name: any comparisons/ozflux/data site with a SITE_UTC_OFFSET_MINUTES
-# entry (config.jl) -- "CapeTribulation", "Calperum", "Whroo", "Wallaby",
-# "GWW", "Longreach", "TiTreeEast", "AliceSpringsMulga".
-site_name = "Longreach"  # "Calperum"  # "Whroo"  # "Wallaby"  # "GWW"  # "Longreach"  # "TiTreeEast"  # "AliceSpringsMulga"
-years = [2019]
+# Any comparisons/ozflux/data site
+site_name = "Whroo"
+years = [2016]
 max_days = 90  # set e.g. 10-15 for a fast iteration loop -- both models still run on identical (shorter) forcing
 outdir = joinpath(@__DIR__, "outputs", "$(site_name)_$(join(years, '-'))")
 save_outputs_3way = true
@@ -43,7 +35,7 @@ profile_times = max_days === nothing ?
     (DateTime(years[1], 1, 1, 0):Hour(1):DateTime(years[1], 1, 1, 11))
 
 # ── Run both models on identical forcing ─────────────────────────────────
-result = run_site_gapfilled(site_name, years; max_days, canopy_mode=:full)
+result = run_site(site_name, years; max_days)
 write_ozflux_micropoint_inputs(result, outdir)
 
 rscript = joinpath(@__DIR__, "run_micropoint_ozflux_vegetated.R")
@@ -51,7 +43,7 @@ println("\nRunning micropoint (vegetated) on the same forcing...")
 run(`Rscript $rscript $outdir`)
 
 timing = CSV.read(joinpath(outdir, "veg_timing.csv"), DataFrame)
-println("\n== Timing (model solve only -- excludes SILO gap-fill donor solve, ")
+println("\n== Timing (model solve only -- excludes ")
 println("   SLGA/data fetch, and Rscript subprocess startup, for both sides) ==")
 @printf("  Julia (Microclimate.jl, Microclimate.solve only): %.2f s\n", result.solve_time)
 @printf("  R (micropoint RunModelFull, internal system.time only): %.2f s\n", timing.elapsed_s[1])

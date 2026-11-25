@@ -1,0 +1,148 @@
+# Site settings: [defaults], then the site's vegetation type's, then its own [sites.<Site>], merged key by key; values with units are "<number> <unit>"
+
+[defaults]
+# Ground (soil, or litter) shortwave albedo
+albedo = 0.20
+# Guessed, no empirical data
+leaf_reflectance = 0.25
+leaf_transmittance = 0.25
+# Vertical shape of the plant area index profile (utils.jl's PAI_SHAPES):
+#   top_heavy    dense near the canopy top, sparse near the ground (closed rainforest crown)
+#   bottom_heavy sparse emergent crowns over a dense midstorey and understorey
+#   mid_crown    a distinct crown layer, open above and below
+#   uniform      flat density
+pai_shape = "uniform"
+# Soil (root) water potential at which stomata close; no site-specific literature values yet
+stomatal_closure_potential = "-1500 J/kg"
+# Ground roughness height under the canopy (NicheMapR's default, no site data)
+ground_roughness_height = "0.004 m"
+# Optional per-site keys, absent by default:
+#   land_cover_class          for sites missing from land_cover_classes.toml
+#   measured_leaf_area_index  replaces MODIS's
+#   soil_source               "horizons" (soil_horizons below) instead of the file's texture
+#   soil_horizons             measured horizons: bottom depths, bulk density, clay/silt/sand %
+#   forcing_backups           variables summed to stand in for a missing forcing sensor, calibrated by a linear fit where both report
+
+# Vegetation type of each land-cover class (land_cover_classes.toml)
+[land_cover_vegetation]
+EBF = "eucalypt"
+DBF = "eucalypt"
+WSA = "eucalypt"
+SAV = "eucalypt"
+OSH = "eucalypt"
+GRA = "grass"
+CRO = "grass"
+CVM = "grass"
+WET = "grass"
+
+# Leaf traits (Microclimate.jl's LeafParameters' own defaults); canopy_projection_ratio is Campbell's ellipsoidal x
+[vegetation.eucalypt.leaf]
+leaf_length = "0.05 m"
+leaf_width = "0.02 m"
+leaf_emissivity = 0.97
+leaf_water_potential = "0 J/kg"
+canopy_projection_ratio = 1.0
+
+# Eucalypt leaf litter: 15-20 t/ha dry sclerophyll loads at 63.5 kg/m³ bulk density (Matthews 2006); area per mass, unevenness and albedo unsourced
+[vegetation.eucalypt.litter]
+dry_mass = "1.5 kg/m^2"
+thickness = "3.3 cm"
+area_per_mass = "4 m^2/kg"
+unevenness = 2.0
+albedo = 0.35
+# Geometric middle of SHAW's 1000-50,000 s/m (SHAW 3.0.3 manual, RESCOF); not measured for any litter
+element_vapor_resistance = "7000 s/m"
+
+# Grass litter: 0.13-0.4 kg/m² rangeland loads (Friedel 1981, doi:10.1071/BT9810219); thickness guessed, wheat residue 2.7-5.4 m²/kg (CropSyst manual)
+[vegetation.grass.litter]
+dry_mass = "0.2 kg/m^2"
+thickness = "2 cm"
+area_per_mass = "4 m^2/kg"
+albedo = 0.35
+element_vapor_resistance = "7000 s/m"
+
+# Grass leaves: guessed narrow blades, no data
+[vegetation.grass.leaf]
+leaf_length = "0.1 m"
+leaf_width = "0.005 m"
+leaf_emissivity = 0.97
+leaf_water_potential = "0 J/kg"
+canopy_projection_ratio = 1.0
+
+[sites.AliceSpringsMulga]
+pai_shape = "top_heavy"
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m" }
+
+# Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Saltbush plain / chenopod shrubland"
+[sites.Boolcoomatta]
+land_cover_class = "OSH"
+
+# Pale sandy mallee soil, sparse cover
+[sites.CalperumChowilla]
+albedo = 0.35
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m", canopy_projection_ratio = 0.0 }
+
+# Closed tropical rainforest canopy
+[sites.CapeTribulation]
+pai_shape = "top_heavy"
+
+# Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Eucalyptus globulus (blue gum)"
+[sites.DigbyPlantation]
+land_cover_class = "EBF"
+
+# Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Various crops, including wheat, canola, and pasture grasses"
+[sites.Dookie]
+land_cover_class = "CRO"
+
+# Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "Phalaris and Subterranean Clover"
+[sites.GatumPasture]
+land_cover_class = "GRA"
+
+# Not in the FLUXNET Shuttle snapshot; class from the file's vegetation attribute, "sparse eucalypt woodland"
+[sites.GreatWesternWoodlands]
+land_cover_class = "WSA"
+
+[sites.LongreachMitchellGrassRangeland]
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m", canopy_projection_ratio = 0.0 }
+
+# Sparse mulga/spinifex woodland, simple shrub and small-tree structure
+[sites.TiTreeEast]
+pai_shape = "top_heavy"
+stomatal_closure_potential = "-2500 J/kg"
+leaf = { leaf_length = "0.02 m", leaf_width = "0.005 m" }
+
+# Mountain ash: sparse emergent crowns over a dense midstorey and understorey
+[sites.WallabyCreek]
+pai_shape = "bottom_heavy"
+
+# Box-ironbark crowns over very little understorey
+[sites.Whroo]
+pai_shape = "top_heavy"
+# 7.5YR 5/3 topsoil under its litter (Post et al. 2000's Munsell value relation)
+albedo = 0.23
+# TERN hemispheric photography, core 1-ha plot: 0.79 (Dec 2015) to 1.23 (Jun 2016)
+measured_leaf_area_index = 0.8
+soil_source = "horizons"
+
+# TERN SuperSite soil pit 4 m from the tower, 25 March 2015 (Drake 2015, "Whroo Flux Tower Soil
+# Profile Assessment", Table 3): a sodic clay (Sodosol), silty clay loam topsoil over dense
+# clay, bedrock at 160 cm. Texture is the USDA split: clay <2 µm, silt 2-50 µm, sand >50 µm, %.
+# Report: https://geonetwork.tern.org.au/geonetwork/srv/api/records/74a074fe-16ac-4c67-95e4-e46a2535fba7
+# Data: Beringer, McHugh & Cunningham (2023), Whroo Dry Eucalypt Soil Characteristic Data 2015,
+# v1.0, TERN, doi:10.25901/v6q8-pp54
+[sites.Whroo.soil_horizons]
+bottom = ["7 cm", "38 cm", "58 cm", "112 cm", "160 cm"]
+bulk_density = ["1.2 Mg/m^3", "1.5 Mg/m^3", "1.8 Mg/m^3", "1.9 Mg/m^3", "1.9 Mg/m^3"]
+clay = [18.7, 42.5, 41.7, 46.2, 42.1]
+silt = [45.0, 34.2, 34.8, 34.8, 34.7]
+sand = [36.3, 23.2, 23.5, 19.0, 23.2]
+
+# The 32 m probe for 36 m air temperature and humidity (one logger outage takes out the 36 m
+# sensors and the CNR4), the SPN1's direct + diffuse for the CNR4's downwelling shortwave
+[sites.Whroo.forcing_backups]
+air_temperature = ["Ta_HMP_32m"]
+humidity = ["AH_HMP_32m"]
+downwelling_shortwave = ["Fsd_Direct", "Fsd_Diffuse"]

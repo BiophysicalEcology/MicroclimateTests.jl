@@ -1,4 +1,3 @@
-Manifest.toml
 *.png
 *.gif
 .claude/settings.local.json
@@ -10,6 +9,9 @@ Manifest.toml
 comparisons/**/observations/
 comparisons/**/*_cache/
 comparisons/**/*_outputs/
+comparisons/**/outputs/
+comparisons/ozflux/data
+comparisons/fluxdata/
 comparisons/**/Map metadata export.csv
 benchmarks/**/results/
 benchmarks/**/*.csv

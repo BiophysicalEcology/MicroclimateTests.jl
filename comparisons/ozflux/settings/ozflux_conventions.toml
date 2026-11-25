@@ -1,0 +1,50 @@
+# How OzFlux L3 files name and flag their variables.
+#
+# OzFlux names a variable <quantity>_<instrument>_<suffix>: Ta_HMP_2m is air temperature from a
+# temperature and humidity probe at 2 m. A bare quantity code (Ta) is the site's own composite.
+# A number in place of the instrument (Ta_1) numbers replicate sensors; anything else there
+# (Fsd_Diffuse) is a derived series, not a sensor.
+
+# QCFlag values of good observations (PyFluxPro wiki, "QC Flag Definitions"): 0 passed every
+# check, 10 passed with a linear or drift correction applied. PyFluxPro's own L6 treats these two
+# as observations.
+good_qc_flags = [0, 10]
+
+# Name suffixes of statistics of a sensor's readings, not readings
+statistic_suffixes = ["QCFlag", "Vr", "Sd"]
+
+# Variables whose good half-hours pick each site's run year
+best_year_variables = ["Ta", "Ws", "Fsd", "Fld", "Ts"]
+
+# Instruments whose air temperature is a sonic temperature, which reads warm in humid air
+sonic_temperature_codes = ["SONIC"]
+
+[quantity_codes]
+air_temperature = "Ta"
+relative_humidity = "RH"
+absolute_humidity = "AH"
+wind_speed = "Ws"
+downwelling_shortwave = "Fsd"
+downwelling_longwave = "Fld"
+rainfall = "Precip"
+air_pressure = "ps"
+
+# Instrument codes in variable names (Ta_HMP_2m)
+[instrument_codes]
+SONIC = "sonic anemometer"
+HMP = "temperature and humidity probe"
+IRGA = "infrared gas analyser"
+RMY = "propeller anemometer"
+HC2S3 = "temperature and humidity probe"
+WS4 = "two-dimensional sonic anemometer, wind only"
+
+# Standard-time UTC offset (minutes) of each file's time_zone attribute. OzFlux records local
+# standard time year-round, with no daylight saving jump.
+[time_zone_utc_offset_minutes]
+"Australia/Adelaide" = 570
+"Australia/Brisbane" = 600
+"Australia/Darwin" = 570
+"Australia/Hobart" = 600
+"Australia/Melbourne" = 600
+"Australia/Perth" = 480
+"Australia/Sydney" = 600

@@ -20,51 +20,33 @@ function _rh_from_ah(ah_gm3, ta_C; vapour_pressure_equation=GoffGratch())
     T = u"K"(ta_C * u"°C")
     p_v = (ah_gm3 * 1e-3u"kg/m^3") * Unitful.R * T / _MW_WATER
     p_sat = FluidProperties.vapour_pressure(vapour_pressure_equation, T)
-    return clamp(ustrip(u"Pa", p_v) / ustrip(u"Pa", p_sat) * 100.0, 0.0, 100.0)
+    return ustrip(u"Pa", p_v) / ustrip(u"Pa", p_sat) * 100.0
 end
 
-_site_year_paths(site_name, years) =
-    [joinpath(OZFLUX_DATA_DIR, "$(site_name)_$(y)_L3.nc") for y in years]
-
 function resolve_site(site_name, years)
-    haskey(SITE_LEAF_AREA_INDEX, site_name) ||
-        error("No leaf_area_index configured for site \"$site_name\" -- add it to SITE_LEAF_AREA_INDEX in config.jl")
-    paths = _site_year_paths(site_name, years)
-    all(isfile, paths) || error("Missing data file(s): " * join(filter(!isfile, paths), ", "))
+    path = ozflux_site_path(OZFLUX_DATA_DIR, site_name)
+    available = ozflux_years(path)
+    missing_years = setdiff(years, available)
+    isempty(missing_years) || error("$path has no data for year(s) $missing_years (has $available)")
 
-    global_attrib = Dict(NCDatasets.NCDataset(paths[1]).attrib)  # materialized -- not tied to the (about to close) dataset handle
-    raw_canopy_height = _parse_length_attr(global_attrib["canopy_height"])
-    tower_height  = _parse_length_attr(global_attrib["tower_height"])
+    global_attrib = site_attributes(site_name)
+    canopy_height = site_canopy_height(site_name)
     latitude  = parse(Float64, string(global_attrib["latitude"])) * u"°"
     longitude = parse(Float64, string(global_attrib["longitude"])) * u"°"
 
-    # reference_height: the height the forcing Ta/RH/Ws are actually valid at
-    # (see config.jl's SITE_REFERENCE_HEIGHT_M comment) -- NOT always
-    # tower_height (Wallaby's only wind/temp sensor sits at 5m, well below
-    # its 12m tower). forcing_vars: which tower variable supplies each,
-    # for sites where the bare merged composite's real height doesn't match.
-    reference_height = get(SITE_REFERENCE_HEIGHT_M, site_name, ustrip(u"m", tower_height)) * u"m"
-    forcing_vars = get(SITE_FORCING_VARS, site_name, (ta="Ta", ws="Ws", ah=nothing))
+    forcing = forcing_sources(site_name, years, canopy_height)
+    reference_height = forcing.reference_height
+    canopy_height < reference_height || error("$site_name's canopy ($canopy_height) reaches the reanalysis " *
+        "forcing height ($reference_height)")
 
-    # canopy_height can never legitimately exceed reference_height --
-    # Microclimate.jl always sets reference_height=last(heights), and
-    # _build_heights forces canopy_height onto that same grid as an interior
-    # point, so a taller canopy_height would silently push reference_height
-    # off the top of the grid. Clamp + warn rather than let that happen
-    # quietly (Wallaby: file says canopy_height=8-10m, but its only wind/temp
-    # sensor sits at just 5m -- no above-canopy forcing exists for
-    # this stand, so the simulated canopy is capped at what the forcing can
-    # actually support).
-    canopy_height = min(raw_canopy_height, reference_height)
-    if canopy_height < raw_canopy_height
-        @warn "canopy_height clamped to reference_height for $site_name" raw_canopy_height reference_height
-    end
-
-    return (; site_name, years, paths, canopy_height, tower_height, reference_height, forcing_vars,
+    return (; site_name, years, path, canopy_height, reference_height, forcing,
+              forcing_backups = forcing_backups(site_name),
               latitude, longitude, global_attrib,
-              leaf_area_index = SITE_LEAF_AREA_INDEX[site_name], leaf_reflectance = SITE_LEAF_REFLECTANCE[site_name],
-              leaf_transmittance = SITE_LEAF_TRANSMITTANCE[site_name],
-              height_series = get(SITE_HEIGHT_SERIES, site_name, Tuple{Float64,String}[]))
+              elevation = site_elevation(site_name, latitude, longitude),
+              leaf_area_index = site_leaf_area_index(site_name, latitude, longitude, years),
+              leaf_reflectance = site_setting(site_name, "leaf_reflectance"),
+              leaf_transmittance = site_setting(site_name, "leaf_transmittance"),
+              height_series = discover_height_series(site_name, years, forcing, forcing_backups(site_name)))
 end
 
 # 30-min -> hourly: mean of the QC-good sub-hourly readings; `missing` if none
@@ -78,13 +60,11 @@ end
 # phase it wasn't tested against -- silently, since it still produces a
 # same-length, monotonic DateTime column, just offset by half an hour from
 # the true hour-start label. Hour labels are computed per-row instead and
-# grouped, which is correct regardless of starting phase. This must land on
-# the same on-the-hour convention SILO's t_model uses, or every
-# DateTime-based alignment/gap-fill match against a SILO donor silently fails.
+# grouped, which is correct regardless of starting phase.
 _hour_group_start(t) = Dates.minute(t) == 30 ? floor(t, Dates.Hour) : floor(t, Dates.Hour) - Dates.Hour(1)
 
 function _aggregate_hourly(df)
-    n_per_hour = 60 ÷ OZFLUX_NATIVE_STEP_MINUTES
+    n_per_hour = Minute(60) ÷ DataFrames.metadata(df, "time_step")
     groups = Dict{DateTime,Vector{Int}}()
     for (i, t) in enumerate(df.DateTime)
         push!(get!(groups, _hour_group_start(t), Int[]), i)
@@ -105,48 +85,12 @@ function _aggregate_hourly(df)
             vals = Float64[]
             for r in groups[h]
                 v = col[r]
-                (ismissing(v) || (has_qc && df[r, qc_name] != OZFLUX_GOOD_QC)) && continue
+                (ismissing(v) || (has_qc && !(df[r, qc_name] in OZFLUX_GOOD_QC_FLAGS))) && continue
                 push!(vals, v)
             end
             isempty(vals) || (hourly[k] = mean(vals))
         end
         out[!, name] = hourly
-    end
-    return out
-end
-
-# Fills `missing` entries in `tower_vals` (at `tower_t` DateTimes) from
-# `donor_vals` (at `donor_t` DateTimes) where a matching timestamp exists;
-# leaves them `missing` otherwise (fill_gaps handles the remainder).
-function _gap_fill_from_donor(tower_t, tower_vals, donor_t, donor_vals)
-    idx = Dict(t => i for (i, t) in enumerate(donor_t))
-    out = Vector{Union{Float64,Missing}}(missing, length(tower_vals))
-    for i in eachindex(tower_vals)
-        if !ismissing(tower_vals[i])
-            out[i] = tower_vals[i]
-        elseif haskey(idx, tower_t[i])
-            out[i] = donor_vals[idx[tower_t[i]]]
-        end
-    end
-    return out
-end
-
-# SILO has no hourly rain, only a daily total -- unlike the other donor
-# variables this can't fill individual missing hours. Only applied to tower
-# days missing ALL 24 hours (a partially-observed day's known hours would
-# make the true within-day distribution ambiguous either way); the whole
-# day's SILO total is dumped at midnight, matching how daily totals are
-# conventionally applied (e.g. oznet's DailyRainfall schedule).
-function _gap_fill_precip_daily(tower_t, tower_precip, donor_dates, donor_daily_mm)
-    out = collect(Union{Float64,Missing}, tower_precip)
-    donor_idx = Dict(d => i for (i, d) in enumerate(donor_dates))
-    for day_start in 1:24:(length(out) - 23)
-        day_range = day_start:(day_start + 23)
-        all(ismissing, @view out[day_range]) || continue
-        d = Date(tower_t[day_start])
-        haskey(donor_idx, d) || continue
-        out[day_range] .= 0.0
-        out[day_start] = donor_daily_mm[donor_idx[d]]
     end
     return out
 end
@@ -185,80 +129,30 @@ end
 # _build_heights/_build_depths/plant_area_index_profile: see utils.jl
 # (generic grid + PAI construction, not site-specific).
 
-# Depth-m values from _hourly_depth_series's (depth_m, values) pairs, for
-# both Ts and Sws -- the set of depths _build_depths should land nodes on.
-_observed_depths_m(hourly) = vcat([r.depth_m for r in _hourly_depth_series(hourly, "Ts")],
-                                   [r.depth_m for r in _hourly_depth_series(hourly, "Sws")])
+# Both ends of every Ts and Sws depth range: the depths _build_depths lands nodes on
+_observed_depths_m(hourly) = [d for prefix in ("Ts", "Sws") for r in _hourly_depth_series(hourly, prefix) for d in (r.top_m, r.bottom_m)]
 
-# Live SLGA fetch + pedotransfer (same as oznet/pipeline.jl) -- SLGA has no
-# point-query API, so a uniform profile is derived from a small bounding box
-# around the site coordinates. Organic litter/crust cap on the top ~2.5 cm
-# (nodes 1:3) matches oznet's/NicheMapR's default cap=1 behaviour. Prints a
-# sanity check against the site's own metadata BulkDensity attribute (present
-# on at least some sites, e.g. Whroo) when available -- SLGA vs a real
-# point measurement, not a substitute for it (SLGA is a 90 m grid mean).
-#
-# soil_source can also be :slga_uniform -- the real per-depth SLGA profile
-# (with the same organic_cap/BulkDensity corrections as :slga), collapsed to
-# one depth-weighted-mean slab via flatten_soil_profile (utils.jl). Real
-# per-depth SLGA data previously made micropoint's RunModelFull hang
-# indefinitely (see micropoint/ozflux/README), and even flattening it
-# per-model let the two models silently average it differently --
-# :slga_uniform lets both Microclimate.jl and micropoint run on the exact
-# same flat numbers for a like-for-like comparison, while plain
-# :slga (full depth resolution) stays available for Microclimate.jl-only runs.
-#
-# Cached per (site_name, depths, source) -- prepare_site/prepare_site_silo
-# both fetch the same site's same depth grid, no need to hit SLGA twice; the
-# source is part of the key since :slga and :slga_uniform must not share a
-# cached result for the same (site_name, depths).
+# SLGA soil at the site's cell
+_slga_soil_profile(latitude, longitude, depths) =
+    build_soil_profile(SLGA, (ustrip(u"°", longitude), ustrip(u"°", latitude));
+        depths, pedotransfer_model = pedotransfer_model_choice).soil_profile
+
+# Soil profile from soil_source(site_name), cached; :slga_uniform is SLGA flattened to one slab, for micropoint
 const _SOIL_CACHE = Dict{Tuple{String,Vector{Float64},Symbol},Any}()
 
-function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attrib)
+function _fetch_soil_profile(site_name, latitude, longitude, depths)
     source = soil_source(site_name)
     cache_key = (site_name, ustrip.(u"m", depths), source)
     haskey(_SOIL_CACHE, cache_key) && return _SOIL_CACHE[cache_key]
-    if source !== :slga && source !== :slga_uniform
-        soil_profile = soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[source], depths)
-        if organic_cap(site_name)
-            soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
-            soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
-        end
-        macropores(site_name) && apply_macropore_boost!(soil_profile, depths;
-            max_boost=MACROPORE_MAX_BOOST, taper_depth=MACROPORE_TAPER_DEPTH)
-        _SOIL_CACHE[cache_key] = soil_profile
-        return soil_profile
+    soil_profile = if source === :slga || source === :slga_uniform
+        _slga_soil_profile(latitude, longitude, depths)
+    elseif source === :horizons
+        soil_profile_from_horizons(soil_horizons(site_name), depths, pedotransfer_model_choice)
+    elseif source === :peat
+        soil_profile_from_peat(PEAT, depths)
+    else
+        soil_profile_from_texture(CAMPBELL_NORMAN_TEXTURES[source], depths)
     end
-    b = soil_area_buffer_deg
-    lon_dd, lat_dd = ustrip(u"°", longitude), ustrip(u"°", latitude)
-    area = Extent(X = (lon_dd - b, lon_dd + b), Y = (lat_dd - b, lat_dd + b))
-    soil_result = build_soil_profile(SLGA, area; depths, pedotransfer_model = pedotransfer_model_choice)
-    soil_profile = soil_result.soil_profile
-    if organic_cap(site_name)
-        soil_profile.mineral_conductivity[1:3] .= 0.05u"W/m/K"
-        soil_profile.mineral_heat_capacity[1:3] .= 1920.0u"J/kg/K"
-    end
-    if haskey(global_attrib, "BulkDensity")
-        # Metadata value is a real point measurement (assumed near-surface) vs
-        # SLGA's 90 m-grid mean -- rescale the whole profile by their ratio at
-        # the surface node rather than overwrite it outright, preserving
-        # SLGA's own depth trend. Doesn't touch the hydraulic parameters
-        # already derived from the pre-scaled bulk density via pedotransfer
-        # (texture, not bulk density, dominates those) -- bulk density itself
-        # (thermal capacity/conductivity) is the only thing this corrects.
-        meta_bd = parse(Float64, string(global_attrib["BulkDensity"])) * u"kg/m^3"
-        if meta_bd > 500.0u"kg/m^3" # at least one site has erroneous value
-            slga_bd = soil_profile.bulk_density[5]
-            scale = meta_bd / slga_bd
-            @printf("  BulkDensity: metadata=%.0f kg/m^3  SLGA(surface)=%.0f kg/m^3  (scaling profile by %.2fx)\n",
-                ustrip(u"kg/m^3", meta_bd), ustrip(u"kg/m^3", slga_bd), scale)
-            soil_profile.bulk_density .*= scale
-        end
-    end
-    #soil_profile.bulk_density .*= 1.4
-    println(soil_profile.bulk_density)
-    macropores(site_name) && apply_macropore_boost!(soil_profile, depths;
-        max_boost=MACROPORE_MAX_BOOST, taper_depth=MACROPORE_TAPER_DEPTH)
     if source === :slga_uniform
         soil_profile = flatten_soil_profile(soil_profile, depths)
     end
@@ -266,64 +160,60 @@ function _fetch_soil_profile(site_name, latitude, longitude, depths, global_attr
     return soil_profile
 end
 
-# PAI -> shade fraction via Beer-Lambert (Campbell & Norman), used only by
-# canopy_mode=:legacy -- MultilayerCanopy (canopy_mode=:full) computes its
-# own radiative transfer and doesn't use `shade` at all.
-_legacy_shade(leaf_area_index, extinction_coefficient) = 1.0 - exp(-extinction_coefficient * leaf_area_index)
+# Fills `primary`'s missing hours from `backup`, mapped onto the primary
+# instrument by a least-squares line fitted on hours where both report.
+function _fill_from_backup(primary, backup)
+    both = .!ismissing.(primary) .& .!ismissing.(backup)
+    x = Float64.(backup[both])
+    y = Float64.(primary[both])
+    slope = cov(x, y) / var(x)
+    intercept = mean(y) - slope * mean(x)
+    return [ismissing(p) && !ismissing(b) ? intercept + slope * b : p for (p, b) in zip(primary, backup)]
+end
 
-# Real, gap-filled hourly forcing: tower obs, SILO-donor-filled (see
-# silo_gapfill_donor) wherever the tower itself is missing, then fill_gaps
-# for any remainder. Shared by prepare_site (consumed hourly) and
-# prepare_site_daily (degraded to a daily min/max/mean/total envelope
-# afterward) so both start from the exact same real+gap-filled values --
-# forcing_vars.ta/.ws: the tower variable actually at reference_height (bare
-# "Ta"/"Ws" for most sites; a dedicated tower-top sensor where the bare
-# composite's real height doesn't match -- see config.jl).
-function _gapfilled_hourly_forcing(site_name, hourly, forcing_vars, gap_fill_donor, canopy_mode)
-    donor(col, name) = gap_fill_donor === nothing ? col :
-        _gap_fill_from_donor(hourly.DateTime, col, gap_fill_donor.t_model, getproperty(gap_fill_donor, name))
-
-    ta_col = hourly[!, forcing_vars.ta]
-    #ta_col = fill(missing, nrow(hourly))
-    ws_col = hourly[!, forcing_vars.ws]
-    reference_temperature = fill_gaps(donor(ta_col, :reference_temperature_C)) .* u"°C"
-
-    # RH: sites with a forcing_vars.ah override have no bare "RH" of verified
-    # height either, so always derive from AH rather than trusting it. Other
-    # sites keep bare RH (gaps preferentially filled from the tower's own Ah,
-    # different instrument, same site/hour) before falling back to the SILO
-    # donor -- also a direct sanity check on the RH scale fix (utils.jl's
-    # _fix_rh_scale).
-    ta_C = ustrip.(u"°C", reference_temperature)
-    rh_raw = if forcing_vars.ah !== nothing
-        ah_col = hourly[!, forcing_vars.ah]
-        [ismissing(ah) ? missing : _rh_from_ah(ah, t) for (ah, t) in zip(ah_col, ta_C)]
-    else
-        rr = hourly.RH
-        if "Ah" in names(hourly)
-            ah_derived = [ismissing(ah) ? missing : _rh_from_ah(ah, t) for (ah, t) in zip(hourly.Ah, ta_C)]
-            both = [(Float64(rh), ad) for (rh, ad) in zip(hourly.RH, ah_derived) if !ismissing(rh) && !ismissing(ad)]
-            if length(both) > 1
-                obs = first.(both); der = last.(both)
-                #@printf("  RH cross-check vs Ah-derived: r=%+.3f  bias=%+.2f%%  (n=%d)\n", cor(obs, der), mean(der .- obs), length(both))
-            end
-            rr = [ismissing(rh) ? ad : rh for (rh, ad) in zip(hourly.RH, ah_derived)]
-        end
-        rr
+# Forcing columns with gaps filled from the site's forcing_backups (sites.toml), before
+# interpolation, so the gap masks downstream mark only hours no tower instrument covers. Backup variables are summed (missing if any is).
+function _fill_forcing_from_backups(hourly, forcing, forcing_backups)
+    for (quantity, backup_names) in pairs(forcing_backups)
+        name = getproperty(forcing, quantity)
+        backup = sum(hourly[!, b] for b in backup_names)
+        hourly[!, name] = _fill_from_backup(hourly[!, name], backup)
     end
-    reference_humidity = clamp.(fill_gaps(donor(rh_raw, :reference_humidity_pct)) ./ 100.0, 0.0, 1.0)
-    lp = legacy_params(site_name)
-    wind_multiplier = canopy_mode == :legacy ? lp.wind_multiplier : 1.0
-    reference_wind_speed  = max.(fill_gaps(donor(ws_col, :reference_wind_speed_ms)) .* wind_multiplier, 0.1) .* u"m/s"
-    global_radiation      = max.(fill_gaps(donor(hourly.Fsd, :global_radiation_Wm2)), 0.0) .* u"W/m^2"
-    longwave_radiation    = max.(fill_gaps(donor(hourly.Fld, :longwave_radiation_Wm2)), 0.0) .* u"W/m^2"  # donor backs Fld out of the SILO run's sky_temperature (see silo_gapfill_donor)
-    precip = gap_fill_donor === nothing || !haskey(gap_fill_donor, :daily_rainfall_mm) ? hourly.Precip :
-        _gap_fill_precip_daily(hourly.DateTime, hourly.Precip, gap_fill_donor.daily_dates, gap_fill_donor.daily_rainfall_mm)
+    return hourly
+end
+
+# Gap-free hourly forcing from the columns forcing_selection.jl's forcing_sources chose
+# (tower sensors, or reanalysis), interpolated across gaps (fill_gaps)
+function _gapfilled_hourly_forcing(resolved, hourly)
+    (; site_name, forcing, elevation, canopy_height) = resolved
+    pressure = site_pressure(forcing.air_pressure === nothing ? fill(missing, nrow(hourly)) : hourly[!, forcing.air_pressure], elevation)
+    pressure_kPa = ustrip.(u"kPa", pressure)
+    ta_col = hourly[!, forcing.air_temperature]
+    humidity_col = hourly[!, forcing.humidity]
+    if forcing.temperature_is_sonic
+        forcing.humidity_is_absolute || error("$site_name: a sonic temperature needs absolute humidity to convert")
+        ta_col = [ismissing(t) || ismissing(ah) ? missing : air_temperature_from_sonic_temperature(t, specific_humidity(ah, t, p))
+                  for (t, ah, p) in zip(ta_col, humidity_col, pressure_kPa)]
+    end
+    ws_col = wind_at_height.(hourly[!, forcing.wind_speed], forcing.wind_height, forcing.reference_height, canopy_height)
+    reference_temperature = fill_gaps(ta_col) .* u"°C"
+
+    # Relative humidity: measured, or from absolute humidity at the air temperature. Values
+    # outside 0-100% are not humidities, so they are missing.
+    ta_C = ustrip.(u"°C", reference_temperature)
+    rh_measured = forcing.humidity_is_absolute ?
+        [ismissing(ah) ? missing : _rh_from_ah(ah, t) for (ah, t) in zip(humidity_col, ta_C)] : humidity_col
+    rh_raw = [ismissing(rh) || 0.0 <= rh <= 100.0 ? rh : missing for rh in rh_measured]
+    reference_humidity = fill_gaps(rh_raw) ./ 100.0
+    shortwave_col, longwave_col = hourly[!, forcing.downwelling_shortwave], hourly[!, forcing.downwelling_longwave]
+    reference_wind_speed  = fill_gaps(ws_col) .* u"m/s"
+    global_radiation      = max.(fill_gaps(shortwave_col), 0.0) .* u"W/m^2"
+    longwave_radiation    = max.(fill_gaps(longwave_col), 0.0) .* u"W/m^2"
+    precip = hourly[!, forcing.rainfall]
     rainfall_hourly       = coalesce.(precip, 0.0) .* u"kg/m^2"  # any remaining missing (partial-coverage days) assumed zero, not extrapolated
 
     # What actually went into the model (post gap-fill) + which hours were
-    # originally missing from the tower file (donor- or interpolation-filled,
-    # either way) -- report.jl's forcing-sanity plots color these separately.
+    # originally missing -- report.jl's forcing-sanity plots color these separately.
     forcing_used = (;
         Ta = ustrip.(u"°C", reference_temperature), RH = reference_humidity .* 100.0,
         Ws = ustrip.(u"m/s", reference_wind_speed), Fsd = ustrip.(u"W/m^2", global_radiation),
@@ -331,45 +221,46 @@ function _gapfilled_hourly_forcing(site_name, hourly, forcing_vars, gap_fill_don
     )
     filled_mask = (;
         Ta = ismissing.(ta_col), RH = ismissing.(rh_raw), Ws = ismissing.(ws_col),
-        Fsd = ismissing.(hourly.Fsd), Fld = ismissing.(hourly.Fld), Precip = ismissing.(precip),
+        Fsd = ismissing.(shortwave_col), Fld = ismissing.(longwave_col), Precip = ismissing.(precip),
     )
 
     return (; reference_temperature, reference_humidity, reference_wind_speed, global_radiation,
-              longwave_radiation, rainfall_hourly, forcing_used, filled_mask)
+              longwave_radiation, rainfall_hourly, pressure, forcing_used, filled_mask)
 end
 
-# Reads + aggregates all requested years, builds the MicroProblem. Doesn't
-# run anything -- that's run_site. `max_days` truncates the run for fast
-# debug-loop iteration (unlike oznet, ozflux is keyed on whole-year files,
-# not a continuous date range, so there's no sim_start/sim_end to shorten).
-# `gap_fill_donor` (see silo_gapfill_donor): substitutes real SILO-forced
-# hourly values for missing tower Ta/RH/Ws/Fsd before falling back to plain
-# interpolation (fill_gaps) for whatever's still missing.
-# `canopy_mode`: :full (MultilayerCanopy) or :legacy (NoCanopy + a PAI-derived
-# shade fraction + a wind knockdown + a large horizon angle -- how forest
-# sites were approximated before MultilayerCanopy existed; run both to see
-# what the full canopy model buys over that approximation).
-function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing, canopy_mode=:full)
-    resolved = resolve_site(site_name, years)
-    (; canopy_height, reference_height, forcing_vars, latitude, longitude, leaf_area_index,
-        leaf_reflectance, leaf_transmittance, height_series) = resolved
+# Hourly tower measurements of a resolved site's years: the validation series and the forcing
+# sensors forcing_sources picked, their gaps filled from the site's backup sensors, plus the
+# reanalysis columns for whatever the tower can't supply
+function read_hourly_site_data(resolved)
+    (; site_name, years, path, forcing, forcing_backups, height_series) = resolved
+    println("  Reading $path for $site_name $years...")
+    print_forcing_sources(forcing)
+    extra_vars = String[tower_forcing_names(forcing)..., Iterators.flatten(values(forcing_backups))...]
+    tower = read_ozflux_nc(path, years, site_corrections(site_name); height_series, extra_vars)
+    hourly = _fill_forcing_from_backups(_aggregate_hourly(tower), forcing, forcing_backups)
+    add_reanalysis_forcing!(hourly, resolved, forcing.reanalysis)
+    return hourly
+end
 
-    println("  Reading ", length(resolved.paths), " file(s) for $site_name $years...")
-    raw_parts = [read_ozflux_nc(path; height_series) for path in resolved.paths]
-    raw = sort(vcat(raw_parts...; cols=:union), :DateTime)
-    hourly = _aggregate_hourly(raw)
+# The site's MicroProblem over `years`, or its first `max_days` days
+function prepare_site(site_name, years; max_days=nothing, litter_model=site_litter(site_name))
+    resolved = resolve_site(site_name, years)
+    (; canopy_height, reference_height, forcing, latitude, longitude, leaf_area_index, height_series) = resolved
+
+    hourly = read_hourly_site_data(resolved)
+    # fill_gaps would hold a leading/trailing forcing gap flat at the nearest observation for
+    # days (sun-up Fsd all night, fixed Ta) -- start and end on whole observed days instead.
+    hourly = _trim_unforced_days(hourly, forcing)
     ndays = nrow(hourly) ÷ 24
     max_days !== nothing && (ndays = min(ndays, max_days))
     hourly = hourly[1:(ndays * 24), :]
     n = ndays * 24
-    println("  $ndays days ($n hours) after 30-min -> hourly aggregation")
+    println("  $ndays days ($n hours) from $(first(hourly.DateTime)) after 30-min -> hourly aggregation")
 
     (; reference_temperature, reference_humidity, reference_wind_speed, global_radiation,
-       longwave_radiation, rainfall_hourly, forcing_used, filled_mask) =
-        _gapfilled_hourly_forcing(site_name, hourly, forcing_vars, gap_fill_donor, canopy_mode)
-    pressure = fill_gaps(hourly.ps) .* u"kPa" .|> p -> uconvert(u"Pa", p)
+       longwave_radiation, rainfall_hourly, pressure, forcing_used, filled_mask) =
+        _gapfilled_hourly_forcing(resolved, hourly)
     mean_air_temperature = mean(ustrip.(u"°C", reference_temperature)) * u"°C"
-    lp = legacy_params(site_name)
 
     environment_hourly = HourlyTimeseries(;
         pressure, reference_temperature, reference_humidity, reference_wind_speed,
@@ -379,108 +270,121 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
         zenith_angle = nothing,
     )
     daily_rainfall = [sum(ustrip.(u"kg/m^2", rainfall_hourly[(d-1)*24+1 : d*24])) for d in 1:ndays] .* u"kg/m^2"
-    shade_level = canopy_mode == :legacy ? _legacy_shade(leaf_area_index, lp.extinction_coefficient) : 0.0
     environment_daily = DailyTimeseries(;
-        shade = fill(shade_level, ndays),
+        shade = fill(0.0, ndays),
         soil_wetness = fill(0.0, ndays),  # unused -- DynamicSoilMoisture simulates it instead
         surface_emissivity = fill(emissivity, ndays),
         cloud_emissivity = fill(emissivity, ndays),
         rainfall = daily_rainfall,
         deep_soil_temperature = fill(mean_air_temperature, ndays),  # no borehole climatology available; site-year mean air temp as a stand-in
         leaf_area_index = fill(leaf_area_index, ndays),  # only read by NoCanopy's ET partitioning; MultilayerCanopy uses its own plant_area_index
+        albedo = fill(site_albedo(site_name), ndays),
+        roughness_height = fill(something(ground_roughness_override, site_ground_roughness_height(site_name)), ndays),
     )
 
-    horizon = canopy_mode == :legacy ? fill(lp.horizon_angle, 24) : fill(0.0u"°", 24)
-    roughness_height = canopy_mode == :legacy ? lp.roughness_height : 0.004u"m"
     site = Site(;
-        latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
-        horizon_angles = horizon, sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height,
-        atmospheric_pressure = mean(pressure),
+        latitude, longitude, resolved.elevation, slope = 0.0u"°", aspect = 0.0u"°",
+        horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
     )
 
-    depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
-    println("  Fetching SLGA soil texture...")
-    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
+    depths = _build_depths(SIM_DEPTHS_M, vcat(_observed_depths_m(hourly), extra_soil_depths_m))
+    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths)
 
-    extra_heights_m = [h for (h, _) in height_series]
-    heights = _build_heights(canopy_height, reference_height, extra_heights_m)
+    heights = _build_heights(canopy_height, reference_height, first.(height_series))
 
-    canopy_model = if canopy_mode == :legacy
-        NoCanopy()
-    else
-        pai_shape = get(SITE_PAI_SHAPE, site_name, :uniform)
-        canopy_heights = heights[heights .<= canopy_height]
-        plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
-        MultilayerCanopy(; canopy_height, plant_area_index,
-            shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
-            interception_model = interception_model_choice,
-            leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
-            stomatal_model = MoistureResponsiveStomatalConductance(conductance = LeafEvaporationParameters(;
-                    abaxial_vapour_conductance=0.3u"mol/m^2/s", adaxial_vapour_conductance=0.0u"mol/m^2/s",
-                    cuticular_conductance=0.01u"mol/m^2/s",
-                )
-            ),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
-            wind_model = canopy_wind_model_choice)
-    end
-
-    config = MicroConfig(;
-        convergence = convergence_choice,
-        rainfall_schedule = rainfall_schedule_choice,
-        soil_moisture_strategy = soil_moisture_strategy_choice,
-        canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice,
-    )
-    model = MicroModel(;
-        hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice,
-        soil_hydraulic_model = soil_hydraulic_model(site_name),
-        boundary_layer_model = boundary_layer_model_choice,
-        canopy_model, config,
-    )
+    canopy = canopy_model(site_name, resolved, heights)
+    model = micro_model(site_name, site, soil_profile, depths, heights, canopy; litter_model)
 
     # Initial soil state from the site's own first observed Ts/Sws (falls
     # back to the mean air temperature / a mid-range moisture guess for any
     # depth with no observation to anchor to).
     initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
+    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2, soil_profile; scale=sws_obs_scale(site_name, soil_profile))
     initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
 
     inputs = MicroInputs(;
-        site, soil_profile, environment_minmax = nothing, environment_daily, environment_hourly,
+        environment_minmax = nothing, environment_daily, environment_hourly,
         initial_soil_temperature, initial_soil_moisture,
     )
-    problem = MicroProblem(model, inputs; days = collect(1:ndays), time_mode = ConsecutiveDayMode(; spinup_first_day = false))
+    problem = MicroProblem(model, inputs; days = days_of_year(hourly.DateTime),
+        time_mode = ConsecutiveDayMode(; spinup_first_day = false))
 
     return (; site_name, years, resolved, hourly, t_model = hourly.DateTime, ndays, n, heights, depths, height_series,
-              canopy_mode, forcing_used, filled_mask, problem)
+              forcing_used, filled_mask, problem)
 end
 
-# Depth-series NamedTuples (matching discover_depth_series's format) from the
-# hourly-aggregated frame's renamed `<prefix>_<depth>m` columns.
+# Hourly rows from the first midnight at or after the first hour with every
+# forcing variable observed, to the last 23:00 at or before the last such hour;
+# pressure isn't needed (site_pressure).
+function _trim_unforced_days(hourly, forcing)
+    cols = [forcing.air_temperature, forcing.humidity, forcing.wind_speed,
+            forcing.downwelling_shortwave, forcing.downwelling_longwave]
+    forced = [all(c -> !ismissing(hourly[i, c]), cols) for i in 1:nrow(hourly)]
+    i0, i1 = findfirst(forced), findlast(forced)
+    i0 === nothing && error("no hour with every forcing variable observed")
+    first_row = findfirst(i -> i >= i0 && Dates.hour(hourly.DateTime[i]) == 0, 1:nrow(hourly))
+    last_row = findlast(i -> i <= i1 && Dates.hour(hourly.DateTime[i]) == 23, 1:nrow(hourly))
+    return hourly[first_row:last_row, :]
+end
+
+# Day of year of each day in an hourly series starting at midnight -- the
+# solar geometry's `days`, so a run that doesn't start on 1 January still
+# sees the right sun.
+function days_of_year(t)
+    Dates.hour(first(t)) == 0 || error("hourly series must start at 00:00, starts at $(first(t))")
+    return Dates.dayofyear.(t[1:24:end])
+end
+
+# MultilayerCanopy from the config.jl model choices and the site's resolved traits
+function canopy_model(site_name, resolved, heights)
+    (; canopy_height, leaf_area_index, leaf_reflectance, leaf_transmittance) = resolved
+    canopy_heights = heights[heights .<= canopy_height]
+    plant_area_index = plant_area_index_profile(pai_shape(site_name), canopy_heights, canopy_height, leaf_area_index)
+    return MultilayerCanopy(; canopy_height, plant_area_index,
+        shortwave_model = TwoStreamRadiation(; leaf_reflectance, leaf_transmittance),
+        longwave_model = longwave_model_choice, wind_model = canopy_wind_model_choice,
+        air_profile_model = canopy_air_profile_model_choice, interception_model = interception_model_choice,
+        roughness_sublayer = roughness_sublayer_choice,
+        leaf_parameters = leaf_parameters(site_name), stomatal_model = MoistureResponsiveStomatalConductance(),
+        leaf_convection_model = leaf_convection_model_choice, convergence_model = canopy_convergence_model_choice)
+end
+
+# MicroModel from the config.jl model choices
+function micro_model(site_name, site, soil_profile, depths, heights, canopy; litter_model=site_litter(site_name))
+    soil = SoilModel(; depths, profile = soil_profile,
+        properties_model = soil_properties_model_choice, hydraulic_model = soil_hydraulic_model(site_name),
+        moisture_strategy = soil_moisture_strategy_choice, energy_model = soil_energy_model_choice)
+    atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice)
+    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = rainfall_schedule_choice)
+    surface = SurfaceModel(; litter_model)
+    return MicroModel(; hours = 0:1:23, site, soil, surface, atmosphere, canopy, config,
+        vapour_pressure_equation = vapour_pressure_equation_choice)
+end
+
+# Depth series (matching discover_depth_series's (; top_m, bottom_m, values)) from the hourly
+# table's `<prefix>_<depth_name>` columns, with the column name
 function _hourly_depth_series(hourly, prefix)
-    pattern = Regex("^" * prefix * raw"_([\d.]+)m$")
-    result = NamedTuple{(:depth_m, :values),Tuple{Float64,Vector{Union{Float64,Missing}}}}[]
+    pattern = Regex("^" * prefix * raw"_([\d.]+)(?:-([\d.]+))?m$")
+    result = NamedTuple{(:top_m, :bottom_m, :column, :values),Tuple{Float64,Float64,String,Vector{Union{Float64,Missing}}}}[]
     for name in names(hourly)
         m = match(pattern, name)
         m === nothing && continue
-        push!(result, (depth_m=parse(Float64, m.captures[1]), values=hourly[!, name]))
+        top_m = parse(Float64, m[1])
+        push!(result, (; top_m, bottom_m=m[2] === nothing ? top_m : parse(Float64, m[2]), column=name, values=hourly[!, name]))
     end
-    return sort(result; by=r -> r.depth_m)
+    return sort(result; by=r -> (r.top_m, r.bottom_m))
 end
 
-# First available (depth_m, value) pair from each series in `depth_series`,
+# First available value of each series in `depth_series`, at the middle of its depth range,
 # sorted by depth.
 function _known_depth_points(depth_series)
     known_d = Float64[]
     known_v = Float64[]
-    for (depth_m, values) in depth_series
-        idx = findfirst(!ismissing, values)
+    for r in depth_series
+        idx = findfirst(!ismissing, r.values)
         idx === nothing && continue
-        push!(known_d, depth_m)
-        push!(known_v, values[idx])
+        push!(known_d, (r.top_m + r.bottom_m) / 2)
+        push!(known_v, r.values[idx])
     end
     order = sortperm(known_d)
     return known_d[order], known_v[order]
@@ -503,411 +407,43 @@ function initial_temperature_profile(ts_depths, depths, fallback_temperature)
     return [u"K"(_interp_flat(known_d, known_v_C, ustrip(u"m", d)) * u"°C") for d in depths]
 end
 
-function initial_moisture_profile(sws_depths, depths, fallback_fraction; scale=1.0)
+# Clamped to each depth's saturation, 1 - bulk density / solid density
+function initial_moisture_profile(sws_depths, depths, fallback_fraction, soil_profile; scale=1.0)
+    saturation = 1 .- soil_profile.bulk_density ./ soil_profile.mineral_density
     known_d, known_v = _known_depth_points(sws_depths)
-    isempty(known_d) && return fill(fallback_fraction, length(depths))
+    isempty(known_d) && return min.(fallback_fraction, saturation)
     known_v = known_v .* scale  # before clamping -- see sws_obs_scale (utils.jl)
-    return [clamp(_interp_flat(known_d, known_v, ustrip(u"m", d)), 0.02, 0.5) for d in depths]
+    return [clamp(_interp_flat(known_d, known_v, ustrip(u"m", d)), 0.02, s) for (d, s) in zip(depths, saturation)]
 end
 
-# ── SILO gridded-forcing fetch (secondary comparison + gap-fill donor) ──────
-# Mirrors oznet/pipeline.jl's weather-fetch block (MicroVectorProblem +
-# MicroclimateMapper.init): a single-point fetch/synthesis returning
-# .site/.environment_hourly/.environment_daily/.environment_minmax, ready to
-# hand straight to MicroInputs. Cached on disk (weather_cache_dir) since a
-# fetch is a live network call.
-if use_opendap_points
-    MicroclimateMapper.loader(::Type{<:SILO}) = MicroclimateMapper.PointQuery()
-end
-
-const _SILO_CACHE = Dict{Tuple{String,Date,Date,Float64},Any}()
-
-# reference_height: the real site model's last(heights) -- MicroclimateMapper's
-# assemble_weather! power-law-corrects SILO's native 10m wind to
-# maximum(micro_model.heights), so the throwaway model built here must top out
-# at the SAME height the actual site model will treat as its reference height,
-# or the gap-fill/SILO-run wind ends up scaled to the wrong height (silently
-# defaults to 2m otherwise -- see DEFAULT_HEIGHTS_M).
-function fetch_silo_forcing(site_name, latitude, longitude, sim_start::Date, sim_end::Date, depths, reference_height)
-    ref_m = ustrip(u"m", reference_height)
-    wc_key = (site_name, sim_start, sim_end, ref_m)
-    disk_path = joinpath(weather_cache_dir, "SILO_$(site_name)_$(sim_start)_$(sim_end)_ref$(ref_m)m.jls")
-    if !haskey(_SILO_CACHE, wc_key) && reuse_weather && isfile(disk_path)
-        _SILO_CACHE[wc_key] = deserialize(disk_path)
-        println("  Loaded SILO forcing from disk cache: $disk_path")
-    end
-    if !haskey(_SILO_CACHE, wc_key)
-        println("  Fetching SILO forcing ($sim_start to $sim_end, wind reference height $(ref_m) m)...")
-        micro_model = MicroModel(; hours = collect(0.0:1:23.0), depths, heights = [0.01, ref_m] .* u"m",
-            soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-            snow_model = NoSnow())
-        mapper_model = MicroMapModel(; micro_model, dem_source = dem_source_choice, weather_source = weather_source_choice,
-            surface_albedo_source = site_albedo(site_name), roughness_height_source = 0.004u"m", compute_terrain = compute_terrain_choice)
-        point = GIW.Point((ustrip(u"°", longitude), ustrip(u"°", latitude)))
-        # Placeholder soil_profile/init -- only sizes the fetch, doesn't inform
-        # it (weather forcing doesn't depend on soil properties).
-        vec_problem = MicroVectorProblem(;
-            model = mapper_model, points = [point], dates = sim_start:Day(1):sim_end,
-            soil_profile = SoilProfile(; bulk_density = fill(1.3u"Mg/m^3", length(depths)),
-                mineral_density = fill(2.56u"Mg/m^3", length(depths)), mineral_conductivity = fill(1.25u"W/m/K", length(depths)),
-                mineral_heat_capacity = fill(870.0u"J/kg/K", length(depths)),
-                hydraulics = CampbellHydraulicProfile(; air_entry_water_potential = fill(1.0u"J/kg", length(depths)),
-                    saturated_hydraulic_conductivity = fill(0.001u"kg*s/m^3", length(depths)),
-                    campbell_b_parameter = fill(4.5, length(depths)), root_density = fill(1.0u"m/m^3", length(depths)))),
-            init = (; soil_moisture = fill(0.2, length(depths))),
-        )
-        weather_result = MicroclimateMapper.init(vec_problem)
-        worker = take!(weather_result.cache_pool)
-        fetched = weather_result.init_inputs.build_inputs(worker.scratch, (Dim{:point}(1),))
-        put!(weather_result.cache_pool, worker)
-        if cache_weather
-            mkpath(weather_cache_dir)
-            serialize(disk_path, fetched)
-        end
-        _SILO_CACHE[wc_key] = fetched
-    end
-    return _SILO_CACHE[wc_key]
-end
-
-# Calendar-year-aligned span covering every requested year (MicroclimateMapper
-# sizes its annual deep-soil climatology off a full Jan1-Dec31 span).
-_year_span(years) = Date(minimum(years), 1, 1), Date(maximum(years), 12, 31)
-
-# SILO-forced alternative to prepare_site: same site metadata, soil profile,
-# canopy model and initial conditions (from the tower's own obs, so the two
-# runs differ only in forcing), but environment_hourly/daily/minmax come from
-# a live SILO fetch instead of the tower file.
-#
-# canopy_mode defaults to :full, matching prepare_site -- a standalone SILO
-# run (gridded-forcing skill comparison) should get the same canopy-resolved
-# output the tower-forced run produces. silo_gapfill_donor overrides this to
-# :legacy for its own internal use: only reference_temperature/humidity/
-# wind_speed/global_radiation/sky_temperature (profile-level, not
-# canopy-layer output) feed run_site_gapfilled from there, so building a real
-# canopy model would just slow that solve down for no benefit.
-function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full)
-    resolved = resolve_site(site_name, years)
-    (; canopy_height, reference_height, latitude, longitude, leaf_area_index,
-        leaf_reflectance, leaf_transmittance, height_series) = resolved
-    sim_start, sim_end = _year_span(years)
-
-    # Tower obs read first -- needed for observed depths (_build_depths) and
-    # initial soil state before the SILO fetch/soil-texture fetch below.
-    raw_parts = [read_ozflux_nc(path; height_series) for path in resolved.paths]
-    raw = sort(vcat(raw_parts...; cols=:union), :DateTime)
-    hourly = _aggregate_hourly(raw)
-    depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
-
-    # heights computed before the fetch (not just below, alongside canopy_model)
-    # so fetch_silo_forcing can power-law-correct SILO's 10m wind to the SAME
-    # reference height (last(heights)) the real model will assume it's at --
-    # otherwise the fetch's own throwaway model silently defaults to 2m.
-    extra_heights_m = [h for (h, _) in height_series]
-    heights = _build_heights(canopy_height, reference_height, extra_heights_m)
-
-    fetched = fetch_silo_forcing(site_name, latitude, longitude, sim_start, sim_end, depths, last(heights))
-
-    ndays = length(sim_start:Day(1):sim_end)
-    max_days !== nothing && (ndays = min(ndays, max_days))
-    n = ndays * 24
-    println("  $ndays days ($n hours) of SILO forcing")
-
-    mean_air_temperature = mean(skipmissing(hourly.Ta)) * u"°C"
-    initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-
-    site = Site(;
-        latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
-        horizon_angles = fill(0.0u"°", 24), sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height = 0.004u"m",
-        atmospheric_pressure = fetched.site.atmospheric_pressure,
-    )
-    println("  Fetching SLGA soil texture...")
-    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
-    initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)  # bottom node always saturated (no drainage below the modelled soil column)
-
-    # Same construction as prepare_site's canopy_mode==:full branch. Note
-    # canopy_mode==:legacy here just means NoCanopy() -- the tower path's
-    # fuller :legacy approximation (shade/wind-knockdown/horizon) isn't
-    # wired up for SILO at all, before or after this change.
-    canopy_model = if canopy_mode == :legacy
-        NoCanopy()
-    else
-        pai_shape = get(SITE_PAI_SHAPE, site_name, :uniform)
-        canopy_heights = heights[heights .<= canopy_height]
-        plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
-        MultilayerCanopy(; canopy_height, plant_area_index,
-            shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
-            interception_model = interception_model_choice,
-            leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
-            stomatal_model = MoistureResponsiveStomatalConductance(),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
-            wind_model = canopy_wind_model_choice)
-    end
-
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = DailyRainfall(),  # SILO rainfall is a daily total, not per-timestep
-        soil_moisture_strategy = soil_moisture_strategy_choice, canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice)
-    model = MicroModel(; hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-        boundary_layer_model = boundary_layer_model_choice,
-        canopy_model, config)
-
-    # max_days truncates the solve to `ndays` days, but fetch_silo_forcing
-    # above is deliberately full-year -- truncate environment_minmax/
-    # environment_hourly's own arrays to match (a no-op when max_days is
-    # nothing).
-    environment_minmax = max_days === nothing ? fetched.environment_minmax :
-        truncate_environment_minmax(fetched.environment_minmax, ndays)
-    environment_hourly = max_days === nothing ? fetched.environment_hourly :
-        truncate_environment_hourly(fetched.environment_hourly, n)
-
-    inputs = MicroInputs(;
-        site, soil_profile,
-        environment_minmax, environment_daily = fetched.environment_daily,
-        environment_hourly,
-        initial_soil_temperature, initial_soil_moisture,
-    )
-    problem = MicroProblem(model, inputs; days = collect(1:ndays), time_mode = ConsecutiveDayMode(; spinup_first_day = false))
-
-    # Model spans the full sim_start:sim_end calendar range (SILO forcing);
-    # `hourly` (tower obs, for initial conditions + comparison) may cover a
-    # different/shorter span -- report.jl aligns the two by DateTime, not position.
-    t_model = [DateTime(sim_start) + Day(d) + Hour(h) for d in 0:(ndays - 1) for h in 0:23]
-    # sim_start/environment_daily kept (full sim_start:sim_end span, not
-    # truncated by max_days) for silo_gapfill_donor's daily rainfall donor.
-    return (; site_name, years, resolved, hourly, t_model, ndays, n, heights, depths, height_series, canopy_mode,
-              sim_start, environment_daily = fetched.environment_daily, problem)
-end
-
-function run_site_silo(site_name, years; max_days=nothing, canopy_mode=:full)
+function announce_and_prepare_site(site_name, years; max_days=nothing, litter_model=site_litter(site_name))
     println("\n" * "="^72)
-    println("Site $site_name  years=$years (SILO forcing, canopy_mode=$canopy_mode)")
+    println("Site $site_name  years=$years  litter=$(nameof(typeof(litter_model)))")
     println("="^72)
-    prep = prepare_site_silo(site_name, years; max_days, canopy_mode)
-    println("  Solving MicroProblem ($(prep.n) hours)...")
+    print_corrections(site_name)
+    return prepare_site(site_name, years; max_days, litter_model)
+end
+
+# Thread-safe: prepare_site does the file and network reads
+function solve_site(prep)
     solve_time = @elapsed output = Microclimate.solve(prep.problem)
-    println("  Solved in $(round(solve_time, digits=1)) s")
-    return (; prep..., output)
-end
-
-# The SAME real+gap-filled hourly forcing prepare_site/run_site_gapfilled
-# consumes directly (_gapfilled_hourly_forcing -- needs gap_fill_donor, or
-# variables the tower doesn't measure at all, e.g. Whroo's Precip, come out
-# all-zero rather than SILO-backed), reduced to a daily min/max/mean/total
-# envelope; cloud_cover inferred from that same gap-filled Fsd's daily mean
-# (clear-sky-ratio method, same as MicroclimateMapper's own SILO cloud
-# inference -- MicroclimateMapper.jl/src/mesoclimate/cloud.jl -- and the
-# same min=0.5x/max=2x spread its derive!(::CloudCover{Minimum/Maximum})
-# uses), fed through Microclimate.jl's DailyMinMaxEnvironment/minmax_forcings
-# -- the SAME diel-synthesis pathway a SILO run uses. Isolates whether
-# MultilayerCanopy's response to raw hourly forcing *noise* (as opposed to
-# real-vs-gridded *values*) is behind run_site_gapfilled's damped
-# soil-temperature fluctuations relative to run_site_silo.
-function _cloud_from_daily_fsd(daily_fsd_mean_Wm2, days_of_year, terrain)
-    ndays = length(daily_fsd_mean_Wm2)
-    hours = collect(0.0:1.0:23.0)
-    solar_model = SolarRadiation.SolarProblem()
-    solar_out = SolarRadiation.allocate_output_arrays(ndays * length(hours), ndays, solar_model.wavelength_count)
-    solar_buffers = SolarRadiation.allocate_buffers(solar_model.wavelength_count, solar_model.diffuse_model)
-    cloud = zeros(ndays)
-    MicroclimateMapper.cloud_from_solar_radiation!(cloud, solar_out, daily_fsd_mean_Wm2 .* u"W/m^2",
-        terrain, days_of_year, solar_buffers; solar_model, hours)
-    return clamp.(cloud, 0.0, 1.0)
-end
-
-function prepare_site_daily(site_name, years; max_days=nothing, canopy_mode=:full, gap_fill_donor=nothing)
-    resolved = resolve_site(site_name, years)
-    (; canopy_height, reference_height, forcing_vars, latitude, longitude, leaf_area_index,
-        leaf_reflectance, leaf_transmittance, height_series) = resolved
-
-    println("  Reading ", length(resolved.paths), " file(s) for $site_name $years...")
-    raw_parts = [read_ozflux_nc(path; height_series) for path in resolved.paths]
-    raw = sort(vcat(raw_parts...; cols=:union), :DateTime)
-    hourly = _aggregate_hourly(raw)
-    ndays_full = nrow(hourly) ÷ 24
-    ndays = max_days === nothing ? ndays_full : min(ndays_full, max_days)
-    hourly = hourly[1:(ndays * 24), :]
-    n = ndays * 24
-    println("  $ndays days ($n hours) after 30-min -> hourly aggregation, daily-envelope-forced")
-
-    # Same real+gap-filled hourly forcing prepare_site/run_site_gapfilled
-    # uses (SILO donor backs every variable's real gaps, incl. Precip --
-    # e.g. Whroo's own tower Precip channel is 100% missing, so without this
-    # the daily envelope would be built from real tower rain that doesn't
-    # exist), degraded to a daily min/max/mean/total envelope instead of
-    # consumed hourly.
-    (; reference_temperature, reference_humidity, reference_wind_speed, global_radiation, rainfall_hourly) =
-        _gapfilled_hourly_forcing(site_name, hourly, forcing_vars, gap_fill_donor, canopy_mode)
-    frame = DataFrame(date = Date.(hourly.DateTime),
-        ta = ustrip.(u"°C", reference_temperature), ws = ustrip.(u"m/s", reference_wind_speed),
-        rh = reference_humidity .* 100.0, fsd = ustrip.(u"W/m^2", global_radiation),
-        precip = ustrip.(u"kg/m^2", rainfall_hourly))
-    daily = DataFrames.combine(DataFrames.groupby(frame, :date, sort=true),
-        :ta => minimum => :ta_min, :ta => maximum => :ta_max,
-        :ws => minimum => :ws_min, :ws => maximum => :ws_max,
-        :rh => minimum => :rh_min, :rh => maximum => :rh_max,
-        :fsd => mean => :fsd_mean, :precip => sum => :precip_total,
-    )
-    ndays_actual = nrow(daily)
-    days_of_year = Dates.dayofyear.(daily.date)
-
-    depths = _build_depths(SIM_DEPTHS_M, _observed_depths_m(hourly))
-    println("  Fetching SLGA soil texture...")
-    soil_profile = _fetch_soil_profile(site_name, latitude, longitude, depths, resolved.global_attrib)
-
-    solar_terrain = SolarRadiation.SolarTerrain(;
-        elevation = 0.0u"m", horizon_angles = fill(0.0u"°", 24), slope = 0.0u"°", aspect = 0.0u"°",
-        albedo = site_albedo(site_name), atmospheric_pressure = atmospheric_pressure(0.0u"m"),
-        latitude, longitude,
-    )
-    cloud_mean = _cloud_from_daily_fsd(daily.fsd_mean, days_of_year, solar_terrain)
-    forcings = minmax_forcings(;
-        reference_temperature_min = daily.ta_min .* u"°C", reference_temperature_max = daily.ta_max .* u"°C",
-        reference_wind_speed_min = max.(daily.ws_min, 0.1) .* u"m/s", reference_wind_speed_max = max.(daily.ws_max, 0.1) .* u"m/s",
-        reference_humidity_min = clamp.(daily.rh_min ./ 100.0, 0.0, 1.0), reference_humidity_max = clamp.(daily.rh_max ./ 100.0, 0.0, 1.0),
-        cloud_cover_min = clamp.(cloud_mean .* 0.5, 0.0, 1.0), cloud_cover_max = clamp.(cloud_mean .* 2.0, 0.0, 1.0),
-    )
-    environment_minmax = DailyMinMaxEnvironment(; forcings)
-
-    mean_air_temperature = mean((daily.ta_min .+ daily.ta_max) ./ 2) * u"°C"
-    lp = legacy_params(site_name)
-    shade_level = canopy_mode == :legacy ? _legacy_shade(leaf_area_index, lp.extinction_coefficient) : 0.0
-    environment_daily = DailyTimeseries(;
-        shade = fill(shade_level, ndays_actual),
-        soil_wetness = fill(0.0, ndays_actual),
-        surface_emissivity = fill(emissivity, ndays_actual),
-        cloud_emissivity = fill(emissivity, ndays_actual),
-        rainfall = daily.precip_total .* u"kg/m^2",
-        deep_soil_temperature = fill(mean_air_temperature, ndays_actual),
-        leaf_area_index = fill(leaf_area_index, ndays_actual),
-    )
-
-    horizon = canopy_mode == :legacy ? fill(lp.horizon_angle, 24) : fill(0.0u"°", 24)
-    roughness_height = canopy_mode == :legacy ? lp.roughness_height : 0.004u"m"
-    site = Site(;
-        latitude, longitude, elevation = 0.0u"m", slope = 0.0u"°", aspect = 0.0u"°",
-        horizon_angles = horizon, sky_view_fraction = 1.0,
-        albedo = site_albedo(site_name), roughness_height,
-        atmospheric_pressure = atmospheric_pressure(0.0u"m"),
-    )
-
-    extra_heights_m = [h for (h, _) in height_series]
-    heights = _build_heights(canopy_height, reference_height, extra_heights_m)
-
-    canopy_model = if canopy_mode == :legacy
-        NoCanopy()
-    else
-        pai_shape = get(SITE_PAI_SHAPE, site_name, :uniform)
-        canopy_heights = heights[heights .<= canopy_height]
-        plant_area_index = plant_area_index_profile(pai_shape, canopy_heights, canopy_height, leaf_area_index)
-        MultilayerCanopy(; canopy_height, plant_area_index,
-            shortwave_model=TwoStreamRadiation(leaf_reflectance, leaf_transmittance),
-            leaf_convection_model = leaf_convection_model_choice, leaf_temperature_solver = leaf_temperature_solver_choice,
-            interception_model = interception_model_choice,
-            leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
-            stomatal_model = MoistureResponsiveStomatalConductance(),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
-            wind_model = canopy_wind_model_choice)
-    end
-
-    config = MicroConfig(; convergence = convergence_choice, rainfall_schedule = DailyRainfall(),
-        soil_moisture_strategy = soil_moisture_strategy_choice, canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice)
-    model = MicroModel(; hours = 0:1:23, depths, heights,
-        soil_properties_model = soil_properties_model_choice, soil_hydraulic_model = soil_hydraulic_model(site_name),
-        boundary_layer_model = boundary_layer_model_choice,
-        canopy_model, config)
-
-    initial_soil_temperature = initial_temperature_profile(_hourly_depth_series(hourly, "Ts"), depths, mean_air_temperature)
-    initial_soil_moisture = initial_moisture_profile(_hourly_depth_series(hourly, "Sws"), depths, 0.2; scale=sws_obs_scale(site_name, soil_profile))
-    initial_soil_moisture[length(initial_soil_moisture)] = 1.0 - last(soil_profile.bulk_density) / last(soil_profile.mineral_density)
-
-    # A minmax-driven solve still reads environment_hourly.pressure directly
-    # (interpolate_minmax!, Microclimate.jl/src/simulation.jl:386) -- nothing
-    # else on it is used. Same stub shape MicroclimateMapper's own SILO fetch
-    # uses (_environment_hourly_stub, weather.jl): every other field nothing.
-    environment_hourly = HourlyTimeseries(;
-        pressure = fill(atmospheric_pressure(0.0u"m"), ndays_actual * 24),
-        reference_temperature = nothing, reference_humidity = nothing,
-        reference_wind_speed = nothing, global_radiation = nothing,
-        longwave_radiation = nothing, cloud_cover = nothing,
-        rainfall = nothing, zenith_angle = nothing,
-    )
-    inputs = MicroInputs(;
-        site, soil_profile, environment_minmax, environment_daily, environment_hourly,
-        initial_soil_temperature, initial_soil_moisture,
-    )
-    problem = MicroProblem(model, inputs; days = collect(1:ndays_actual), time_mode = ConsecutiveDayMode(; spinup_first_day = false))
-
-    sim_start = daily.date[1]
-    t_model = [DateTime(sim_start) + Day(d) + Hour(h) for d in 0:(ndays_actual - 1) for h in 0:23]
-
-    return (; site_name, years, resolved, hourly, t_model, ndays = ndays_actual, n = ndays_actual * 24,
-              heights, depths, height_series, canopy_mode, sim_start, environment_daily, problem)
-end
-
-function run_site_daily(site_name, years; max_days=nothing, canopy_mode=:full)
-    gap_fill_donor = silo_gapfill_donor(site_name, years; max_days)
-    println("\n" * "="^72)
-    println("Site $site_name  years=$years (tower-daily-envelope forcing, canopy_mode=$canopy_mode)")
-    println("="^72)
-    prep = prepare_site_daily(site_name, years; max_days, canopy_mode, gap_fill_donor)
-    println("  Solving MicroProblem ($(prep.n) hours)...")
-    solve_time = @elapsed output = Microclimate.solve(prep.problem)
-    println("  Solved in $(round(solve_time, digits=1)) s")
-    return (; prep..., output)
-end
-
-# Real per-hour forcing donor for gap-filling, built from a SILO-forced solve.
-# SILO's own `environment_hourly` is a stub (nothing fields; native resolution
-# is daily min/max, not hourly) -- MicroResult's reference_*/global_radiation
-# columns are the actual per-hour values the solver used (diel-synthesized
-# from SILO's daily min/max + CRUCL2 wind climatology), recorded forcing
-# echoes rather than simulated fluxes, so this is still "SILO data", not
-# model predictions, feeding back into another run's forcing.
-# Daily rainfall total isn't part of the per-hour donor above (SILO has no
-# hourly rain at all, just a daily total -- see _gap_fill_precip_daily).
-function silo_gapfill_donor(site_name, years; max_days=nothing)
-    silo = run_site_silo(site_name, years; max_days, canopy_mode=:legacy)
-    return (;
-        t_model = silo.t_model,
-        daily_dates = collect(silo.sim_start:Day(1):(silo.sim_start + Day(length(silo.environment_daily.rainfall) - 1))),
-        daily_rainfall_mm = ustrip.(u"kg/m^2", silo.environment_daily.rainfall),
-        reference_temperature_C = ustrip.(u"°C", silo.output.reference_temperature),
-        reference_humidity_pct = silo.output.reference_humidity .* 100.0,
-        reference_wind_speed_ms = ustrip.(u"m/s", silo.output.reference_wind_speed),
-        global_radiation_Wm2 = ustrip.(u"W/m^2", silo.output.global_radiation),
-        # SILO has no downward-longwave layer at all -- Fld is backed out of
-        # the solver's own sky_temperature (Stefan-Boltzmann: incoming
-        # longwave = σ*T_sky^4, the same relation view_factor.jl derives
-        # sky_temperature FROM), itself computed from the SILO run's cloud
-        # cover/humidity/temperature. A physically-grounded estimate, not a
-        # straight-line interpolation across a multi-month tower gap.
-        longwave_radiation_Wm2 = ustrip.(u"W/m^2", FluidProperties.σ .* silo.output.sky_temperature .^ 4),
-    )
-end
-
-function run_site_gapfilled(site_name, years; max_days=nothing, canopy_mode=:full)
-    gap_fill_donor = silo_gapfill_donor(site_name, years; max_days)
-    println("\n" * "="^72)
-    println("Site $site_name  years=$years (tower forcing, SILO-gap-filled)")
-    println("="^72)
-    prep = prepare_site(site_name, years; max_days, gap_fill_donor, canopy_mode)
-    println("  Solving MicroProblem ($(prep.n) hours)...")
-    solve_time = @elapsed output = Microclimate.solve(prep.problem)
-    println("  Solved in $(round(solve_time, digits=1)) s")
+    println("  $(prep.site_name): $(prep.n) hours solved in $(round(solve_time, digits=1)) s")
     return (; prep..., output, solve_time)
 end
 
-function run_site(site_name, years; max_days=nothing, canopy_mode=:full)
-    println("\n" * "="^72)
-    println("Site $site_name  years=$years  canopy_mode=$canopy_mode")
-    println("="^72)
-    prep = prepare_site(site_name, years; max_days, canopy_mode)
-    println("  Solving MicroProblem ($(prep.n) hours)...")
-    solve_time = @elapsed output = Microclimate.solve(prep.problem)
-    println("  Solved in $(round(solve_time, digits=1)) s")
-    return (; prep..., output)
+run_site(site_name, years; kw...) = solve_site(announce_and_prepare_site(site_name, years; kw...))
+
+# A solved site (solve_site) on disk, to report on again without solving
+site_result_path(site_name, years, source) = joinpath(outputs_dir, "results", "$(site_name)_$(join(years, '-'))_$(source).jls")
+function save_site_result(result, source)
+    path = site_result_path(result.site_name, result.years, source)
+    mkpath(dirname(path))
+    serialize(path, result)
+end
+load_site_result(site_name, years, source) = deserialize(site_result_path(site_name, years, source))
+# A saved site's model output with its observations prepared again, under the current corrections:
+# to report on after changing a correction, without solving
+function prepare_saved_site(site_name, years, source)
+    saved = load_site_result(site_name, years, source)
+    return (; announce_and_prepare_site(site_name, years)..., saved.output, saved.solve_time)
 end

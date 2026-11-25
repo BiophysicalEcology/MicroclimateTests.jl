@@ -22,15 +22,15 @@ function _timeseries_panel3(t_model, obs_vec, jl_vec, mp_vec; title, units, plot
     return p
 end
 
-function _scatter_panel3(obs_vec, model_vec; units, label, color)
+function _scatter_panel3(obs_vec, model_vec, times, kind; units, label, color)
     obs_vec === nothing && return nothing, plot(; title="$label\n(no obs)", titlefontsize=9, framestyle=:none)
     pairs = [(Float64(o), Float64(mv)) for (o, mv) in zip(obs_vec, model_vec) if !ismissing(o) && isfinite(Float64(o)) && isfinite(Float64(mv))]
     isempty(pairs) && return nothing, plot(; title="$label\n(no valid pairs)", titlefontsize=9, framestyle=:none)
     o = first.(pairs); mv = last.(pairs)
     lo, hi = extrema(vcat(o, mv))
-    s = compute_stats(o, mv)
+    s = compute_stats(obs_vec, model_vec, times, kind)
     p = scatter(o, mv; label=nothing, xlabel="obs ($units)", ylabel="$label ($units)",
-        title=@sprintf("r=%.3f  RMSE=%.3g\nbias=%+.3g  n=%d", s.r, s.rmse, s.bias, s.n),
+        title=@sprintf("r=%.3f  RMSE=%.3g\nbias=%+.3g  n=%d", s.pearson_correlation, s.rmse, s.bias, s.n),
         titlefontsize=9, ms=2, alpha=0.35, color, xlims=(lo, hi), ylims=(lo, hi))
     plot!(p, [lo, hi], [lo, hi]; label="1:1", color=:gray, lw=1)
     return s, p
@@ -43,7 +43,7 @@ end
 # sensor height as points.
 function _profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, mp_convert; units,
                           mp_soil_mat=nothing, mp_depth_m=nothing, xlims=:auto)
-    (; t_model, heights, resolved, hourly, height_series, canopy_mode, depths) = result
+    (; t_model, heights, resolved, hourly, height_series, depths) = result
     surface_i = argmin(ustrip.(u"m", depths))
     canopy_height = resolved.canopy_height
     title = Dates.format(dt, "yyyy-mm-dd HH:MM")
@@ -51,7 +51,7 @@ function _profile_panel3(result, output, dt, field, jl_convert, mp_mat, mp_z_m, 
     if i === nothing
         return plot(; title="$title\noutside solved range", titlefontsize=7, framestyle=:none)
     end
-    jl_vals = _vertical_profile(output, heights, canopy_height, i, field, canopy_mode, jl_convert)
+    jl_vals = _vertical_profile(output, heights, canopy_height, i, field, result.problem.model.canopy, jl_convert)
     heights_m = ustrip.(u"m", heights)
     order = sortperm(heights_m)
     keep = [k for k in order if !ismissing(jl_vals[k])]
@@ -89,13 +89,13 @@ end
 # Shared x-axis range for a plot_profiles3 grid, mirroring
 # comparisons/ozflux/report.jl's _shared_profile_xlims.
 function _shared_profile_xlims3(result, output, profile_times, field, jl_convert, mp_mat, mp_z_m, mp_convert)
-    (; t_model, heights, resolved, hourly, height_series, canopy_mode) = result
+    (; t_model, heights, resolved, hourly, height_series) = result
     canopy_height = resolved.canopy_height
     vals = Float64[]
     for dt in profile_times
         i = findfirst(==(dt), t_model)
         i === nothing && continue
-        append!(vals, Iterators.filter(isfinite, skipmissing(_vertical_profile(output, heights, canopy_height, i, field, canopy_mode, jl_convert))))
+        append!(vals, Iterators.filter(isfinite, skipmissing(_vertical_profile(output, heights, canopy_height, i, field, result.problem.model.canopy, jl_convert))))
         append!(vals, filter(isfinite, mp_convert.(mp_mat[i, :])))
         row = findfirst(==(dt), hourly.DateTime)
         row === nothing && continue
@@ -133,7 +133,7 @@ end
 # y-axis fixed to (-2, ~0) m so panels stay comparable regardless of the
 # models' own deepest node.
 function _soil_profile_panel3(result, output, dt, mp_soil_mat, mp_depth_m, mp_air_mat, mp_z_m; xlims=:auto)
-    (; t_model, hourly, depths, heights, resolved, canopy_mode, height_series) = result
+    (; t_model, hourly, depths, heights, resolved, height_series) = result
     canopy_height = resolved.canopy_height
     title = Dates.format(dt, "yyyy-mm-dd HH:MM")
     i = findfirst(==(dt), t_model)
@@ -154,12 +154,12 @@ function _soil_profile_panel3(result, output, dt, mp_soil_mat, mp_depth_m, mp_ai
     if row !== nothing
         for r in _hourly_depth_series(hourly, "Ts")
             v = r.values[row]
-            ismissing(v) || scatter!(p, [Float64(v)], [-r.depth_m]; label=nothing, color=:red, ms=6,
+            ismissing(v) || scatter!(p, [Float64(v)], [-r.top_m]; label=nothing, color=:red, ms=6,
                 markerstrokewidth=1.5, markerstrokecolor=:white)
         end
     end
 
-    _plot_near_ground_air!(p, output, heights, canopy_height, i, canopy_mode, :black)
+    _plot_near_ground_air!(p, output, heights, canopy_height, i, result.problem.model.canopy, :black)
     mp_keep = _near_ground_indices(mp_z_m, NEAR_GROUND_TOP_M)
     kma = mp_keep[sortperm(mp_z_m[mp_keep])]
     plot!(p, mp_air_mat[i, kma], mp_z_m[kma]; label=nothing, color=:steelblue, lw=1.5,
@@ -173,14 +173,14 @@ end
 # cascades on some sites/hours (not a filtering bug), which would otherwise
 # blow the range out to the whole panel's auto-scale anyway.
 function _shared_soil_profile_xlims3(result, output, profile_times, mp_soil_mat, mp_air_mat, mp_z_m)
-    (; t_model, hourly, heights, resolved, canopy_mode, height_series) = result
+    (; t_model, hourly, heights, resolved, height_series) = result
     canopy_height = resolved.canopy_height
     vals = Float64[]
     for dt in profile_times
         i = findfirst(==(dt), t_model)
         i === nothing && continue
         append!(vals, Iterators.filter(isfinite, ustrip.(u"°C", output.soil_temperature[i, :])))
-        air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, canopy_mode, t -> ustrip(u"°C", t))
+        air_vals = _vertical_profile(output, heights, canopy_height, i, :air_temperature, result.problem.model.canopy, t -> ustrip(u"°C", t))
         heights_m = ustrip.(u"m", heights)
         for k in eachindex(heights_m)
             (heights_m[k] <= NEAR_GROUND_TOP_M && !ismissing(air_vals[k]) && isfinite(air_vals[k])) && push!(vals, air_vals[k])
@@ -226,7 +226,7 @@ end
 # evenly-spaced grid). Static structure, not time-varying -- a single panel.
 # :legacy (NoCanopy) has no per-layer PAI -- skipped.
 function plot_plant_area_index3(result, mp; save_dir=nothing, tag="", display_plots=false)
-    canopy_model = result.problem.model.canopy_model
+    canopy_model = result.problem.model.canopy
     canopy_model isa NoCanopy && return nothing
     pai = canopy_model.plant_area_index
     layer_heights = Microclimate.canopy_layer_heights(result.heights, canopy_model.canopy_height, length(pai)).layer_heights
@@ -253,7 +253,7 @@ end
 # `result` (run_site_gapfilled) and a `read_micropoint_output(outdir)` bundle.
 function report_site_results3(result, mp; outdir, plot_start=nothing, plot_end=nothing, profile_times,
                                save_outputs_3way=true, display_plots_3way=false)
-    (; output, t_model, resolved, hourly, depths, heights, height_series, canopy_mode, site_name, years) = result
+    (; output, t_model, resolved, hourly, depths, heights, height_series, site_name, years) = result
     canopy_height = resolved.canopy_height
     canopy_height_m = ustrip(u"m", canopy_height)
     tag = "$(site_name)_$(join(years, '-'))"
@@ -263,15 +263,15 @@ function report_site_results3(result, mp; outdir, plot_start=nothing, plot_end=n
 
     all_stats = NamedTuple[]
     record!(label, kind, source, s) = push!(all_stats,
-        (; site=site_name, years=join(years, '-'), variable=label, kind, source, r=s.r, rmse=s.rmse, bias=s.bias, n=s.n))
+        (; site=site_name, years=join(years, '-'), variable=label, kind, source, r=s.pearson_correlation, rmse=s.rmse, bias=s.bias, n=s.n))
 
     println("\n" * "="^72)
     println("Site $site_name  years=$years — obs vs Microclimate.jl vs micropoint")
     println("="^72)
 
     function report3!(label, kind, key, obs_vec, jl_vec, mp_vec; units)
-        sj, p_sc_j = _scatter_panel3(obs_vec, jl_vec; units, label="Julia", color=:black)
-        sm, p_sc_m = _scatter_panel3(obs_vec, mp_vec; units, label="micropoint", color=:steelblue)
+        sj, p_sc_j = _scatter_panel3(obs_vec, jl_vec, t_model, kind; units, label="Julia", color=:black)
+        sm, p_sc_m = _scatter_panel3(obs_vec, mp_vec, t_model, kind; units, label="micropoint", color=:steelblue)
         sj === nothing || (println(rpad("$label (obs vs Julia)", 38) * fmt_stat(sj)); record!(label, kind, "julia", sj))
         sm === nothing || (println(rpad("$label (obs vs micropoint)", 38) * fmt_stat(sm)); record!(label, kind, "micropoint", sm))
         p_ts = _timeseries_panel3(t_model, obs_vec, jl_vec, mp_vec; title=label, units, plot_start, plot_end)
@@ -308,10 +308,10 @@ function report_site_results3(result, mp; outdir, plot_start=nothing, plot_end=n
     for (h_m, name) in height_series
         h_m <= canopy_height_m || continue
         field = _height_field(name)
-        field === nothing && continue
+        field in (:air_temperature, :wind_speed) || continue
         obs_vec = _col(hourly, t_model, name)
         obs_vec === nothing && continue
-        jl_vec = _profile_series(output, heights, canopy_height, h_m, field, canopy_mode)
+        jl_vec = _profile_series(output, heights, canopy_height, h_m, field, result.problem.model.canopy)
         jl_vec === nothing && continue
         mp_mat = field == :air_temperature ? mp.tair : mp.wind
         mp_vec = mp_at_height(mp_mat, h_m)
@@ -325,8 +325,8 @@ function report_site_results3(result, mp; outdir, plot_start=nothing, plot_end=n
     jl_air = ustrip.(u"°C", u"°C".(output.canopy.air_temperature[:, 1]))
     mp_leaf = mp.tleaf[:, end]
     mp_air = mp.tair[:, end]
-    s_leaf = compute_stats(jl_leaf, mp_leaf)
-    s_air = compute_stats(jl_air, mp_air)
+    s_leaf = compute_stats(jl_leaf, mp_leaf, t_model, "leaf_temperature")
+    s_air = compute_stats(jl_air, mp_air, t_model, "air_temperature")
     println(rpad("Leaf temperature, top of canopy (Julia vs micropoint)", 55) * fmt_stat(s_leaf))
     println(rpad("Air temperature, top of canopy (Julia vs micropoint)", 55) * fmt_stat(s_air))
     record!("Leaf temperature (top)", "leaf_temperature", "micropoint", s_leaf)
@@ -356,21 +356,21 @@ function report_site_results3(result, mp; outdir, plot_start=nothing, plot_end=n
         isempty(depth_rows) && return nothing
         ts_panels, sc_j_panels, sc_m_panels = [], [], []
         for r in depth_rows
-            depth_m = r.depth_m
-            obs_vec = _col(hourly, t_model, "$(prefix)_$(depth_m)m")
+            depth_m = r.top_m
+            obs_vec = r.values
             i = argmin(abs.(ustrip.(u"m", depths) .- depth_m))
             jl_vec = convert(jl_mat[:, i])
             mp_vec = mp_at_depth(mp_mat, depth_m)
             label = "$kind $(depth_m) m"
-            sj = compute_stats(obs_vec, jl_vec)
-            sm = compute_stats(obs_vec, mp_vec)
+            sj = compute_stats(obs_vec, jl_vec, t_model, kind)
+            sm = compute_stats(obs_vec, mp_vec, t_model, kind)
             println(rpad("$label (obs vs Julia)", 38) * fmt_stat(sj))
             println(rpad("$label (obs vs micropoint)", 38) * fmt_stat(sm))
             record!(label, kind, "julia", sj)
             record!(label, kind, "micropoint", sm)
             push!(ts_panels, _timeseries_panel3(t_model, obs_vec, jl_vec, mp_vec; title="$(depth_m) m", units, plot_start, plot_end))
-            _, p_sc_j = _scatter_panel3(obs_vec, jl_vec; units, label="$(depth_m) m", color=:black)
-            _, p_sc_m = _scatter_panel3(obs_vec, mp_vec; units, label="$(depth_m) m", color=:steelblue)
+            _, p_sc_j = _scatter_panel3(obs_vec, jl_vec, t_model, kind; units, label="$(depth_m) m", color=:black)
+            _, p_sc_m = _scatter_panel3(obs_vec, mp_vec, t_model, kind; units, label="$(depth_m) m", color=:steelblue)
             push!(sc_j_panels, p_sc_j)
             push!(sc_m_panels, p_sc_m)
         end

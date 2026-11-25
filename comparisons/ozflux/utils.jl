@@ -3,62 +3,86 @@
 
 # ── Reused verbatim from oznet/utils.jl ──────────────────────────────────────
 
+# The cycle a comparison is judged on besides the hourly fit: soil moisture changes by storage
+# over days (wetting and drying ratios), everything else by its daily cycle (daily range ratio).
+# The ratios that don't apply are NaN.
 struct ModelStats
-    r    :: Float64
+    pearson_correlation :: Float64
     rmse :: Float64
+    normalized_rmse :: Float64    # rmse / std(obs): 1 is no better than always predicting the observed mean
     bias :: Float64   # mean(pred − obs)
+    normalized_bias :: Float64    # bias / std(obs)
     n    :: Int
+    std_ratio :: Float64          # std(pred) / std(obs): the variability (Taylor 2001, doi:10.1029/2000JD900719)
+    daily_range_ratio :: Float64  # mean daily (max - min) of pred / of obs
+    daily_phase_shift :: Float64  # hours pred lags obs: the lag (±12 h) of greatest pearson correlation
+    annual_phase_shift :: Float64 # days the peak of pred's fitted annual sinusoid lags obs's
+    wetting_ratio :: Float64      # sum of day-to-day rises of the daily mean, pred / obs
+    drying_ratio :: Float64       # sum of day-to-day falls of the daily mean, pred / obs
 end
 
-function compute_stats(obs_vec, pred_vec)
-    pairs = [(Float64(o), Float64(p))
-             for (o, p) in zip(obs_vec, pred_vec)
-             if !ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))]
-    length(pairs) < 2 && return ModelStats(NaN, NaN, NaN, 0)
-    o = first.(pairs);  p = last.(pairs)
-    ModelStats(cor(o, p), sqrt(mean((p .- o).^2)), mean(p .- o), length(pairs))
+const STORAGE_KINDS = ("soil_moisture",)
+
+# `times`: the hour of each value. Daily statistics use the days with all 24 hours paired.
+function compute_stats(obs_vec, pred_vec, times, kind)
+    valid = [!ismissing(o) && !ismissing(p) && isfinite(Float64(o)) && isfinite(Float64(p))
+             for (o, p) in zip(obs_vec, pred_vec)]
+    count(valid) < 2 && return ModelStats(NaN, NaN, NaN, NaN, NaN, 0, NaN, NaN, NaN, NaN, NaN, NaN)
+    o = Float64.(obs_vec[valid]);  p = Float64.(pred_vec[valid]);  days = Date.(times[valid])
+    complete_days = [(day, i) for day in unique(days) for i in (findall(==(day), days),) if length(i) == 24]
+    daily_range_ratio = daily_phase_shift = annual_phase_shift = wetting_ratio = drying_ratio = NaN
+    # Annual: x ≈ a + b cos(ωd) + c sin(ωd) fitted to the daily means, peaking at day atan(c, b) / ω
+    # (the annual temperature wave, Hillel 1998, Environmental Soil Physics). Needs complete days in every month.
+    if length(unique(month(day) for (day, _) in complete_days)) == 12
+        ω = 2π / 365.25
+        d = [Dates.value(day - first(complete_days[1])) for (day, _) in complete_days]
+        design = [ones(length(d)) cos.(ω .* d) sin.(ω .* d)]
+        peak_day(x) = ((_, b, c) = design \ [mean(x[i]) for (_, i) in complete_days]; atan(c, b) / ω)
+        annual_phase_shift = mod(peak_day(p) - peak_day(o) + 365.25 / 2, 365.25) - 365.25 / 2
+    end
+    if kind in STORAGE_KINDS
+        obs_change, pred_change = Float64[], Float64[]
+        for ((day1, i1), (day2, i2)) in zip(complete_days, complete_days[2:end])
+            day2 == day1 + Day(1) || continue
+            push!(obs_change, mean(o[i2]) - mean(o[i1]))
+            push!(pred_change, mean(p[i2]) - mean(p[i1]))
+        end
+        wetting_ratio = sum(max.(pred_change, 0.0); init=0.0) / sum(max.(obs_change, 0.0); init=0.0)
+        drying_ratio = sum(min.(pred_change, 0.0); init=0.0) / sum(min.(obs_change, 0.0); init=0.0)
+    else
+        if !isempty(complete_days)
+            daily_range(x) = mean(-(reverse(extrema(x[i]))...) for (_, i) in complete_days)
+            daily_range_ratio = daily_range(p) / daily_range(o)
+        end
+        # Correlation of obs at hour t with pred at hour t + lag, over the hourly series less its
+        # centred 24 h running mean, so only the daily cycle is compared (NaN where that window has a gap)
+        n_hours = length(obs_vec)
+        function daily_anomaly(x)
+            v = [!ismissing(xi) && isfinite(Float64(xi)) ? Float64(xi) : NaN for xi in x]
+            return [t - 12 >= 1 && t + 11 <= n_hours ? v[t] - mean(view(v, t-12:t+11)) : NaN for t in 1:n_hours]
+        end
+        obs_anomaly, pred_anomaly = daily_anomaly(obs_vec), daily_anomaly(pred_vec)
+        function lagged_correlation(lag)
+            t = [t for t in max(1, 1 - lag):min(n_hours, n_hours - lag) if isfinite(obs_anomaly[t]) && isfinite(pred_anomaly[t + lag])]
+            return length(t) < 2 ? -Inf : cor(obs_anomaly[t], pred_anomaly[t .+ lag])
+        end
+        daily_phase_shift = argmax(lagged_correlation, -12:12)
+    end
+    rmse = sqrt(mean((p .- o).^2))
+    ModelStats(cor(o, p), rmse, rmse / std(o), mean(p .- o), mean(p .- o) / std(o), count(valid), std(p) / std(o),
+        daily_range_ratio, daily_phase_shift, annual_phase_shift, wetting_ratio, drying_ratio)
 end
 
 fmt_stat(s::ModelStats) =
     s.n < 2 ? "         —         " :
-    @sprintf("r=%+.3f  RMSE=%6.3f  bias=%+7.4f  (n=%d)", s.r, s.rmse, s.bias, s.n)
+    @sprintf("pearson correlation=%+.3f  RMSE=%6.3f  normalized RMSE=%.2f  bias=%+7.4f  normalized bias=%+.2f  std ratio=%.2f  daily range ratio=%.2f  daily phase shift=%+.0f h  annual phase shift=%+.0f d  wetting ratio=%.2f  drying ratio=%.2f  (n=%d)",
+        s.pearson_correlation, s.rmse, s.normalized_rmse, s.bias, s.normalized_bias, s.std_ratio, s.daily_range_ratio, s.daily_phase_shift, s.annual_phase_shift, s.wetting_ratio, s.drying_ratio, s.n)
 
-# Longreach's Sws sensor appears to report degree-of-saturation (fraction of
-# pore space) rather than the volumetric water content its own m^3/m^3
-# metadata claims -- obs peaks ~0.77, above plausible soil porosity. Applied
-# to both the obs comparison (report.jl) and the initial-condition read
-# (pipeline.jl), which both source the same raw column; a no-op elsewhere.
-sws_obs_scale(site_name, soil_profile) =
-    site_name == "Longreach" ? 1 - soil_profile.bulk_density[1] / soil_profile.mineral_density[1] : 1.0
-
-# Truncates a DailyMinMaxEnvironment's per-day forcing series to the first
-# `ndays` days. Needed by prepare_site_silo's max_days path: fetch_silo_forcing
-# is deliberately fetched full-year (silo_gapfill_donor's rainfall donor needs
-# the whole year regardless of max_days), but the solve itself only iterates
-# `ndays` days -- left untruncated, environment_minmax's forcing arrays stay
-# longer than solar_radiation_out (sized to `days`), a BoundsError in
-# evaluate!/solar_day once the solver reaches day ndays+1.
-# minmax_forcings' derived _mean fields are lazy Broadcasted (not materialized
-# Vectors, so they track later in-place mutation of the min/max arrays --
-# see its own comment) -- materialize before slicing since Broadcasted
-# doesn't support arbitrary indexing. Safe here: any such mutation is
-# internal to fetch_silo_forcing, already done by the time it returns.
-_truncate_days(v::AbstractVector, ndays) = v[1:ndays]
-_truncate_days(v, ndays) = Base.Broadcast.materialize(v)[1:ndays]
-_truncate_forcing(f::DielForcing, ndays) = DielForcing(f.curve, map(v -> _truncate_days(v, ndays), f.values))
-_truncate_forcing(d::Derived, ndays) = d
-truncate_environment_minmax(env::DailyMinMaxEnvironment, ndays) =
-    DailyMinMaxEnvironment(; forcings = map(f -> _truncate_forcing(f, ndays), env.forcings))
-
-# Same max_days issue, one level down: fetch_silo_forcing's environment_hourly
-# (the SILO stub -- only pressure is ever populated, everything else nothing)
-# is also fetched full-year and needs truncating to `n` hours to match the
-# truncated solve. Generic over whichever fields are actually Vectors, so it
-# doesn't assume pressure is the only one.
-function truncate_environment_hourly(h::HourlyTimeseries, n)
-    kwargs = NamedTuple(f => (v = getfield(h, f); v isa AbstractVector ? v[1:n] : v) for f in fieldnames(typeof(h)))
-    return HourlyTimeseries(; kwargs...)
-end
+# Factor taking a site's observed Sws to volumetric water content: the top layer's porosity
+# where data_corrections.jl's SaturationFraction says it is a fraction of saturation. Applied
+# to both the obs comparison (report.jl) and the initial-condition read (pipeline.jl).
+sws_obs_scale(site_name, soil_profile) = has_correction(site_corrections(site_name), SaturationFraction, "Sws") ?
+    1 - soil_profile.bulk_density[1] / soil_profile.mineral_density[1] : 1.0
 
 # ── Canopy/soil grid + profile construction (generic, not site-specific) ────
 
@@ -88,9 +112,8 @@ const N_ABOVE_CANOPY_POINTS = 6  # graded points from canopy_height up to refere
 
 # Full height grid: N_CANOPY_LAYERS evenly-spaced canopy points up to
 # canopy_height, then N_ABOVE_CANOPY_POINTS graded up to reference_height
-# (plus any extras and reference_height itself, inserted exactly --
-# reference_height must land on a grid point since Microclimate.jl treats
-# last(heights) as reference height).
+# (reference_height inserted exactly -- Microclimate.jl treats last(heights)
+# as reference height), plus each of `sensor_heights_m` above the canopy.
 const NEAR_ZERO_FLOOR_M = 0.01  # mm-scale spacing has crashed micropoint's solver before
 
 # Forward-floors an ascending grid to a minimum step, starting from pts[1]
@@ -113,13 +136,13 @@ function _floor_ascending!(pts, floor_m)
     return pts
 end
 
-function _build_heights(canopy_height, reference_height, extra_heights_m=Float64[])
+function _build_heights(canopy_height, reference_height, sensor_heights_m)
     canopy_m = ustrip(u"m", canopy_height)
     reference_m = ustrip(u"m", reference_height)
     canopy_pts = _floor_ascending!([(i / N_CANOPY_LAYERS) * canopy_m for i in 1:N_CANOPY_LAYERS], NEAR_ZERO_FLOOR_M)
     graded_above = canopy_m < reference_m ?
         collect(range(canopy_m, reference_m; length=N_ABOVE_CANOPY_POINTS + 1)[2:end]) : Float64[]
-    above_pts = filter(>(canopy_m), unique(vcat(extra_heights_m, graded_above, reference_m)))
+    above_pts = filter(>(canopy_m), unique(vcat(graded_above, sensor_heights_m, reference_m)))
     return sort(vcat(canopy_pts, above_pts)) .* u"m"
 end
 
@@ -162,18 +185,46 @@ end
 
 # air_entry_water_potential stored positive (matches SLGA's sign convention).
 function soil_profile_from_texture(texture::NamedTuple, depths;
-    bulk_density=1.3u"Mg/m^3", mineral_density=2.560u"Mg/m^3",
-    mineral_conductivity=1.25u"W/m/K", mineral_heat_capacity=870.0u"J/kg/K",
-    root_density=_root_density_for_depths(depths),
+    bulk_density=1.3u"Mg/m^3", root_density=_root_density_for_depths(depths),
 )
     n = length(depths)
-    SoilProfile(;
-        bulk_density=fill(bulk_density, n), mineral_density=fill(mineral_density, n),
-        mineral_conductivity=fill(mineral_conductivity, n), mineral_heat_capacity=fill(mineral_heat_capacity, n),
+    Microclimate.example_soil_profile(depths; bulk_density,
         hydraulics=CampbellHydraulicProfile(;
             air_entry_water_potential=fill(texture.air_entry, n),
             saturated_hydraulic_conductivity=fill(texture.Ksat, n),
             campbell_b_parameter=fill(texture.b, n), root_density,
+        ),
+    )
+end
+
+# SoilProfile from measured soil horizons (settings/sites.toml's soil_horizons):
+# each node takes the bulk density and texture of the horizon it sits in, with
+# Campbell hydraulics from `pedotransfer_model`. Nodes below the deepest horizon
+# take the deepest horizon's values.
+function soil_profile_from_horizons(horizons, depths, pedotransfer_model;
+    root_density=_root_density_for_depths(depths),
+)
+    horizon = [min(searchsortedfirst(horizons.bottom, d), length(horizons.bottom)) for d in depths]
+    bulk_density = horizons.bulk_density[horizon]
+    Microclimate.example_soil_profile(depths; bulk_density,
+        hydraulics=CampbellHydraulicProfile(pedotransfer_model; clay_percent=horizons.clay[horizon],
+            silt_percent=horizons.silt[horizon], sand_percent=horizons.sand[horizon], bulk_density, root_density),
+    )
+end
+
+# SoilProfile of peat (settings/peat.toml): each node takes the class of the layer it sits in,
+# its bulk density from the class porosity and the organic solid density
+function soil_profile_from_peat(peat, depths; root_density=_root_density_for_depths(depths))
+    class = [searchsortedfirst(peat.bottom, d) for d in depths]
+    water_density = 1000.0u"kg/m^3"
+    Microclimate.example_soil_profile(depths;
+        bulk_density=(1 .- peat.porosity[class]) .* peat.solid_density,
+        mineral_density=peat.solid_density, mineral_conductivity=peat.solid_conductivity,
+        mineral_heat_capacity=peat.solid_heat_capacity, de_vries_shape_factor=peat.de_vries_shape_factor,
+        hydraulics=CampbellHydraulicProfile(;
+            air_entry_water_potential=uconvert.(u"J/kg", peat.air_entry_head[class] .* Unitful.gn),
+            saturated_hydraulic_conductivity=uconvert.(u"kg*s/m^3", peat.saturated_conductivity[class] .* water_density ./ Unitful.gn),
+            campbell_b_parameter=peat.campbell_b[class], root_density,
         ),
     )
 end
@@ -221,6 +272,7 @@ function flatten_soil_profile(soil_profile, depths; active_depth=0.3u"m")
         mineral_density = fillrep(_wmean(soil_profile.mineral_density[nodes], weights)),
         mineral_conductivity = fillrep(_wmean(soil_profile.mineral_conductivity[nodes], weights)),
         mineral_heat_capacity = fillrep(_wmean(soil_profile.mineral_heat_capacity[nodes], weights)),
+        de_vries_shape_factor = fillrep(_wmean(soil_profile.de_vries_shape_factor[nodes], weights)),
         hydraulics = CampbellHydraulicProfile(;
             air_entry_water_potential = fillrep(_wmean(soil_profile.hydraulics.air_entry_water_potential[nodes], weights)),
             saturated_hydraulic_conductivity = fillrep(_wgeomean(soil_profile.hydraulics.saturated_hydraulic_conductivity[nodes], weights)),
@@ -230,130 +282,155 @@ function flatten_soil_profile(soil_profile, depths; active_depth=0.3u"m")
     )
 end
 
-# Depth-tapered saturated_hydraulic_conductivity multiplier -- a bulk,
-# single-domain proxy for root-channel/crack macroporosity (this Campbell
-# matrix-flow solver has no true bypass-flow term). Linear from `max_boost`
-# at the surface down to 1.0 at `taper_depth`, unchanged below.
-function apply_macropore_boost!(soil_profile, depths; max_boost, taper_depth)
-    ksat = soil_profile.hydraulics.saturated_hydraulic_conductivity
-    for i in eachindex(depths)
-        frac = clamp(1.0 - depths[i] / taper_depth, 0.0, 1.0)
-        ksat[i] *= 1.0 + (max_boost - 1.0) * frac
-    end
-    return soil_profile
-end
-
 # ── OzFlux NetCDF reading ─────────────────────────────────────────────────────
 
-# Scans `data_dir` for `<Site>_<Year>_L3.nc`, returns Dict{String,Vector{Int}}
-# of site name => sorted available years. Data-driven rather than a
-# hand-maintained site/year list, since files get added over time.
+# One OzFlux L3 NetCDF per site holding its whole record (TERN OzFlux
+# releases), named `<Site>[<n>]_L3.nc` (e.g. Whroo1_L3.nc). Site names carry
+# no digits, so a trailing number is the file's own suffix, not the site.
+const OZFLUX_FILE_PATTERN = r"^([A-Za-z]+)\d*_L3\.nc$"
+
+function ozflux_site_path(data_dir, site_name)
+    matches = filter(f -> (m = match(OZFLUX_FILE_PATTERN, f); m !== nothing && m.captures[1] == site_name), readdir(data_dir))
+    length(matches) == 1 || error("expected one OzFlux L3 file for $site_name in $data_dir, found $(length(matches)): $matches")
+    return joinpath(data_dir, only(matches))
+end
+
+# Calendar years with at least one record in an OzFlux file.
+ozflux_years(path) = NCDataset(ds -> sort(unique(Dates.year.(ds["time"][:]))), path)
+
+# Scans `data_dir` for OzFlux files, returns Dict{String,Vector{Int}} of site
+# name => sorted available years (from each file's own time axis).
+# Data-driven rather than a hand-maintained site/year list, since files get
+# added over time.
 function discover_site_years(data_dir)
     sites = Dict{String,Vector{Int}}()
     for f in readdir(data_dir)
-        m = match(r"^(.+)_(\d{4})_L3\.nc$", f)
+        m = match(OZFLUX_FILE_PATTERN, f)
         m === nothing && continue
-        push!(get!(sites, m.captures[1], Int[]), parse(Int, m.captures[2]))
-    end
-    for years in values(sites)
-        sort!(years)
+        sites[m.captures[1]] = ozflux_years(joinpath(data_dir, f))
     end
     return sites
 end
 
 const OZFLUX_MISSING = (-9999, -9999.0)
 
-# One OzFlux variable, missing-sentinel-replaced.
-function _read_var(ds, name::AbstractString)
-    sym = Symbol(name)
-    haskey(ds, sym) || return nothing
-    replace(vec(collect(ds[sym])), OZFLUX_MISSING[1] => missing, OZFLUX_MISSING[2] => missing)
+# One OzFlux variable over the record rows `rows`, missing-sentinel-replaced.
+function _read_var(ds, name::AbstractString, rows)
+    haskey(ds, name) || return nothing
+    replace(Vector{Union{Missing,Float64}}(ds[name][rows]), OZFLUX_MISSING[1] => missing, OZFLUX_MISSING[2] => missing)
 end
 
-# CapeTribulation's RH is a fraction (0-1) for some stretches of the file and
-# a percentage (0-100) for others -- a units bug in the source, carrying
-# QCFlag=0 ("good") throughout, confirmed by the low stretch clustering
-# tightly in 0-0.95 (mean 0.73). Any value <= 1.5 is unambiguously the
-# fractional form (percentage RH essentially never falls that low at these
-# sites) and is rescaled -- real data recovered, not discarded.
-_fix_rh_scale(vals) = [ismissing(v) || v > 1.5 ? v : v * 100.0 for v in vals]
-
-# Physically implausible values that still pass QC (PLAUSIBLE_RANGE,
-# config.jl) -- replaced with `missing`, same as the -9999 sentinel, so
-# gap-filling (not the raw sensor fault) determines what feeds the model.
-function _clip_implausible(name, vals)
-    haskey(PLAUSIBLE_RANGE, name) || return vals
-    lo, hi = PLAUSIBLE_RANGE[name]
-    return [ismissing(v) || (lo <= v <= hi) ? v : missing for v in vals]
-end
-
-# Stuck-sensor detection: FLATLINE_MIN_RUN+ identical consecutive raw
-# readings is a fault signature real sensor noise essentially never produces
-# -- not caught by a range check (a plausible-looking value can still be
-# stuck). Exact zero is excluded: calm wind, night Fsd, and dry spells are
-# all legitimately flat at zero for hours at a time.
-const FLATLINE_MIN_RUN = 8  # raw 30-min steps = 4 hours
-
-function _clip_flatline(vals; min_run=FLATLINE_MIN_RUN)
-    out = collect(vals)
-    n = length(out)
-    i = 1
-    while i <= n
-        j = i
-        while j < n && !ismissing(out[i]) && !ismissing(out[j+1]) && out[j+1] == out[i]
-            j += 1
-        end
-        if !ismissing(out[i]) && out[i] != 0.0 && (j - i + 1) >= min_run
-            out[i:j] .= missing
-        end
-        i = j + 1
-    end
-    return out
-end
-
-# _read_var + RH scale fix + PLAUSIBLE_RANGE clip + flatline clip, in one
-# place so every read site (forcing/target vars, height series, Ah) gets the
-# same cleaning rather than only the main forcing loop.
-function _read_clean_var(ds, name::AbstractString)
-    vals = _read_var(ds, name)
+# _read_var with data_corrections.jl's `corrections` applied, so every series read (forcing,
+# targets, height and depth series, Ah) gets the same corrections
+function _read_clean_var(ds, name::AbstractString, rows, corrections)
+    vals = _read_var(ds, name, rows)
     vals === nothing && return nothing
-    name == "RH" && (vals = _fix_rh_scale(vals))
-    return _clip_flatline(_clip_implausible(name, vals))
+    return correct_values(corrections, name, vals, _time_step(ds))
 end
 
-# Depth-suffixed series for `prefix` (e.g. "Sws", "Ts"): variable names
-# `<prefix>_<depth>(cm|m)`, optionally followed by a single replicate letter
-# (a/b/c, ...). A bare (no-letter) variable is the site's own official
-# per-depth average and is used directly; when only replicates exist (e.g.
-# Calperum's Ts has no bare Ts_10cm, only Ts_10cma/b/c) they're averaged
-# here, element-wise, skipping missing.
-function discover_depth_series(ds, prefix::AbstractString)
-    varnames = String.(collect(names(ds)))
+# The file's record interval (30 min at most sites, 60 at Otway and Tumbarumba)
+_time_step(ds) = Minute(parse(Int, string(ds.attrib["time_step"])))
+
+# Heights (m) in an OzFlux variable's `height` attribute ("36m", "8.8 m", "30cm", "-0.08m",
+# CumberlandPlain's "-<.08m", Yanco's "8m,4m"), as distances from the ground surface
+function attribute_heights(ds, name)
+    haskey(ds, name) || return Float64[]
+    text = string(get(ds[name].attrib, "height", ""))
+    return [parse(Float64, m[1]) * (m[2] == "cm" ? 0.01 : 1.0) for m in eachmatch(r"(\d+(?:\.\d*)?|\.\d+)\s*(cm|m)?", text)]
+end
+
+# The depth ranges (top, bottom), in m below the surface, an OzFlux soil variable's `height`
+# attribute gives: one per comma-separated entry, repeats dropped. "-0.08m" is a point,
+# "0 to -0.1 m", "-0.06--0.02m" and "-0.02 and -0.06m" are ranges over which the sensor
+# integrates, and CumberlandPlain's "-<.08m" is above 8 cm. A unit applies to the numbers
+# of its entry that carry none ("0 to -15 cm").
+function attribute_depth_ranges(ds, name)
+    haskey(ds, name) || return Tuple{Float64,Float64}[]
+    ranges = Tuple{Float64,Float64}[]
+    for entry in split(string(get(ds[name].attrib, "height", "")), ",")
+        numbers = collect(eachmatch(r"(\d+(?:\.\d*)?|\.\d+)\s*(cm|m)?", entry))
+        isempty(numbers) && continue
+        units = [m[2] for m in numbers if m[2] !== nothing]
+        entry_unit = isempty(units) ? "m" : last(units)
+        depths = [parse(Float64, m[1]) * (something(m[2], entry_unit) == "cm" ? 0.01 : 1.0) for m in numbers]
+        range = occursin('<', entry) ? (0.0, maximum(depths)) : extrema(depths)
+        any(r -> all(isapprox.(r, range; atol=1e-9)), ranges) || push!(ranges, range)
+    end
+    return ranges
+end
+
+# The depth range a soil sensor measures over, given the range it is labelled for. A TCAV
+# averaging thermocouple labelled at the heat flux plate depth, 8 cm, has its junctions at
+# 2 and 6 cm (Campbell Scientific HFT3/TCAV installation), so it measures 2-6 cm.
+_sensor_depth_range(ds, name, range) =
+    occursin("TCAV", get(ds[name].attrib, "instrument", "")) && all(isapprox.(range, 0.08)) ? (0.02, 0.06) : range
+
+# The depth range of soil variable `name`: its height attribute's, when it gives one, else
+# the depth its name carries (`named_depth`); nothing, with a warning, when the attribute
+# gives several different ones (sensors moved within the record, which the file doesn't date)
+function soil_variable_depth_range(ds, name, named_depth)
+    ranges = attribute_depth_ranges(ds, name)
+    range = if length(ranges) == 1
+        only(ranges)
+    elseif isempty(ranges) && named_depth !== nothing
+        (named_depth, named_depth)
+    else
+        isempty(ranges) || @warn "$name's height \"$(ds[name].attrib["height"])\" gives several depths; not compared"
+        return nothing
+    end
+    return _sensor_depth_range(ds, name, range)
+end
+
+# Depth series for `prefix` (e.g. "Sws", "Ts") as (; top_m, bottom_m, values): variables
+# named `<prefix>_<depth>(cm|m)`, optionally followed by a single replicate letter (a/b/c,
+# ...). A variable without the letter is the site's own per-depth average and is used
+# directly; when only replicates exist (e.g. Calperum's Ts_10cma/b/c) they're averaged,
+# element-wise, skipping missing. Files with no depth-named series (most current TERN
+# releases) give the bare `<prefix>` composite.
+function discover_depth_series(ds, prefix::AbstractString, rows, corrections)
     pattern = Regex("^" * prefix * raw"_(\d+(?:\.\d+)?)(cm|m)([a-z]?)$")
-    bare = Dict{Float64,String}()
-    replicates = Dict{Float64,Vector{String}}()
-    for name in varnames
+    averages = Dict{Tuple{Float64,Float64},String}()
+    replicates = Dict{Tuple{Float64,Float64},Vector{String}}()
+    for name in keys(ds)
         m = match(pattern, name)
         m === nothing && continue
-        depth_m = parse(Float64, m.captures[1]) * (m.captures[2] == "cm" ? 0.01 : 1.0)
-        if m.captures[3] == ""
-            bare[depth_m] = name
-        else
-            push!(get!(replicates, depth_m, String[]), name)
-        end
+        override = findfirst(c -> c isa SensorDepth && c.variable == name, corrections)
+        range = override === nothing ?
+            soil_variable_depth_range(ds, name, parse(Float64, m[1]) * (m[2] == "cm" ? 0.01 : 1.0)) :
+            (corrections[override].top_m, corrections[override].bottom_m)
+        range === nothing && continue
+        m[3] == "" ? (averages[range] = name) : push!(get!(replicates, range, String[]), name)
     end
-    depths_m = sort(collect(union(keys(bare), keys(replicates))))
-    result = NamedTuple{(:depth_m, :values),Tuple{Float64,Vector{Union{Float64,Missing}}}}[]
-    for d in depths_m
-        values = if haskey(bare, d)
-            _read_var(ds, bare[d])
-        else
-            cols = [_read_var(ds, name) for name in replicates[d]]
-            _rowwise_mean(cols)
-        end
-        values === nothing || push!(result, (depth_m=d, values=values))
+    if isempty(averages) && isempty(replicates) && haskey(ds, prefix)
+        range = soil_variable_depth_range(ds, prefix, nothing)
+        range === nothing || (averages[range] = prefix)
+    end
+    result = NamedTuple{(:top_m, :bottom_m, :values),Tuple{Float64,Float64,Vector{Union{Float64,Missing}}}}[]
+    for range in sort(collect(union(keys(averages), keys(replicates))))
+        values = haskey(averages, range) ? _read_clean_var(ds, averages[range], rows, corrections) :
+            _rowwise_mean([_read_clean_var(ds, name, rows, corrections) for name in replicates[range]])
+        # None when every reading is dropped (a FaultySensor)
+        values === nothing || all(ismissing, values) || push!(result, (top_m=first(range), bottom_m=last(range), values))
     end
     return result
+end
+
+# A depth series' column name in the hourly table, and its label: "Ts_0.1m", or
+# "Sws_0.0-0.1m" for a range
+depth_name(top_m, bottom_m) = top_m == bottom_m ? "$(top_m)m" : "$(top_m)-$(bottom_m)m"
+depth_label(r) = r.top_m == r.bottom_m ? "$(r.top_m) m" : "$(r.top_m)-$(r.bottom_m) m"
+
+# The model's mean over a depth series' range (hours × depths `model_mat`), linear between
+# nodes; every range end is a node (_observed_depths_m), so a point series takes its node
+function depth_range_mean(model_mat, depths, r)
+    depths_m = ustrip.(u"m", depths)
+    i = findfirst(==(r.top_m), depths_m)
+    j = findfirst(==(r.bottom_m), depths_m)
+    (i === nothing || j === nothing) && error("No model node at the ends of $(depth_label(r))")
+    i == j && return model_mat[:, i]
+    d = depths_m[i:j]
+    weights = ([diff(d); 0.0] .+ [0.0; diff(d)]) ./ (2 * (d[end] - d[1]))
+    return model_mat[:, i:j] * weights
 end
 
 # Element-wise mean across columns, skipping missing (NaN if all missing at a row).
@@ -371,67 +448,49 @@ function _rowwise_mean(cols::Vector)
     return out
 end
 
-# Similarly discovers height-suffixed variants of a base variable (e.g. Ws ->
-# Ws_RMY2m_Av at 2m, Ws_RMY10m_Av at 10m, bare Ws / Ws_SONIC_Av at tower
-# height) for the multi-height profile comparison. Site-specific naming (no
-# single convention across sites), so this takes an explicit list of
-# (height_m, variable_name) pairs rather than trying to auto-detect them.
-function read_height_series(ds, entries)
-    [(height_m=h, values=_read_clean_var(ds, name)) for (h, name) in entries if _read_clean_var(ds, name) !== nothing]
-end
+# Reads the records of `years` from one OzFlux L3 file's validation
+# variables, per-depth Ts/Sws series, and any requested multi-height series
+# into one DataFrame (one row per native timestep, missing-replaced,
+# `<name>_QCFlag` columns carried alongside each variable so
+# _aggregate_hourly's QC filtering applies to all of them uniformly). A
+# record belongs to the year of the hour it averages into
+# (_hour_group_start, pipeline.jl), so a year's last hour keeps its
+# end-labelled 00:00 record from the next year. `height_series`:
+# (height_m, variable_name) pairs from sites.jl's discover_height_series;
+# height_m itself isn't needed here, only the variable name. `extra_vars`:
+# further variable names to read: the forcing sensors forcing_sources picked and the site's
+# forcing_backups (settings/sites.toml). Every series gets
+# the site's data_corrections.jl `corrections`.
+function read_ozflux_nc(path, years, corrections; height_series=Tuple{Float64,String}[], extra_vars=String[])
+    NCDataset(path) do ds
+        all_time = ds["time"][:]
+        rows = findall(t -> Dates.year(_hour_group_start(t)) in years, all_time)
+        isempty(rows) && error("$path has no records in $years")
+        rows == first(rows):last(rows) || error("$path time axis is not sorted")
+        rows = first(rows):last(rows)
+        df = DataFrame(DateTime = all_time[rows])
+        DataFrames.metadata!(df, "time_step", _time_step(ds); style=:note)
 
-# Reads one OzFlux L3 file's forcing + validation variables, per-depth Ts/Sws
-# series, and any requested multi-height series into one DataFrame (one row
-# per native timestep, missing-replaced, `<name>_QCFlag` columns carried
-# alongside each variable so _aggregate_hourly's QC filtering applies to all
-# of them uniformly). `height_series`: (height_m, variable_name) pairs from
-# config.jl's SITE_HEIGHT_SERIES; height_m itself isn't needed here, only
-# the variable name.
-function read_ozflux_nc(path; height_series=Tuple{Float64,String}[])
-    ds = RasterStack(path)
-    time = DateTime.(lookup(ds, Ti))
-    df = DataFrame(DateTime = time)
-
-    forcing_vars = ("Ta", "RH", "Ws", "Fsd", "Fld", "Precip", "ps")
-    target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg")
-    for v in (forcing_vars..., target_vars..., last.(height_series)...)
-        vals = _read_clean_var(ds, v)
-        vals === nothing && continue
-        df[!, v] = vals
-        qc = _read_var(ds, v * "_QCFlag")
-        qc === nothing || (df[!, v * "_QCFlag"] = qc)
-    end
-
-    # minimum wind speed capped at 0.1 m/s (sensor limit)
-    wind_cols = filter(names(df)) do col
-        (col == "Ws" || startswith(col, "Ws_")) &&
-            !endswith(col, "_QCFlag") # reject QCFlag columns
-    end
-
-    for col in wind_cols
-        df[!, col] = map(x -> ismissing(x) ? missing : max(x, 0.1), df[!, col])
-    end 
-
-    # Absolute humidity, cased inconsistently across sites (Ah vs AH) --
-    # normalized to "Ah" (g/m^3). Used in pipeline.jl as an RH cross-check
-    # and secondary gap-fill source (same tower, different instrument).
-    ah_name = haskey(ds, :Ah) ? "Ah" : haskey(ds, :AH) ? "AH" : nothing
-    if ah_name !== nothing
-        df[!, "Ah"] = _read_clean_var(ds, ah_name)
-        ah_qc = _read_var(ds, ah_name * "_QCFlag")
-        ah_qc === nothing || (df[!, "Ah_QCFlag"] = ah_qc)
-    end
-
-    # Depth-suffixed soil series get renamed (Ts_10cma/b/c -> Ts_0.1m) since
-    # discover_depth_series already resolves replicates/units; no per-replicate
-    # QC filtering here (sentinel-missing only) -- see README caveats.
-    for prefix in ("Ts", "Sws")
-        for (depth_m, values) in discover_depth_series(ds, prefix)
-            df[!, "$(prefix)_$(depth_m)m"] = values
+        target_vars = ("Fsu", "Flu", "Fn", "Fh", "Fe", "Fg", "ustar")
+        for v in unique((target_vars..., last.(height_series)..., extra_vars...))
+            vals = _read_clean_var(ds, v, rows, corrections)
+            vals === nothing && continue
+            df[!, v] = vals
+            qc = _read_var(ds, v * "_QCFlag", rows)
+            qc === nothing || (df[!, v * "_QCFlag"] = qc)
         end
-    end
 
-    return df
+        # Soil series by depth range (Ts_10cma/b/c -> Ts_0.1m, Sws over 0-10 cm -> Sws_0.0-0.1m),
+        # discover_depth_series having resolved replicates and units; no per-replicate QC
+        # filtering here (sentinel-missing only) -- see README caveats.
+        for prefix in ("Ts", "Sws")
+            for r in discover_depth_series(ds, prefix, rows, corrections)
+                df[!, "$(prefix)_$(depth_name(r.top_m, r.bottom_m))"] = r.values
+            end
+        end
+
+        return df
+    end
 end
 
 # Parses e.g. "25m" / "3.5 m" / "25" -> 25.0u"m". Range attributes (Wallaby's
@@ -453,33 +512,3 @@ function try_read(path, label)
         return nothing
     end
 end
-
-# output layers requested
-output_layers = (
-    LayerSpec(:soil_temperature, :soil),
-    LayerSpec(:soil_moisture, :soil),
-    LayerSpec(:soil_thermal_conductivity, :soil),
-    LayerSpec(:soil_humidity, :soil),
-    LayerSpec(:air_temperature, :profile),
-    LayerSpec(:relative_humidity, :profile),
-    LayerSpec(:wind_speed, :profile),
-    LayerSpec(:global_radiation, :scalar),
-    LayerSpec(:sky_temperature, :scalar),
-    LayerSpec(:diffuse_fraction, :scalar),
-    LayerSpec(:reference_temperature, :scalar),
-    LayerSpec(:pressure, :scalar),
-    LayerSpec(:zenith_angle, :solar),
-    LayerSpec(:leaf_temperature, :canopy),
-    LayerSpec(:canopy_air_temperature, :canopy, :air_temperature),
-    LayerSpec(:canopy_wind_speed, :canopy, :wind_speed),
-    LayerSpec(:canopy_relative_humidity, :canopy, :relative_humidity),
-    LayerSpec(:ground_dew, :scalar),
-    LayerSpec(:ground_frost, :scalar),
-    LayerSpec(:ground_standing_dew, :scalar),
-    LayerSpec(:ground_standing_frost, :scalar),
-    LayerSpec(:leaf_surface_water, :canopy),
-    LayerSpec(:leaf_dew, :canopy),
-    LayerSpec(:leaf_frost, :canopy),
-    LayerSpec(:leaf_standing_dew, :canopy),
-    LayerSpec(:leaf_standing_frost, :canopy),
-)

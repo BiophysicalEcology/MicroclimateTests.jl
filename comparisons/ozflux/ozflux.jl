@@ -1,0 +1,10 @@
+# The OzFlux comparison code, in dependency order; the entry scripts load the packages and include this
+include(joinpath(@__DIR__, "config.jl"))
+include(joinpath(@__DIR__, "tables.jl"))
+include(joinpath(@__DIR__, "data_corrections.jl"))
+include(joinpath(@__DIR__, "utils.jl"))
+include(joinpath(@__DIR__, "sites.jl"))
+include(joinpath(@__DIR__, "barra.jl"))
+include(joinpath(@__DIR__, "forcing_selection.jl"))
+include(joinpath(@__DIR__, "pipeline.jl"))
+include(joinpath(@__DIR__, "report.jl"))
