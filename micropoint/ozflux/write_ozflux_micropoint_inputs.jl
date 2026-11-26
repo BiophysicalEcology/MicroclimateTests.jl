@@ -130,7 +130,9 @@ function write_ozflux_micropoint_inputs(result, outdir)
         leaf_reflectance = [shortwave_model.leaf_reflectance],
         leaf_transmittance = [shortwave_model.leaf_transmittance],
         leaf_angle_x = [leaf_parameters.canopy_projection_ratio],
-        leaf_water_storage_mm = [ustrip(u"kg/m^2", interception_model.leaf_water_storage_capacity)],
+        # NoInterception holds no water
+        leaf_water_storage_mm = [hasproperty(interception_model, :leaf_water_storage_capacity) ?
+            ustrip(u"kg/m^2", interception_model.leaf_water_storage_capacity) : 0.0],
     )
     CSV.write(joinpath(outdir, "canopy_params.csv"), canopy_params)
 

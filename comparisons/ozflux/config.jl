@@ -36,23 +36,38 @@ soil_properties_model_choice = Microclimate.example_soil_properties_model()
 rainfall_entry_mode_choice = RateLimitedFrontRainfall() #PoolCapacityRainfall(), ImplicitFluxRainfall(), RateLimitedFrontRainfall() example_soil_hydraulic_model CampbellSoilHydraulics   
 convergence_choice           = FixedIterationConvergence(1)  # soil solver
 # MultilayerCanopy's hourly leaf/air-temperature solve.
-canopy_convergence_model_choice = AndersonCanopyConvergence() #NonlinearCanopyConvergence(; abstol=0.1)  # NewtonRaphson with a backtracking line search
-canopy_soil_convergence_choice = SurfaceNodePrediction()
-#canopy_soil_convergence_choice = IterationToleranceConvergence(; tolerance=0.1u"K", max_iterations_per_day=80) #FixedIterationConvergence(1)
-canopy_soil_relaxation_choice = 1.0  # under-relaxation on canopy_soil_convergence_choice's ground_temperature update, 1.0 = none
+# Both solvers error on an unconverged hour (no fallback). Loosen per kind if needed, e.g.
+# AndersonCanopyConvergence(; leaf_balance_tolerance = 0.01u"W/m^2", air_temperature_tolerance = 1e-3u"K")
+# canopy_convergence_model_choice = AndersonCanopyConvergence(;
+#     leaf_balance_tolerance = 0.02u"W/m^2",
+#     air_temperature_tolerance = 1e-3u"K",
+#     vapor_density_tolerance = 1e-3u"g/m^3",
+#     inverse_obukhov_length_tolerance = 1e-5u"m^-1",
+#     maxiters = 200,
+# ) # or NonlinearCanopyConvergence() (Newton, Enzyme Jacobian; default tolerances are fine for it)
+#canopy_convergence_model_choice = NonlinearCanopyConvergence()
+using NonlinearSolveFirstOrder: TrustRegion
+# canopy_convergence_model_choice = NonlinearCanopyConvergence(; algorithm = TrustRegion(),
+#     leaf_balance_tolerance = 0.02u"W/m^2", air_temperature_tolerance = 1e-3u"K",
+#     vapor_density_tolerance = 1e-3u"g/m^3", inverse_obukhov_length_tolerance = 1e-5u"m^-1")
+# Anderson also solves the ground temperature (ground_temperature_tolerance, default 0.1 K), so there's no separate canopy-soil loop.
+# on_failure: ThrowError() stops at an unconverged hour; SmallestResidual() warns, keeps the best guess and carries on.
+# history=15 solves calm-wind hours that the default 5 misses (PR #154).
+canopy_convergence_model_choice = AndersonCanopyConvergence(; history = 15, on_failure = SmallestResidual())
 rainfall_schedule_choice     = HourlyRainfall()#DailyRainfall(; spread_hours=1)#HourlyRainfall()  # OzFlux Precip is per-timestep, not a daily total
 soil_moisture_strategy_choice = DynamicSoilMoisture()  # simulate soil moisture, don't just prescribe it -- compared against Sws
 leaf_convection_model_choice = ElaborateLeafConvection()  # or SimpleLeafConvection()
-interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2") #NoInterception()  # or LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
-canopy_air_profile_model_choice = RaupachLTheoryAirProfile(; far_field_mode=Val(:exact),
-    min_ground_resistance=10.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
-ground_coupling_choice = FloorTurbulence() # ProfileGroundResistance(), FloorTurbulence(), SakaguchiZeng2009()
-roughness_sublayer_choice = CanopyTopMixingEnhancement() # NoRoughnessSublayer(), CanopyTopMixingEnhancement()
-# Tabulated Goff-Gratch (-40 to 90 °C, 0.1 K steps), linearly interpolated: faster than the formula
-vapour_pressure_equation_choice = VapourPressureLookup()
+interception_model_choice = LayeredRainInterception(; leaf_water_storage_capacity=0.1u"kg/m^2")
+canopy_air_profile_model_choice = RaupachLTheoryAirProfile()#; far_field_mode=Val(:exact),
+#    min_ground_resistance=10.0u"s/m")#RaupachLTheoryAirProfile(; far_field_mode=Val(:bulk))#RaupachLTheoryAirProfile(; far_field_mode=Val(:exact))#KTheoryAirProfile()
+#ground_coupling_choice = FloorTurbulence() # ProfileGroundResistance(), FloorTurbulence(), SakaguchiZeng2009()
+#roughness_sublayer_choice = CanopyTopMixingEnhancement() # NoRoughnessSublayer(), CanopyTopMixingEnhancement()
+# Goff-Gratch formula. VapourPressureLookup() tabulates it (-40 to 90 °C, 0.1 K steps): faster, but
+# kinked every 0.1 K and wrong outside the table, which the canopy solvers don't like.
+vapour_pressure_equation_choice = GoffGratch()
 longwave_model_choice = LayeredRadiosityExchange() # LayeredLongwaveExchange(), LayeredRadiosityExchange(), AllPairsLongwaveExchange()
 canopy_mode_choice = :full  # or :legacy
-# Raised from the 0.02 m/s default -- near-calm nights were driving canopy_top_flux_boundary's ±40K clamp.
+# Raised from the 0.02 m/s default for near-calm nights; the ±40 K canopy-top clamp it was added for is gone.
 boundary_layer_model_choice = MoninObukhov(; min_friction_velocity=0.1u"m/s")
 # canopy_wind_model_choice = MixingLengthCanopyWindAttenuation(;
 #                                         shelter_floor = 0.003,

@@ -347,8 +347,6 @@ function _site_micro_model(site_name; site, depths, soil_profile, heights, canop
     config = MicroConfig(;
         convergence = convergence_choice,
         rainfall_schedule,
-        canopy_soil_convergence = canopy_soil_convergence_choice,
-        canopy_soil_relaxation = canopy_soil_relaxation_choice,
     )
     return MicroModel(; hours = 0:1:23, site, soil,
         atmosphere = AtmosphereModel(; heights, boundary_layer_model = boundary_layer_model_choice),
@@ -440,7 +438,7 @@ function prepare_site(site_name, years; max_days=nothing, gap_fill_donor=nothing
                     cuticular_conductance=0.01u"mol/m^2/s",
                 )
             ),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice, ground_coupling = ground_coupling_choice, roughness_sublayer = roughness_sublayer_choice,
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
             wind_model = canopy_wind_model_choice)
     end
 
@@ -653,7 +651,7 @@ function prepare_site_silo(site_name, years; max_days=nothing, canopy_mode=:full
             interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice, ground_coupling = ground_coupling_choice, roughness_sublayer = roughness_sublayer_choice,
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
             wind_model = canopy_wind_model_choice)
     end
 
@@ -813,7 +811,7 @@ function prepare_site_daily(site_name, years; max_days=nothing, canopy_mode=:ful
             interception_model = interception_model_choice,
             leaf_parameters = leaf_parameters(site_name), longwave_model = longwave_model_choice,
             stomatal_model = MoistureResponsiveStomatalConductance(),
-            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice, ground_coupling = ground_coupling_choice, roughness_sublayer = roughness_sublayer_choice,
+            convergence_model = canopy_convergence_model_choice, air_profile_model = canopy_air_profile_model_choice,
             wind_model = canopy_wind_model_choice)
     end
 
