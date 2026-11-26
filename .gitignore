@@ -28,3 +28,11 @@ egg_model/demos/bendigo_r_reference_output.csv
 egg_model/demos/bendigo_feb1_driver.csv
 egg_model/demos/bendigo_julia_reference_output.csv
 comparisons/ozflux/gww_debug_output.jls
+outputs/Whroo_2012/canopy_layers.csv
+outputs/Whroo_2012/canopy_params.csv
+outputs/Whroo_2012/climdata.csv
+outputs/Whroo_2012/initial_soil_state.csv
+outputs/Whroo_2012/julia_timing.csv
+outputs/Whroo_2012/params.csv
+outputs/Whroo_2012/soil_profile.csv
+outputs/Whroo_2012/Whroo_2012_stats.csv
